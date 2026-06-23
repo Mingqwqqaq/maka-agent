@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ResultRecord } from './contracts.js';
+import { compactHeavyTaskEngineeringState, isPublicHeavyTaskEngineeringRecord } from './heavy-task-engineering.js';
 import { isAcceptedHeavyTaskSelfCheck } from './heavy-task-self-check.js';
 import {
   isTerminalTaskRunStatus,
@@ -75,6 +76,12 @@ export interface TaskRunExport {
       latest: NonNullable<TaskRunProjection['latestHeavyTaskEvidence']>;
       recent: TaskRunProjection['heavyTaskEvidence'];
       historyCount: number;
+    };
+    engineering?: {
+      latest: NonNullable<TaskRunProjection['latestHeavyTaskEngineeringRecord']>;
+      recent: TaskRunProjection['heavyTaskEngineeringRecords'];
+      historyCount: number;
+      incompleteCount: number;
     };
   };
   isolation: {
@@ -327,7 +334,11 @@ function progressFromProjection(projection: TaskRunProjection): TaskRunExport['p
       historyCount: projection.heavyTaskEvidence.length,
     };
   }
-  return progress.inventory || progress.todos || progress.selfChecks || progress.evidence ? progress : undefined;
+  const engineering = compactHeavyTaskEngineeringState(projection.heavyTaskEngineeringRecords);
+  if (engineering) {
+    progress.engineering = engineering;
+  }
+  return progress.inventory || progress.todos || progress.selfChecks || progress.evidence || progress.engineering ? progress : undefined;
 }
 
 function runtimeEventIdsFrom(runtimeRefs: unknown): string[] {
@@ -390,6 +401,9 @@ function exportableTaskEvents(event: TaskEvent): TaskEvent[] {
   }
   if (event.type === 'heavy_task_evidence_recorded') {
     return event.evidence.public === true ? [event] : [];
+  }
+  if (event.type === 'heavy_task_engineering_recorded') {
+    return isPublicHeavyTaskEngineeringRecord(event.record) ? [event] : [];
   }
   return [event];
 }

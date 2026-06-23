@@ -309,6 +309,7 @@ export function buildAiSdkCellBackendRegistration(input: {
           ...(context.heavyTaskEvidence ? { heavyTaskEvidence: context.heavyTaskEvidence } : {}),
           ...(context.heavyTaskProgress ? { heavyTaskProgress: context.heavyTaskProgress } : {}),
           ...(context.heavyTaskSelfCheck ? { heavyTaskSelfCheck: context.heavyTaskSelfCheck } : {}),
+          ...(context.heavyTaskEngineering ? { heavyTaskEngineering: context.heavyTaskEngineering } : {}),
         }),
         toolAvailability: buildIsolatedHeadlessToolAvailability(),
         providerOptions: buildProviderOptions(connection, input.model),

@@ -2,12 +2,17 @@ import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ResultRecord } from './contracts.js';
 import { compactArtifactEvidence, compactSelfCheckEvidence } from './heavy-task-evidence.js';
+import {
+  isPublicHeavyTaskEngineeringRecord,
+  resolveHeavyTaskEngineeringRecordLinks,
+} from './heavy-task-engineering.js';
 import { evaluateHeavyTaskCompletionStatus, type HeavyTaskCompletionStatus } from './heavy-task-finalization.js';
 import { isAcceptedHeavyTaskSelfCheck } from './heavy-task-self-check.js';
 import type {
   AutonomousDecision,
   FeedbackObservation,
   HeavyTaskCompactEvidenceEnvelope,
+  HeavyTaskEngineeringRecord,
   HeavyTaskInventoryState,
   TaskInboxItem,
   HeavyTaskModeFacts,
@@ -55,6 +60,8 @@ export interface TaskRunProjection extends TaskRun {
   latestHeavyTaskSelfCheck?: HeavyTaskSemanticSelfCheckState;
   heavyTaskEvidence: HeavyTaskCompactEvidenceEnvelope[];
   latestHeavyTaskEvidence?: HeavyTaskCompactEvidenceEnvelope;
+  heavyTaskEngineeringRecords: HeavyTaskEngineeringRecord[];
+  latestHeavyTaskEngineeringRecord?: HeavyTaskEngineeringRecord;
   heavyTaskCompletion?: HeavyTaskCompletionStatus;
   isolation?: TaskIsolationFacts;
   workspaceLease?: WorkspaceLeaseFacts;
@@ -100,6 +107,7 @@ export function projectTaskRun(events: readonly TaskEvent[], taskRunId?: string)
     heavyTaskTodoStates: [],
     heavyTaskSelfChecks: [],
     heavyTaskEvidence: [],
+    heavyTaskEngineeringRecords: [],
   };
   const attempts = new Map<string, TaskAttempt>();
   const inboxItems = new Map<string, TaskInboxItem>();
@@ -205,6 +213,11 @@ export function projectTaskRun(events: readonly TaskEvent[], taskRunId?: string)
       case 'heavy_task_evidence_recorded':
         if (!appendCompactEvidence(projection, event.evidence)) {
           projection.warnings.push(`ignored heavy-task evidence ${event.evidence.evidenceId}: evidence must be public and match taskRunId`);
+        }
+        break;
+      case 'heavy_task_engineering_recorded':
+        if (!appendHeavyTaskEngineeringRecord(projection, event.record)) {
+          projection.warnings.push(`ignored heavy-task engineering record ${event.record.recordId}: record must be public and match taskRunId`);
         }
         break;
       case 'isolation_policy_recorded':
@@ -507,6 +520,19 @@ function appendCompactEvidence(projection: TaskRunProjection, ...evidence: Heavy
   return ok;
 }
 
+function appendHeavyTaskEngineeringRecord(projection: TaskRunProjection, record: HeavyTaskEngineeringRecord): boolean {
+  if (record.taskRunId !== projection.taskRunId || !isPublicHeavyTaskEngineeringRecord(record)) {
+    return false;
+  }
+  const resolved = resolveHeavyTaskEngineeringRecordLinks(record, projection);
+  projection.heavyTaskEngineeringRecords.push(resolved);
+  projection.latestHeavyTaskEngineeringRecord = resolved;
+  if (record.completeness === 'complete' && resolved.completeness === 'incomplete') {
+    projection.warnings.push(`downgraded heavy-task engineering record ${record.recordId}: referenced links were not found`);
+  }
+  return true;
+}
+
 function selfCheckEvidenceIdFactory(selfCheckId: string): () => string {
   let index = 0;
   return () => `${selfCheckId}:compact-${++index}`;
@@ -522,7 +548,8 @@ function hasHeavyTaskCompletionState(projection: TaskRunProjection): boolean {
     || projection.heavyTaskInventory.length > 0
     || projection.heavyTaskTodoStates.length > 0
     || projection.heavyTaskSelfChecks.length > 0
-    || projection.heavyTaskEvidence.length > 0;
+    || projection.heavyTaskEvidence.length > 0
+    || projection.heavyTaskEngineeringRecords.length > 0;
 }
 
 function safeFileId(id: string): string {

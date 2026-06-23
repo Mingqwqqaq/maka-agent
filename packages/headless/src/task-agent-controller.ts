@@ -25,6 +25,11 @@ import {
 import type { Config, ResultRecord, Task } from './contracts.js';
 import { registerFakeBackend } from './backends.js';
 import {
+  createHeavyTaskEngineeringRecorder,
+  HEAVY_TASK_ENGINEERING_TOOL_NAMES,
+  renderHeavyTaskEngineeringForPrompt,
+} from './heavy-task-engineering.js';
+import {
   createHeavyTaskEvidenceRecorder,
   renderHeavyTaskEvidenceForPrompt,
 } from './heavy-task-evidence.js';
@@ -149,10 +154,12 @@ export async function runTaskOnce(
   const priorProgressPrompt = priorProjection ? renderHeavyTaskProgressForPrompt(priorProjection) : undefined;
   const priorSelfCheckPrompt = priorProjection ? renderHeavyTaskSelfCheckForPrompt(priorProjection) : undefined;
   const priorEvidencePrompt = priorProjection ? renderHeavyTaskEvidenceForPrompt(priorProjection) : undefined;
+  const priorEngineeringPrompt = priorProjection ? renderHeavyTaskEngineeringForPrompt(priorProjection) : undefined;
   const instruction = withOptionalStatePrompts(deps.instructionOverride ?? task.instruction, [
     priorProgressPrompt,
     priorSelfCheckPrompt,
     priorEvidencePrompt,
+    priorEngineeringPrompt,
   ]);
   const heavyTaskProgress = heavyTaskMode.enabled
     ? createHeavyTaskProgressRecorder({ taskRunId, attemptId, store: taskRunStore, now, newId })
@@ -162,6 +169,9 @@ export async function runTaskOnce(
     : undefined;
   const heavyTaskEvidence = heavyTaskMode.enabled
     ? createHeavyTaskEvidenceRecorder({ taskRunId, attemptId, store: taskRunStore, now, newId })
+    : undefined;
+  const heavyTaskEngineering = heavyTaskMode.enabled
+    ? createHeavyTaskEngineeringRecorder({ taskRunId, attemptId, store: taskRunStore, now, newId })
     : undefined;
 
   if (createTaskRun) {
@@ -258,6 +268,7 @@ export async function runTaskOnce(
       ...(heavyTaskProgress ? { heavyTaskProgress } : {}),
       ...(heavyTaskSelfCheck ? { heavyTaskSelfCheck } : {}),
       ...(heavyTaskEvidence ? { heavyTaskEvidence } : {}),
+      ...(heavyTaskEngineering ? { heavyTaskEngineering } : {}),
       ...(backendNeedsIsolation(config.backend)
         ? { realBackendIsolation: deps.realBackendIsolation, toolExecutor: deps.realBackendIsolation?.toolExecutor }
         : {}),
@@ -507,7 +518,7 @@ function withOptionalStatePrompts(instruction: string, prompts: readonly (string
 
 function toolNamesForIdentity(hasIsolatedExecutor: boolean, heavyTaskEnabled: boolean): string[] {
   const names = hasIsolatedExecutor ? [...ISOLATED_HEADLESS_TOOL_NAMES] : ['registered_backend'];
-  if (heavyTaskEnabled && hasIsolatedExecutor) names.push(...HEAVY_TASK_PROGRESS_TOOL_NAMES, ...HEAVY_TASK_SELF_CHECK_TOOL_NAMES);
+  if (heavyTaskEnabled && hasIsolatedExecutor) names.push(...HEAVY_TASK_PROGRESS_TOOL_NAMES, ...HEAVY_TASK_SELF_CHECK_TOOL_NAMES, ...HEAVY_TASK_ENGINEERING_TOOL_NAMES);
   return names;
 }
 

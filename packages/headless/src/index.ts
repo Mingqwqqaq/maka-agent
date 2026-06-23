@@ -158,6 +158,11 @@ export type {
   FeedbackObservation,
   HeavyTaskCompactEvidenceEnvelope,
   HeavyTaskDiffSummary,
+  HeavyTaskEngineeringCompleteness,
+  HeavyTaskEngineeringLinks,
+  HeavyTaskEngineeringRecord,
+  HeavyTaskEngineeringRecordKind,
+  HeavyTaskEngineeringRecordRecordedEvent,
   HeavyTaskEvidenceKind,
   HeavyTaskEvidenceRecordedEvent,
   HeavyTaskOutputSummary,
@@ -335,6 +340,28 @@ export {
   renderHeavyTaskSelfCheckForPrompt,
   validateHeavyTaskPublicSelfCheck,
 } from './heavy-task-self-check.js';
+export type {
+  CheckRecordSubmitInput,
+  EngineeringRecordSubmitInput,
+  HeavyTaskEngineeringArtifactLink,
+  HeavyTaskEngineeringEvent,
+  HeavyTaskEngineeringRecorder,
+  HeavyTaskEngineeringRecordResult,
+} from './heavy-task-engineering.js';
+export {
+  buildHeavyTaskEngineeringTools,
+  checkRecordSubmitSchema,
+  compactHeavyTaskEngineeringState,
+  createHeavyTaskEngineeringRecorder,
+  DEFAULT_EXPORT_ENGINEERING_LIMIT,
+  DEFAULT_PROMPT_ENGINEERING_LIMIT,
+  engineeringRecordSubmitSchema,
+  HEAVY_TASK_ENGINEERING_SCHEMA_VERSION,
+  HEAVY_TASK_ENGINEERING_TOOL_NAMES,
+  isPublicHeavyTaskEngineeringRecord,
+  renderHeavyTaskEngineeringForPrompt,
+  resolveHeavyTaskEngineeringRecordLinks,
+} from './heavy-task-engineering.js';
 export type {
   CompactTextEvidenceOptions,
   HeavyTaskCompactEvidenceInput,

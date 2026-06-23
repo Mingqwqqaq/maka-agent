@@ -70,12 +70,14 @@ describe('isolated headless tools', () => {
     assert.ok(!names.includes('inventory_submit'));
     assert.ok(!names.includes('todo_update'));
     assert.ok(!names.includes('self_check_submit'));
+    assert.ok(!names.includes('engineering_record'));
+    assert.ok(!names.includes('check_record'));
     assert.equal(names.filter((name) => name === 'Bash').length, 1);
     assert.deepEqual(buildChildAgentTools(tools).map((tool) => tool.name), ['Read', 'Glob', 'Grep']);
     assert.ok(!buildChildAgentTools(tools).some((tool) => ['Bash', 'Write', 'Edit'].includes(tool.name)));
   });
 
-  test('progress and self-check tools are included only when heavy-task recorders are enabled', () => {
+  test('progress, self-check, and engineering tools are included only when heavy-task recorders are enabled', () => {
     const tools = buildIsolatedHeadlessTools({
       async exec() {
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -128,12 +130,88 @@ describe('isolated headless tools', () => {
           };
         },
       },
+      heavyTaskEngineering: {
+        async recordEngineering() {
+          return {
+            accepted: true,
+            complete: true,
+            missingLinks: [],
+            record: {
+              schemaVersion: 1,
+              recordId: 'record-1',
+              taskRunId: 'run-1',
+              ts: 1,
+              kind: 'hypothesis',
+              title: 'Hypothesis',
+              summary: 'A public hypothesis',
+              status: 'proposed',
+              completeness: 'complete',
+              source: { kind: 'model_tool', toolCallId: 'tool-1', toolName: 'engineering_record' },
+              links: {
+                todoIds: ['todo-1'],
+                evidenceIds: ['evidence-1'],
+                toolCallIds: [],
+                checkIds: [],
+                artifactIds: [],
+                changedFiles: [],
+                patchIds: [],
+                hypothesisIds: [],
+                repairIds: [],
+              },
+              hypothesis: {
+                expectedSignal: 'public check identifies the problem',
+                rationaleEvidenceIds: ['evidence-1'],
+              },
+            },
+          };
+        },
+        async recordCheck() {
+          return {
+            accepted: true,
+            complete: true,
+            missingLinks: [],
+            checkId: 'check-1',
+            record: {
+              schemaVersion: 1,
+              recordId: 'record-2',
+              taskRunId: 'run-1',
+              ts: 1,
+              kind: 'targeted_check',
+              title: 'Check',
+              summary: 'A public check',
+              status: 'passed',
+              completeness: 'complete',
+              source: { kind: 'model_tool', toolCallId: 'tool-1', toolName: 'check_record' },
+              links: {
+                todoIds: ['todo-1'],
+                evidenceIds: ['evidence-1'],
+                toolCallIds: ['tool-1'],
+                checkIds: ['check-1'],
+                artifactIds: [],
+                changedFiles: [],
+                patchIds: [],
+                hypothesisIds: [],
+                repairIds: [],
+              },
+              targetedCheck: {
+                checkId: 'check-1',
+                command: 'npm test',
+                expectedSignal: 'pass',
+                observedSignal: 'pass',
+                result: 'pass',
+              },
+            },
+          };
+        },
+      },
     });
 
     const names = tools.map((tool) => tool.name);
     assert.ok(names.includes('inventory_submit'));
     assert.ok(names.includes('todo_update'));
     assert.ok(names.includes('self_check_submit'));
+    assert.ok(names.includes('engineering_record'));
+    assert.ok(names.includes('check_record'));
   });
 
   test('Read, Write, Glob, and Grep delegate to native isolated executor methods', async () => {

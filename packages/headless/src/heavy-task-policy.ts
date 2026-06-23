@@ -85,6 +85,8 @@ export function buildHeavyTaskSystemPromptPolicy(
     '- Use inventory_submit to submit a structured inventory snapshot after initial public inspection and whenever the important workspace/artifact inventory changes.',
     '- Use todo_update to submit the full current todo/progress snapshot as work advances. Keep at most one item in_progress, and treat todo completion as advisory progress rather than benchmark success.',
     '- Use self_check_submit to submit public, task-derived semantic self-check evidence from visible tests, builds, sample commands, or artifact inspections. Include public command/artifact evidence only.',
+    '- Use engineering_record for structured hypotheses, repairs, and patch/change summaries. Link records to todo ids, compact evidence ids, check ids, tool call ids, changed files, and artifact ids where those links apply.',
+    '- Use check_record for targeted checks. Complete check records require todo ids, tool call ids, and compact evidence ids; incomplete records require an explicit incomplete reason.',
     '- The self_check_submit source guard rejects hidden, private, or evaluator-only material before it can become accepted task-run state. Treat accepted checks as advisory engineering feedback.',
     '- Official benchmark scoring remains external and authoritative. Do not claim success solely from your own checks, and do not replace verifier results with self-checks.',
     `- Do not seek, infer, read, or rely on forbidden evaluator material: ${FORBIDDEN_HEAVY_TASK_POLICY_TERMS.join(', ')}.`,
