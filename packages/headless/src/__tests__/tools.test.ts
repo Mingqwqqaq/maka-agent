@@ -13,6 +13,7 @@ import {
 import { createHeavyTaskEvidenceRecorder } from '../heavy-task-evidence.js';
 import { createInMemoryTaskRunStore } from '../task-run-store.js';
 import { buildIsolatedBashTool, buildIsolatedHeadlessToolAvailability, buildIsolatedHeadlessTools } from '../tools.js';
+import type { IsolatedToolExecutor } from '../isolation.js';
 
 const execAsync = promisify(childExec);
 
@@ -192,17 +193,13 @@ describe('isolated headless tools', () => {
     assert.ok(!names.includes('check_record'));
   });
 
-  test('Read, Write, Glob, and Grep delegate to native isolated executor methods', async () => {
+  test('Write, Glob, and Grep delegate to native isolated executor methods', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-tools-host-'));
     await writeFile(join(cwd, 'target.txt'), 'host\n', 'utf8');
     const calls: Array<{ name: string; input: unknown }> = [];
     const tools = buildIsolatedHeadlessTools({
       async exec() {
         throw new Error('file tools must use native isolated methods when available');
-      },
-      async readFile(input) {
-        calls.push({ name: 'Read', input });
-        return { content: 'container\n' };
       },
       async writeFile(input) {
         calls.push({ name: 'Write', input });
@@ -218,9 +215,6 @@ describe('isolated headless tools', () => {
       },
     });
 
-    assert.deepEqual(await tool(tools, 'Read').impl({ path: join(cwd, 'target.txt'), offset: 1, limit: 2 }, toolCtx(cwd)), {
-      content: 'container\n',
-    });
     assert.deepEqual(await tool(tools, 'Write').impl({ path: join(cwd, 'target.txt'), content: 'external\n' }, toolCtx(cwd)), {
       ok: true,
       path: 'target.txt',
@@ -239,11 +233,38 @@ describe('isolated headless tools', () => {
 
     assert.equal(await readFile(join(cwd, 'target.txt'), 'utf8'), 'host\n');
     assert.deepEqual(calls, [
-      { name: 'Read', input: { cwd, path: 'target.txt', offset: 1, limit: 2 } },
       { name: 'Write', input: { cwd, path: 'target.txt', content: 'external\n' } },
       { name: 'Glob', input: { cwd, pattern: '*.txt', searchCwd: 'src' } },
       { name: 'Grep', input: { cwd, pattern: 'needle', path: 'src', glob: '*.txt' } },
     ]);
+  });
+
+  test('Read ignores any native readFile hook and always formats via READ_SCRIPT', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-read-nofastpath-'));
+    await writeFile(join(cwd, 'f.txt'), 'alpha\nbeta\n', 'utf8');
+    // An executor that DOES expose a native readFile returning raw, unformatted
+    // bytes. Read must ignore it and run READ_SCRIPT, so the result is line-numbered
+    // — a regression guard against re-introducing a Read native fast path.
+    const executor: IsolatedToolExecutor = {
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, { cwd: input.cwd, env: process.env, maxBuffer: 4 * 1024 * 1024 });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    };
+    (executor as { readFile?: () => Promise<{ content: string }> }).readFile = async () => ({ content: 'RAW-NATIVE-BYPASS\n' });
+    const tools = buildIsolatedHeadlessTools(executor);
+
+    const r = (await tool(tools, 'Read').impl({ path: join(cwd, 'f.txt') }, toolCtx(cwd))) as { content: string };
+    assert.equal(r.content, '     1\talpha\n     2\tbeta\n', 'formatted via READ_SCRIPT, not the raw native readFile');
+    assert.ok(!r.content.includes('RAW-NATIVE-BYPASS'), 'the native readFile result is never used');
   });
 
   test('Edit ignores native file ops and always runs the shared replacer', async () => {
@@ -267,7 +288,6 @@ describe('isolated headless tools', () => {
           };
         }
       },
-      async readFile() { nativeCalls.push('readFile'); return { content: '' }; },
       async writeFile(input) { nativeCalls.push('writeFile'); return { ok: true, path: input.path, bytes: 0 }; },
       async globFiles() { nativeCalls.push('globFiles'); return { files: [] }; },
       async grepFiles() { nativeCalls.push('grepFiles'); return { matches: [] }; },
@@ -302,10 +322,12 @@ describe('isolated headless tools', () => {
         if (input.command.startsWith("node -e '")) {
           return { exitCode: 0, stdout: '{"matchedVia":"exact","startLine":1,"endLine":1}', stderr: '' };
         }
+        // Read now runs through READ_SCRIPT (no native fast path); the script
+        // carries the distinctive 'Read path' label, so stub its content here.
+        if (input.command.includes('Read path')) {
+          return { exitCode: 0, stdout: `read src/file.ts\n${'r'.repeat(5_000)}`, stderr: '' };
+        }
         return { exitCode: 2, stdout: `large stdout\n${'x'.repeat(5_000)}`, stderr: 'short stderr\n' };
-      },
-      async readFile(input) {
-        return { content: `read ${input.path}\n${'r'.repeat(5_000)}` };
       },
       async writeFile(input) {
         return { ok: true, path: input.path, bytes: Buffer.byteLength(input.content, 'utf8') };
@@ -363,7 +385,7 @@ describe('isolated headless tools', () => {
       bytes: 13,
     });
     assert.deepEqual(await tool(tools, 'Read').impl({ path: absoluteFile, offset: 1, limit: 1 }, toolCtx(cwd)), {
-      content: 'needle',
+      content: '     2\tneedle\n', // cat -n: absolute line number + tab + content
     });
     assert.deepEqual(await tool(tools, 'Glob').impl({ pattern: absoluteGlob }, toolCtx(cwd)), {
       files: ['src/file.txt'],
@@ -378,6 +400,71 @@ describe('isolated headless tools', () => {
     assert.ok(calls.length >= 4);
     assert.ok(calls.every((command) => command.startsWith("sh -c '")));
     assert.ok(calls.every((command) => !command.includes('node -e')));
+  });
+
+  test('Read (command path) numbers lines, caps by default, and guards binaries', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-read-'));
+    await writeFile(join(cwd, 'big.txt'), Array.from({ length: 2500 }, (_, i) => `line${i + 1}`).join('\n') + '\n', 'utf8');
+    await writeFile(join(cwd, 'data.bin'), Buffer.from([0, 1, 2, 0, 65, 66])); // 6 bytes, contains NUL
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, { cwd: input.cwd, env: process.env, maxBuffer: 4 * 1024 * 1024 });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    });
+
+    // Default read: cat -n numbering from line 1, capped at 2000 with a continuation hint.
+    const def = (await tool(tools, 'Read').impl({ path: join(cwd, 'big.txt') }, toolCtx(cwd))) as { content: string };
+    assert.ok(def.content.startsWith('     1\tline1\n'), 'numbers from line 1');
+    assert.ok(def.content.includes('  2000\tline2000\n'), 'shows up to the 2000-line cap');
+    assert.ok(!def.content.includes('line2001'), 'does not exceed the cap');
+    assert.ok(def.content.includes('truncated at line 2000'), 'hints how to continue');
+
+    // Offset keeps absolute line numbers; reading the tail shows no hint.
+    const tail = (await tool(tools, 'Read').impl({ path: join(cwd, 'big.txt'), offset: 2498, limit: 2 }, toolCtx(cwd))) as { content: string };
+    assert.equal(tail.content, '  2499\tline2499\n  2500\tline2500\n');
+
+    // Binary guard.
+    const bin = (await tool(tools, 'Read').impl({ path: join(cwd, 'data.bin') }, toolCtx(cwd))) as { content: string };
+    assert.equal(bin.content, '[binary file: 6 bytes, contents omitted]');
+
+    // Binary guard must hold when an invalid high byte precedes the NUL: in a
+    // UTF-8 locale BSD/macOS tr would otherwise abort and misclassify it as text.
+    await writeFile(join(cwd, 'highbyte.bin'), Buffer.from([0xff, 0x00, 0x41]));
+    const highBin = (await tool(tools, 'Read').impl({ path: join(cwd, 'highbyte.bin') }, toolCtx(cwd))) as { content: string };
+    assert.equal(highBin.content, '[binary file: 3 bytes, contents omitted]');
+  });
+
+  test('Read clips an over-long single line at 2000 bytes with a marker', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-headless-read-clip-'));
+    await writeFile(join(cwd, 'long.txt'), 'X'.repeat(2500) + '\n', 'utf8'); // one 2500-byte line
+    const tools = buildIsolatedHeadlessTools({
+      async exec(input) {
+        try {
+          const { stdout, stderr } = await execAsync(input.command, { cwd: input.cwd, env: process.env, maxBuffer: 4 * 1024 * 1024 });
+          return { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          return {
+            exitCode: typeof error?.code === 'number' ? error.code : 1,
+            stdout: typeof error?.stdout === 'string' ? error.stdout : '',
+            stderr: typeof error?.stderr === 'string' ? error.stderr : String(error),
+          };
+        }
+      },
+    });
+
+    const r = (await tool(tools, 'Read').impl({ path: join(cwd, 'long.txt') }, toolCtx(cwd))) as { content: string };
+    assert.ok(r.content.startsWith('     1\t'), 'line-number prefix present');
+    assert.ok(r.content.includes('... [line truncated]'), 'clip marker present');
+    assert.equal(r.content.match(/X/g)?.length, 2000, 'only the first 2000 bytes kept, clipped tail dropped');
   });
 
   test('Grep prefers ripgrep when on PATH and skips binary files', async (t) => {

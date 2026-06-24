@@ -120,11 +120,8 @@ export function buildIsolatedReadTool(
       const { cwd } = ctx;
       const normalizedPath = normalizeWorkspacePath(path, cwd, 'Read path');
       const input = { cwd, path: normalizedPath, offset, limit };
-      if (executor.readFile) {
-        const result = await executor.readFile(input);
-        await options.heavyTaskEvidence?.recordToolEvidence({ name: 'Read', input, result }, ctx);
-        return result;
-      }
+      // Read has no native fast path: every result must go through READ_SCRIPT so
+      // it carries the line-number / line+byte-cap / binary-guard contract (#92).
       const stdout = await execFileCommand(executor, cwd, shellFileCommand(READ_SCRIPT, [
         normalizedPath,
         numberArg(offset),
@@ -453,20 +450,44 @@ writable_target() {
 const READ_SCRIPT = `${COMMON_SHELL_HELPERS}
 root=$(pwd -P) || exit 1
 target=$(existing_target "$1" 'Read path') || exit 1
-offset=$2
-limit=$3
-if [ -z "$offset" ] && [ -z "$limit" ]; then
-  cat "$target"
-else
-  awk -v start="\${offset:-0}" -v limit="$limit" '
-    BEGIN { first = start + 1; last = limit == "" ? 0 : start + limit; wrote = 0 }
-    NR >= first && (last == 0 || NR <= last) {
-      if (wrote) printf "\\n"
-      printf "%s", $0
-      wrote = 1
-    }
-  ' "$target"
+offset=\${2:-0}
+limit=\${3:-2000}
+# Binary guard: a NUL byte in the head means this is not text. Dumping it would
+# flood the model with garbage (and command substitution strips NULs anyway), so
+# report it instead. Matches Claude Code / opencode behavior. LC_ALL=C is
+# mandatory: in a UTF-8 locale, BSD/macOS tr aborts on an invalid high byte
+# ("Illegal byte sequence") and, with no pipefail, the count silently becomes 0,
+# letting a binary file with a high byte before its first NUL slip through.
+nul=$(head -c 8192 "$target" | LC_ALL=C tr -dc '\\000' | wc -c | tr -d ' ')
+if [ "\${nul:-0}" -gt 0 ]; then
+  size=$(wc -c < "$target" | tr -d ' ')
+  printf '[binary file: %s bytes, contents omitted]' "$size"
+  exit 0
 fi
+# cat -n style: each line carries its absolute 1-based number; over-long lines are
+# clipped at maxcol bytes. Output stops at the line cap ("limit" lines from
+# "offset") OR a ~50KB byte budget, whichever comes first — both keep a large file
+# from flooding the model's context (#92) — with a hint giving the offset to resume.
+# LC_ALL=C so awk treats the file as bytes and never aborts on invalid UTF-8 in a
+# non-NUL file; line content is byte-for-byte and length()/maxcol/maxbytes count bytes.
+LC_ALL=C awk -v start="$offset" -v limit="$limit" '
+  BEGIN { first = start + 1; last = start + limit; maxcol = 2000; maxbytes = 51200 }
+  NR < first { next }
+  {
+    if (NR > last) { stopped = 1; exit }
+    line = $0
+    if (length(line) > maxcol) line = substr(line, 1, maxcol) "... [line truncated]"
+    out = sprintf("%6d\\t%s\\n", NR, line)
+    # Always emit at least one line (shown > 0 guard); otherwise stop before the
+    # budget is exceeded so total output stays under maxbytes.
+    if (shown > 0 && bytes + length(out) > maxbytes) { stopped = 1; exit }
+    printf "%s", out
+    bytes += length(out)
+    shown += 1
+    lastline = NR
+  }
+  END { if (stopped) printf "... (truncated at line %d; pass offset=%d to read more)\\n", lastline, lastline }
+' "$target"
 `;
 
 const WRITE_SCRIPT = `${COMMON_SHELL_HELPERS}
