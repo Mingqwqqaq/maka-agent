@@ -7,6 +7,7 @@ import {
   MAKA_AHE_EVIDENCE_EXPORT_SOURCE_LABEL,
   buildMakaAheTargetSnapshot,
   makaAheEvidenceFromTaskRunProjections,
+  readMakaAheHarborOfficialResult,
   validateMakaAheSourceRefs,
   writeMakaAheEvidenceExport,
 } from '../ahe-evidence-export.js';
@@ -104,6 +105,50 @@ describe('AHE evidence export', () => {
     assert.equal(evidence.harnessResults.results[1]?.status, 'official_pass');
     assert.equal(evidence.harnessResults.results[1]?.scoreAuthority, 'official_scorer');
     assert.equal(evidence.traceIndex.entries[0]?.transcript?.ref, 'traces/run-self-check/result.md');
+    assert.equal(evidence.traceIndex.entries[0]?.agentRun?.ref, 'traces/run-self-check/messages.json');
+  });
+
+  test('overlays Harbor post-exit official results during AHE bucketing', async () => {
+    const trial = await mkdtemp(join(tmpdir(), 'maka-ahe-harbor-trial-'));
+    try {
+      await mkdir(join(trial, 'verifier'), { recursive: true });
+      await writeFile(join(trial, 'result.json'), JSON.stringify({ verifier_result: { rewards: { reward: 1 } } }), 'utf8');
+      await writeFile(join(trial, 'verifier', 'reward.txt'), '1\n', 'utf8');
+      await writeFile(join(trial, 'verifier', 'test-stdout.txt'), '3 passed\n', 'utf8');
+      const selfCheckOnlyProjection = projectTaskRun([
+        { type: 'task_run_created', id: 'e1', taskRunId: 'run-harbor', ts: 1, taskId: 'task-a', configId: 'cfg-1' },
+        {
+          type: 'heavy_task_self_check_recorded',
+          id: 'e2',
+          taskRunId: 'run-harbor',
+          ts: 2,
+          selfCheck: acceptedHeavySelfCheck('run-harbor', false),
+        },
+        scoreEvent({
+          id: 'score-self-check',
+          taskRunId: 'run-harbor',
+          ts: 3,
+          passed: false,
+          scored: false,
+          eligible: true,
+          taxonomy: 'verification_failed',
+          authority: { source: 'self_check', authoritative: false },
+        }),
+      ], 'run-harbor');
+      const official = await readMakaAheHarborOfficialResult(trial, selfCheckOnlyProjection);
+
+      const evidence = makaAheEvidenceFromTaskRunProjections([selfCheckOnlyProjection], {
+        snapshotId: 'snapshot-baseline',
+        officialResults: { 'run-harbor': official },
+      });
+
+      assert.equal(evidence.harnessResults.results[0]?.status, 'official_pass');
+      assert.equal(evidence.harnessResults.results[0]?.scoreAuthority, 'official_scorer');
+      assert.equal(evidence.harnessResults.results[0]?.verifierRef?.ref, 'traces/run-harbor/official-harbor-result.json');
+      assert.match(evidence.traceIndex.entries[0]?.artifacts?.[0]?.ref ?? '', /official-harbor-result\.json/);
+    } finally {
+      await rm(trial, { recursive: true, force: true });
+    }
   });
 
   test('keeps excluded, infra, and unscored cells explicit', () => {
@@ -152,10 +197,42 @@ describe('AHE evidence export', () => {
       });
       const projection = projectTaskRun([
         { type: 'task_run_created', id: 'e1', taskRunId: 'run-official', ts: 1, taskId: 'task-1', configId: 'cfg-1' },
-        officialVerifierEvent('run-official', false),
+        {
+          type: 'heavy_task_self_check_recorded',
+          id: 'self-check-event',
+          taskRunId: 'run-official',
+          ts: 2,
+          selfCheck: acceptedHeavySelfCheck('run-official', true),
+        },
+        {
+          type: 'verifier_result_recorded',
+          id: 'verifier-run-official',
+          taskRunId: 'run-official',
+          ts: 3,
+          result: {
+            id: 'verifier-run-official',
+            taskRunId: 'run-official',
+            ts: 3,
+            kind: 'terminal_bench',
+            passed: false,
+            exitCode: 1,
+            score: 0,
+            maxScore: 1,
+            stdout: 'AssertionError: expected move e2e4 but got e2g4\n',
+            authority: { source: 'official_harbor_verifier', authoritative: true },
+          },
+        },
         officialScoreEvent('run-official', false),
         { type: 'task_run_completed', id: 'e4', taskRunId: 'run-official', ts: 4, finishedAt: 4 },
       ], 'run-official');
+      const sessionMessages = {
+        'run-official': [
+          { type: 'user', id: 'u1', turnId: 't1', ts: 1, text: 'compile sqlite with gcov' },
+          { type: 'tool_call', id: 'tool-1', turnId: 't1', ts: 2, toolName: 'Bash', args: { command: 'make' } },
+          { type: 'tool_result', id: 'tool-r1', turnId: 't1', ts: 3, toolUseId: 'tool-1', isError: false, content: { kind: 'text', text: 'ok' } },
+          { type: 'assistant', id: 'a1', turnId: 't1', ts: 4, text: 'SQLite is installed with gcov instrumentation.', modelId: 'fake-model' },
+        ],
+      };
 
       const first = await writeMakaAheEvidenceExport(out, {
         snapshot,
@@ -163,6 +240,7 @@ describe('AHE evidence export', () => {
         runId: 'baseline-run',
         exportedAt: '2026-07-01T00:00:00.000Z',
         includeEvents: true,
+        sessionMessages,
       });
       const firstHarness = await readFile(first.files.harnessResultsJson, 'utf8');
       const second = await writeMakaAheEvidenceExport(out, {
@@ -171,6 +249,7 @@ describe('AHE evidence export', () => {
         runId: 'baseline-run',
         exportedAt: '2026-07-01T00:00:00.000Z',
         includeEvents: true,
+        sessionMessages,
       });
 
       assert.equal(firstHarness, await readFile(second.files.harnessResultsJson, 'utf8'));
@@ -180,8 +259,25 @@ describe('AHE evidence export', () => {
       const traceIndexJson = await readFile(join(out, 'trace-index.json'), 'utf8');
       assert.match(traceIndexJson, /traces\/run-official\/result.md/);
       assert.match(traceIndexJson, /traces\/run-official\/events.jsonl/);
+      assert.match(traceIndexJson, /traces\/run-official\/messages.json/);
+      assert.match(traceIndexJson, /traces\/run-official\/failure-digest.json/);
       assert.match(await readFile(join(out, 'traces', 'run-official', 'task-run.json'), 'utf8'), /maka.task_run_export.v1/);
       assert.match(await readFile(join(out, 'traces', 'run-official', 'events.jsonl'), 'utf8'), /task_run_created/);
+      const failureDigest = JSON.parse(await readFile(join(out, 'traces', 'run-official', 'failure-digest.json'), 'utf8'));
+      assert.equal(failureDigest.schemaVersion, 'maka.ahe.failure_digest.v1');
+      assert.equal(failureDigest.status, 'official_fail');
+      assert.equal(failureDigest.selfCheck.divergence, 'self_check_pass_official_fail');
+      assert.equal(failureDigest.selfCheck.heavyTaskSelfChecks[0].status, 'pass');
+      assert.match(failureDigest.officialHarbor.verifier.stdoutExcerpt, /expected move e2e4/);
+      assert.equal(failureDigest.debugRefs.messages.ref, 'traces/run-official/messages.json');
+      const messages = JSON.parse(await readFile(join(out, 'traces', 'run-official', 'messages.json'), 'utf8'));
+      assert.equal(messages.trace_id, 'run-official');
+      assert.equal(messages.messages[0].role, 'system');
+      assert.equal(messages.messages[1].role, 'user');
+      assert.match(messages.messages[1].content, /compile sqlite with gcov/);
+      assert.equal(messages.messages[2].role, 'assistant');
+      assert.match(messages.messages[2].content, /tool_call/);
+      assert.match(JSON.stringify(messages), /task_run_created/);
     } finally {
       await rm(repo, { recursive: true, force: true });
       await rm(out, { recursive: true, force: true });
@@ -245,4 +341,24 @@ function officialScoreEvent(taskRunId: string, passed: boolean): TaskEvent {
     taxonomy: passed ? 'passed' : 'verification_failed',
     authority: { source: 'official_harbor_verifier', authoritative: true },
   });
+}
+
+function acceptedHeavySelfCheck(taskRunId: string, passed: boolean) {
+  return {
+    schemaVersion: 1 as const,
+    selfCheckId: 'self-check-1',
+    taskRunId,
+    ts: 2,
+    status: passed ? 'pass' as const : 'fail' as const,
+    publicReason: 'Accepted as public, task-derived advisory self-check evidence.',
+    commandEvidence: [{ command: 'npm test', exitCode: passed ? 0 : 1, outputExcerpt: passed ? 'ok' : 'fail' }],
+    artifactEvidence: [],
+    guard: {
+      status: 'accepted' as const,
+      checkedAt: 2,
+      categories: [],
+      publicReason: 'Accepted as public, task-derived advisory self-check evidence.',
+    },
+    source: { kind: 'model_tool' as const, toolCallId: 'tool-1' },
+  };
 }
