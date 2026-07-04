@@ -13,36 +13,35 @@
       var(--card-shadow),
       var(--card-highlight);
   }
+/* IA restructure: header is now the single time-context bar —
+   stepper + day label on the left, 今日/本周/本月 tabs on the right
+   (the tabs used to float mid-page above the stats). */
 .maka-daily-review-header {
-    display: grid;
-    grid-template-columns: 24px 1fr 24px;
+    display: flex;
     align-items: center;
-    gap: var(--space-1);
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
     padding: var(--space-0-5) var(--space-0-5) var(--space-1-5);
     border-bottom: 1px solid var(--foreground-10);
+  }
+
+.maka-daily-review-header-time {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
   }
 
 /* PR-DAILY-REVIEW-FULL-0: info banner explaining the feature, plus a
    manual-trigger row. Banner uses the page-card recipe with a softer
    tint so it reads as supporting context, not a primary surface. */
+/* Unboxed: the old two-paragraph banner card pushed real content
+   below the fold; the explanation is now a single quiet hint line. */
 .maka-daily-review-info {
     display: grid;
     gap: var(--space-1);
-    padding: var(--space-2-5) var(--space-3);
-    border: 1px solid var(--card-border-color);
-    border-radius: var(--radius-surface);
-    background: oklch(from var(--foreground) l c h / 0.03);
-    box-shadow: var(--card-highlight);
-  }
-.maka-daily-review-info-body {
-    margin: 0;
-    font-size: var(--font-size-ui);
-    line-height: 1.55;
-    color: var(--foreground-secondary);
-  }
-.maka-daily-review-info-body strong {
-    font-weight: 600;
-    color: var(--foreground);
+    padding: 0 var(--space-0-5);
   }
 .maka-daily-review-info-hint {
     margin: 0;
@@ -244,12 +243,22 @@
 
 .maka-daily-review-archive-sections {
     display: grid;
-    gap: var(--space-2);
+    /* Section rhythm: 8px title→body inside a section, 16px + hairline
+       BETWEEN sections — the four report blocks (对话摘要/遗漏提醒/
+       使用洞察/代码建议) previously sat at a uniform 8px cadence and
+       read as one undifferentiated slab. Divider over nested cards per
+       the anti-nested-box rule. */
+    gap: var(--space-4);
   }
 
 .maka-daily-review-archive-section {
     display: grid;
-    gap: var(--space-0-5);
+    gap: var(--space-1);
+  }
+
+.maka-daily-review-archive-section + .maka-daily-review-archive-section {
+    border-top: 1px solid var(--foreground-10);
+    padding-top: var(--space-3);
   }
 
 .maka-daily-review-archive-section h5 {
@@ -269,6 +278,35 @@
     white-space: pre-wrap;
   }
 
+/* Markdown-rendered report body: same type scale as the plain <p> it
+   replaced; restore list markers (Tailwind preflight strips them — see
+   the chat-bubble fix) and keep block rhythm tight inside a section. */
+.maka-daily-review-archive-section-body {
+    color: var(--foreground-secondary);
+    font-size: var(--font-size-ui);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+
+.maka-daily-review-archive-section-body p {
+    margin: 0 0 var(--space-1-5);
+  }
+
+.maka-daily-review-archive-section-body p:last-child,
+.maka-daily-review-archive-section-body ul:last-child,
+.maka-daily-review-archive-section-body ol:last-child {
+    margin-bottom: 0;
+  }
+
+.maka-daily-review-archive-section-body ul,
+.maka-daily-review-archive-section-body ol {
+    margin: 0 0 var(--space-1-5);
+    padding-left: var(--space-5);
+  }
+
+.maka-daily-review-archive-section-body ul { list-style: disc; }
+.maka-daily-review-archive-section-body ol { list-style: decimal; }
+
 .maka-daily-review-day {
     text-align: center;
     font-weight: 600;
@@ -281,14 +319,6 @@
 /* PR-DAILY-REVIEW-RANGE-0: 今日 / 本周 / 本月 tabs. Active tab uses
    the same accent-emphasis as the surrounding Settings nav so the
    visual language stays consistent. */
-.maka-daily-review-range {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-1-5);
-    padding: var(--space-0-5) 0 var(--space-1-5);
-    border-bottom: 1px solid var(--foreground-10);
-  }
 .maka-daily-review-range-tabs,
   .maka-daily-review-actions {
     display: flex;
@@ -296,8 +326,12 @@
     min-width: 0;
   }
 
+/* Export row sits directly above the stats it exports. */
+.maka-daily-review-actions {
+    justify-content: flex-end;
+  }
+
 .maka-daily-review-range-tab {
-  flex: 1;
   font-size: var(--font-size-ui);
 }
 
@@ -337,10 +371,6 @@
 }
 
 @media (max-width: 720px) {
-    .maka-daily-review-range {
-      grid-template-columns: 1fr;
-    }
-
     .maka-daily-review-archive-layout {
       grid-template-columns: 1fr;
     }
