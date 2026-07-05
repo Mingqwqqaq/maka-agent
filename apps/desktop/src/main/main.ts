@@ -164,6 +164,7 @@ import { createBotIncomingMainService } from './bot-incoming-main.js';
 import { createSubscriptionModelFetch } from './subscription-model-fetch.js';
 import { buildContextBudgetPolicy } from './context-budget-policy.js';
 import { createSystemPromptMainService } from './system-prompt-main.js';
+import { createMainTaskLedgerWiring } from './task-ledger-wiring.js';
 import { createOAuthModelConnectionsMainService } from './oauth-model-connections-main.js';
 import {
   applyNetworkPatch,
@@ -297,6 +298,8 @@ const antigravitySubscription = new AntigravitySubscriptionService({
 });
 
 const planReminderStore = createPlanReminderStore(workspaceRoot);
+const taskLedgerWiring = createMainTaskLedgerWiring(workspaceRoot);
+const taskLedgerStore = taskLedgerWiring.store;
 
 async function getWorkspacePrivacyContext(): Promise<WorkspacePrivacyContext> {
   const settings = await settingsStore.get();
@@ -313,6 +316,7 @@ const systemPromptService = createSystemPromptMainService({
   settingsStore,
   workspaceRoot,
   localMemory,
+  taskLedger: taskLedgerStore,
 });
 const mainWindowController = createMainWindowController({
   workspaceRoot,
@@ -399,6 +403,9 @@ const builtinTools = [
     settingsStore,
     getPrivacyContext: getWorkspacePrivacyContext,
   }),
+  // Session task ledger: model manages a flat task list; the current list is
+  // re-injected each turn tail. Pure local state, so no permission gate.
+  ...taskLedgerWiring.tools,
   // The `load_tools` connector is built by ToolAvailabilityRuntime; deferred
   // group tools just need to be present so they are dispatchable once loaded.
   ...deferredTools,
@@ -584,7 +591,7 @@ backends.register('ai-sdk', async (ctx) => {
       memoryFragment: memoryPromptSnapshot,
       childInstruction: ctx.systemPrompt,
     }),
-    turnTailPrompt: ({ cwd }) => systemPromptService.buildTurnTailPrompt(cwd),
+    turnTailPrompt: ({ cwd, sessionId }) => systemPromptService.buildTurnTailPrompt(cwd, sessionId),
     lookupPricing,
     recordLlmCall: (event) => recordLlmCall({ repo: telemetryRepo, lookupPricing }, event),
     recordToolInvocation: (event) =>
