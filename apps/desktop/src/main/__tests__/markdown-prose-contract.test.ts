@@ -4,24 +4,26 @@
  * typography — p / h* / ul / ol / li / a / code / pre / blockquote / table
  * / th / td / hr. It is split off the .maka-bubble-assistant shell so the
  * same prose rules can be reused by other Markdown consumers (tool-result
- * bodies in #546 PR5) without inheriting bubble geometry (max-width: 72ch,
- * padding, generic first/last-child margin reset) that belongs to the
- * assistant surface specifically.
+ * bodies, #546 PR6) without inheriting bubble geometry (padding) that
+ * belongs to the assistant surface specifically.
  *
  * Three invariants:
  *
  * 1. Prose element rules live under .maka-prose, not .maka-bubble-assistant.
- *    The shell keeps only container geometry + the generic first/last-child
- *    margin reset; element-specific typography (margins, font-size, list
- *    style, link/border, code padding, blockquote/table chrome) moves to
- *    .maka-prose.
+ *    The shell keeps only container geometry (padding); element typography
+ *    (margins, font-size, list style, link/border, code padding,
+ *    blockquote/table chrome) and the load-bearing base typography
+ *    (color / line-height / break-word / 72ch cap / edge trims — #618
+ *    item 2, locked by PROSE-SELF-CONTAINED in the polish contract below)
+ *    live on .maka-prose.
  *
  * 2. The assistant Bubble variant carries `maka-prose` alongside
  *    `maka-bubble-assistant`, so an assistant message actually renders the
  *    prose layer (the class is what activates the descendant rules).
  *
- * 3. .maka-prose is authored in chat-message.css (the message-body surface
- *    file) — one home, not scattered back into maka-tokens.css.
+ * 3. .maka-prose is authored in prose.css (the reusable markdown surface
+ *    file, split out of chat-message.css at the PR6 boundary — #618 item 3)
+ *    — one home, not scattered back into chat-message.css or maka-tokens.css.
  *
  * Scope note: this contract locks prose-element *ownership* (which selector
  * scope owns p/h/ul/... rules). The *values* those rules use (font-size,
@@ -36,6 +38,8 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { REPO_ROOT, stripCssComments } from './css-test-helpers.js';
 
+const PROSE_CSS = resolve(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'styles', 'prose.css');
+const MARKDOWN_BODY = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'markdown-body.tsx');
 const CHAT_MESSAGE_CSS = resolve(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'styles', 'chat-message.css');
 const TOKENS_CSS = resolve(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'maka-tokens.css');
 const CHAT_PRIMITIVE = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'primitives', 'chat.tsx');
@@ -43,7 +47,7 @@ const CHAT_PRIMITIVE = resolve(REPO_ROOT, 'packages', 'ui', 'src', 'primitives',
 /** Markdown block + inline elements whose typography the prose layer owns. */
 const PROSE_ELEMENTS = [
   'p', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a',
-  'code', 'pre', 'blockquote', 'table', 'th', 'td', 'hr',
+  'code', 'pre', 'blockquote', 'table', 'th', 'td', 'hr', 'img',
 ] as const;
 
 /**
@@ -68,7 +72,7 @@ function leafSelectors(css: string): string[] {
 
 describe('MARKDOWN-PROSE-CONVERGE-0 contract (#546 PR4)', () => {
   it('every Markdown prose element has a rule scoped under .maka-prose', async () => {
-    const css = await readFile(CHAT_MESSAGE_CSS, 'utf8');
+    const css = await readFile(PROSE_CSS, 'utf8');
     const selectors = leafSelectors(css);
     const missing: string[] = [];
     for (const el of PROSE_ELEMENTS) {
@@ -78,12 +82,15 @@ describe('MARKDOWN-PROSE-CONVERGE-0 contract (#546 PR4)', () => {
     assert.deepEqual(
       missing,
       [],
-      `chat-message.css must scope these prose elements under .maka-prose (found none): ${missing.join(', ')}`,
+      `prose.css must scope these prose elements under .maka-prose (found none): ${missing.join(', ')}`,
     );
   });
 
   it('no prose element rule lingers scoped under .maka-bubble-assistant', async () => {
-    const css = await readFile(CHAT_MESSAGE_CSS, 'utf8');
+    const css = [
+      await readFile(CHAT_MESSAGE_CSS, 'utf8'),
+      await readFile(PROSE_CSS, 'utf8'),
+    ].join('\n');
     const lingering: string[] = [];
     for (const el of PROSE_ELEMENTS) {
       // `.maka-bubble-assistant <el>` as a descendant — the old prose form.
@@ -110,11 +117,16 @@ describe('MARKDOWN-PROSE-CONVERGE-0 contract (#546 PR4)', () => {
     );
   });
 
-  it('.maka-prose is authored in chat-message.css, not repooled into maka-tokens.css', async () => {
+  it('.maka-prose is authored in prose.css, not repooled into chat-message.css or maka-tokens.css', async () => {
     const tokens = stripCssComments(await readFile(TOKENS_CSS, 'utf8'));
     assert.ok(
       !/\.maka-prose\b/.test(tokens),
-      '.maka-prose must live in chat-message.css (the message-body surface), not maka-tokens.css',
+      '.maka-prose must live in prose.css (the reusable markdown surface), not maka-tokens.css',
+    );
+    const chat = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    assert.ok(
+      !/\.maka-prose\b/.test(chat),
+      '.maka-prose must live in prose.css — chat-message.css keeps only message-surface chrome (#618 item 3)',
     );
   });
 });
@@ -136,15 +148,17 @@ describe('CODE-BLOCK-PRE-FONT-TIER-0 contract (#546 PR5)', () => {
   // The assistant code block <pre> must render at the UI/chrome tier
   // (--font-size-ui), NOT inherit the prose body size. A pre-existing reset
   //   [data-slot="message"] pre { margin: 0; font: inherit }   (specificity 0,1,1)
-  // authored LATER in chat-message.css clobbers a bare `.maka-prose pre` rule
-  // (same specificity 0,1,1, earlier source → loses). The code-block pre rule
+  // in chat-message.css sits in the same layer(components) as prose.css, so a
+  // bare `.maka-prose pre` rule (also 0,1,1) would win or lose on nothing but
+  // styles.css import order — a footgun either way. The code-block pre rule
   // must therefore carry an extra class — `.maka-prose .maka-code-block pre`
-  // (specificity 0,2,1) — so it outweighs the reset and the token tier holds.
-  // The reset itself stays, so non-code-block raw <pre> (user / system) still
-  // inherits the message font instead of falling back to the UA monospace.
+  // (specificity 0,2,1) — so it outweighs the reset regardless of file order
+  // and the token tier holds. The reset itself stays, so non-code-block raw
+  // <pre> (user / system) still inherits the message font instead of falling
+  // back to the UA monospace.
 
   it('the code-block pre is scoped to outweigh the [data-slot=message] reset and uses --font-size-ui', async () => {
-    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
     const blocks = cssBlocks(css);
     const cb = blocks.find(({ selectors, decls }) =>
       /\.maka-code-block\s+pre\b/.test(selectors)
@@ -172,7 +186,10 @@ describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
   // fix is pinned here.
 
   it('no structural :nth-last-child hacks on prose containers (PR #212 timestamp leftovers)', async () => {
-    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const css = stripCssComments([
+      await readFile(CHAT_MESSAGE_CSS, 'utf8'),
+      await readFile(PROSE_CSS, 'utf8'),
+    ].join('\n'));
     // The bubble stopped ending with an inline timestamp child long ago;
     // these selectors instead zeroed/inlined the second-to-last *markdown*
     // block (paragraph glued to a heading/table/code block above it).
@@ -199,7 +216,7 @@ describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
   });
 
   it('the code-block pre code reset clears the inline-code border', async () => {
-    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
     const blocks = cssBlocks(css);
     const reset = blocks.find(({ selectors, decls }) =>
       /\.maka-code-block\s+pre\s+code\b/.test(selectors) && /border:\s*0/.test(decls));
@@ -210,7 +227,7 @@ describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
   });
 
   it('prose tables are frameless with a reinforced header rule', async () => {
-    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
     const blocks = cssBlocks(css);
     const table = blocks.find(({ selectors }) => /^\.maka-prose\s+table$/.test(selectors));
     assert.ok(table, 'expected a .maka-prose table rule');
@@ -250,8 +267,85 @@ describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
     );
   });
 
+  it('the .maka-prose base rule is self-contained: load-bearing typography lives on the prose layer, not the shell', async () => {
+    // #618 item 2 (PR6 prerequisite): a bare `.maka-prose` consumer — none
+    // exists today beyond the assistant/system bubble (the tool-result-body
+    // consumer was reverted), but the layer must stay reusable — must not
+    // depend on `.maka-bubble-assistant` for line-height (the
+    // WCAG 1.4.12 floor — var(--leading-normal) = 1.5), word-wrap (no global
+    // overflow-wrap fallback exists — long URLs/tokens overflow horizontally),
+    // color, the 72ch measure cap, or the first/last-child edge-margin trims.
+    // Moving them is behavior-neutral in chat: the assistant div carries both
+    // classes, same specificity, same layer.
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const prose = blocks.find(({ selectors }) => selectors === '.maka-prose');
+    assert.ok(prose, 'expected a bare .maka-prose base rule in prose.css');
+    assert.match(prose!.decls, /color:\s*var\(--foreground\)/, '.maka-prose must set its own text color — a bare consumer would inherit whatever UI chrome surrounds it');
+    assert.match(prose!.decls, /font-family:\s*var\(--font-sans\)/, '.maka-prose must pin font-family — the tool card item shell sets font-mono, which inherits into the text-kind prose body (codex review P2)');
+    assert.match(prose!.decls, /font-size:\s*var\(--font-size-base\)/, '.maka-prose must pin font-size to the body tier — the tool card item shell sets text-xs (11px caption), which inherits into the prose body and scales the whole em-based heading ladder down (codex review P2)');
+    assert.match(prose!.decls, /line-height:\s*var\(--leading-normal\)/, '.maka-prose must pin line-height to var(--leading-normal): it is the WCAG 1.4.12 floor (1.5) — inherited UI line-heights can dip below it at 13px');
+    assert.match(prose!.decls, /(?:word-wrap|overflow-wrap):\s*break-word/, '.maka-prose must carry break-word — no global overflow-wrap fallback exists, so a bare consumer gets horizontally overflowing URLs/tokens');
+    assert.match(prose!.decls, /max-width:\s*72ch/, '.maka-prose must cap the measure at 72ch — the readability cap is prose typography, not bubble geometry');
+    assert.match(
+      css,
+      /\.maka-prose\s*>\s*:first-child\s*\{[^}]*margin-top:\s*0/,
+      '.maka-prose > :first-child must trim the leading margin — a bare consumer opening with a heading would carry its 20px top margin',
+    );
+    assert.match(
+      css,
+      /\.maka-prose\s*>\s*:last-child\s*\{[^}]*margin-bottom:\s*0/,
+      '.maka-prose > :last-child must trim the trailing margin',
+    );
+    // One home: the shell keeps only container geometry (padding). Duplicated
+    // typography on the shell would silently drift from the prose layer.
+    const chat = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const shell = cssBlocks(chat).find(({ selectors }) => selectors === '.maka-bubble-assistant');
+    assert.ok(shell, 'expected a .maka-bubble-assistant shell rule in chat-message.css');
+    for (const prop of ['color', 'line-height', 'word-wrap', 'overflow-wrap', 'max-width']) {
+      assert.ok(
+        !new RegExp(`(?:^|;)\\s*${prop}:`).test(shell!.decls),
+        `.maka-bubble-assistant must not duplicate ${prop} — it moved to .maka-prose (#618 item 2); the shell keeps only container geometry`,
+      );
+    }
+    assert.ok(
+      !/\.maka-bubble-assistant\s*>\s*:(first|last)-child/.test(chat),
+      'the edge-margin trims moved to .maka-prose > :first/:last-child — the shell must not keep a duplicate pair',
+    );
+    // Source-order guard (codex review P3): `.maka-prose > :last-child`
+    // (0,2,0) TIES with class-carrying children — `.maka-prose
+    // .maka-table-scroll` and `.maka-prose .maka-code-block` are also
+    // (0,2,0) — so whichever is declared later wins. The trims must be
+    // authored after every margin-declaring prose rule or a trailing
+    // table/code block keeps its 12px bottom margin and the edge trim
+    // silently dies.
+    const trimIdx = blocks.findIndex(({ selectors }) => /^\.maka-prose\s*>\s*:last-child$/.test(selectors));
+    assert.ok(trimIdx >= 0, 'expected a .maka-prose > :last-child trim rule');
+    for (const sel of [/^\.maka-prose\s+\.maka-table-scroll$/, /^\.maka-prose\s+\.maka-code-block$/]) {
+      const idx = blocks.findIndex(({ selectors }) => sel.test(selectors));
+      assert.ok(idx >= 0, `expected a rule matching ${sel}`);
+      assert.ok(
+        trimIdx > idx,
+        `the .maka-prose > :last-child trim must be authored AFTER ${sel} — equal specificity (0,2,0) means source order decides, and the margin rule would beat the trim`,
+      );
+    }
+  });
+
+  it('prose images flow inline again despite the Tailwind preflight block', async () => {
+    // #618 item 4: Tailwind v4 preflight sets `img { display: block;
+    // max-width: 100% }` in @layer base. A markdown image mid-paragraph
+    // (badge, inline icon) then breaks the line. layer(components)
+    // outranks base, so a .maka-prose img rule restores the inline flow;
+    // preflight's max-width: 100% + height: auto stay in effect.
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const img = blocks.find(({ selectors }) => /^\.maka-prose\s+img$/.test(selectors));
+    assert.ok(img, 'expected a .maka-prose img rule');
+    assert.match(img!.decls, /display:\s*inline-block/, 'prose img must restore inline flow (inline-block) over the preflight display: block');
+  });
+
   it('blockquote inner block margins are neutralized at both ends', async () => {
-    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
     const blocks = cssBlocks(css);
     const last = blocks.find(({ selectors, decls }) =>
       /\.maka-prose\s+blockquote\s*>\s*:last-child/.test(selectors) && /margin-bottom:\s*0/.test(decls));
@@ -265,5 +359,37 @@ describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
       first,
       'blockquote > :first-child must zero margin-top — the other end of the same stacking asymmetry',
     );
+  });
+});
+
+describe('TABLE-A11Y-SEMANTICS-0 contract (#618 item 5)', () => {
+  // The Phase B shrink-wrap shape put `display: block` on the table itself
+  // (GitHub's markdown CSS trade-off): the element stops generating a table
+  // box, Chromium drops the implicit table/row/cell ARIA roles, and screen
+  // readers lose table navigation. Proper fix: the markdown component layer
+  // wraps <table> in a scroll <div> and the table keeps `display: table` —
+  // semantics come back, the shrink-wrap (width: max-content) + 100% cap +
+  // overflow-x scroller behavior moves to the wrapper.
+
+  it('markdown-body wraps tables in a scroll div so the table keeps its ARIA semantics', async () => {
+    const src = await readFile(MARKDOWN_BODY, 'utf8');
+    assert.match(
+      src,
+      /table:[\s\S]{0,200}maka-table-scroll/,
+      'markdown-body.tsx must override `table` with a .maka-table-scroll wrapper div — scrolling on the table itself requires display: block, which strips the ARIA table roles',
+    );
+  });
+
+  it('prose tables keep display: table; the scroll behavior lives on the wrapper', async () => {
+    const css = stripCssComments(await readFile(PROSE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const table = blocks.find(({ selectors }) => /^\.maka-prose\s+table$/.test(selectors));
+    assert.ok(table, 'expected a .maka-prose table rule');
+    assert.match(table!.decls, /display:\s*table/, '.maka-prose table must generate a real table box (display: table) so Chromium keeps the implicit table/row/cell ARIA roles');
+    assert.ok(!/overflow-x/.test(table!.decls), 'the overflow-x scroller belongs on .maka-table-scroll, not the table (scrolling tables need display: block, which kills the semantics)');
+    const wrapper = blocks.find(({ selectors }) => /\.maka-prose\s+\.maka-table-scroll$/.test(selectors));
+    assert.ok(wrapper, 'expected a .maka-prose .maka-table-scroll wrapper rule');
+    assert.match(wrapper!.decls, /overflow-x:\s*auto/, 'the wrapper carries the horizontal scroller for over-wide tables');
+    assert.match(wrapper!.decls, /max-width:\s*100%/, 'the wrapper caps at the prose measure so wide tables scroll instead of stretching the bubble');
   });
 });
