@@ -876,6 +876,9 @@ describe('Maka Pi TUI runner', () => {
     assert.ok(exitIndex < modelIndex);
     assert.ok(modelIndex < permissionsIndex);
     assert.ok(permissionsIndex < sessionIndex);
+    // The whole menu is visible at once — including the last command
+    // alphabetically — so new commands don't push older ones below the fold.
+    assert.ok(output.indexOf('/thinking') > sessionIndex);
 
     terminal.input('\x03');
     await Promise.race([
@@ -1509,7 +1512,8 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('\r');
 
     await waitFor(() => terminal.output().includes('Resume Session (Current Folder)'));
-    await waitFor(() => terminal.output().includes('session-2'));
+    // The picker labels rows by human name, not the raw session id.
+    await waitFor(() => terminal.output().includes('Existing chat'));
     const titleLine = latestPlainLineContaining(terminal.output(), 'Resume Session (Current Folder)');
     assert.equal(titleLine.startsWith('Resume Session (Current Folder)'), true);
     assert.equal(visibleWidth(titleLine), terminal.columns);
@@ -1615,8 +1619,8 @@ describe('Maka Pi TUI runner', () => {
   test('shows only current-cwd sessions in the session picker', async () => {
     const terminal = new FakeTerminal();
     const driver = new SlashCommandDriver([
-      fakeSessionSummary('session-current', '/repo'),
-      fakeSessionSummary('session-other', '/elsewhere'),
+      fakeSessionSummary('session-current', '/repo', 'Current chat'),
+      fakeSessionSummary('session-other', '/elsewhere', 'Other chat'),
     ]);
     const run = runMakaPiTui({
       title: 'Maka',
@@ -1631,11 +1635,154 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('/session');
     terminal.input('\r');
 
-    await waitFor(() => terminal.output().includes('session-current'));
+    await waitFor(() => terminal.output().includes('Current chat'));
     const output = plainTerminalOutput(terminal.output());
-    assert.equal(output.includes('session-other'), false);
+    assert.equal(output.includes('Other chat'), false);
 
     terminal.input('\x1b');
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('the session picker scrolls through every session rather than capping', async () => {
+    const terminal = new FakeTerminal();
+    const sessions = Array.from({ length: 12 }, (_, i) => fakeSessionSummary(`session-${i}`, '/repo', `chat ${i}`));
+    const driver = new SlashCommandDriver(sessions);
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/session');
+    terminal.input('\r');
+
+    await waitFor(() => terminal.output().includes('Resume Session (Current Folder)'));
+    // All 12 are in the list (not sliced to 10): the scroll indicator counts the
+    // full total, so the window shows "(1/12)".
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('/12)'));
+    // And the 12th is genuinely reachable: scrolling down brings it into view,
+    // even though it starts below the visible window.
+    assert.equal(plainTerminalOutput(terminal.screenOutput()).includes('chat 11'), false);
+    for (let i = 0; i < 11; i += 1) terminal.input('\x1b[B');
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('chat 11'));
+
+    terminal.input('\x1b');
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('the session picker disambiguates same-named sessions by short id', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver([
+      fakeSessionSummary('aaaa1111-2222-3333', '/repo', 'Same name'),
+      fakeSessionSummary('bbbb4444-5555-6666', '/repo', 'Same name'),
+    ]);
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/session');
+    terminal.input('\r');
+
+    await waitFor(() => terminal.output().includes('Resume Session (Current Folder)'));
+    // Same label on both rows, but the short id in the description tells them apart.
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('aaaa1111'));
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('bbbb4444'));
+
+    terminal.input('\x1b');
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('/help lists commands and keybindings', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('/help');
+    terminal.input('\r');
+
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Commands'));
+    const out = plainTerminalOutput(terminal.output());
+    // Commands are derived from the registry, so a representative one shows up.
+    assert.ok(out.includes('/rewind'));
+    assert.ok(out.includes('Rewind to an earlier turn'));
+    assert.ok(out.includes('/new'));
+    // Keybindings — the whole reason /help exists (they are otherwise hidden).
+    assert.ok(out.includes('Keybindings'));
+    assert.ok(out.includes('Ctrl+O'));
+    assert.ok(out.includes('Esc Esc'));
+    assert.deepEqual(driver.prompts, []);
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('/new clears the transcript and starts a fresh session', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('remember this');
+    terminal.input('\r');
+    await waitFor(() => driver.prompts.length === 1);
+    await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('remember this'));
+
+    terminal.input('/new');
+    terminal.input('\r');
+
+    await waitFor(() => driver.startNewSessionCalls === 1);
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('Started a new session'));
+    // The previous turn is gone from the visible transcript.
+    await waitFor(() => !plainTerminalOutput(terminal.screenOutput()).includes('remember this'));
+
     terminal.input('\x03');
     await Promise.race([
       run,
@@ -2420,6 +2567,7 @@ class RejectingStopDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2495,6 +2643,7 @@ class PermissionPromptDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2545,6 +2694,7 @@ class InterruptibleTurnDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2599,6 +2749,7 @@ class SlowStopDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2663,6 +2814,7 @@ class HangingStopDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2717,6 +2869,7 @@ class ThinkingOutputDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2758,6 +2911,7 @@ class ScrollThenSwitchDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2795,6 +2949,7 @@ class MultiTurnLongDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2843,6 +2998,7 @@ class LongReplyDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2918,6 +3074,7 @@ class PermissionAfterLongDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -2990,6 +3147,7 @@ class PermissionThenTailDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3041,6 +3199,7 @@ class LateThinkingDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3091,6 +3250,7 @@ class StreamingTailDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3142,6 +3302,7 @@ class ShrinkingTailDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3196,6 +3357,7 @@ class MixedFrameDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3245,6 +3407,7 @@ class StreamRaceDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3312,6 +3475,7 @@ class ToolOutputDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3324,6 +3488,7 @@ class SlashCommandDriver implements MakaSessionDriver {
   readonly thinkingLevelUpdates: Array<ThinkingLevel | undefined> = [];
   readonly sessionIds: string[] = [];
   readonly renames: string[] = [];
+  startNewSessionCalls = 0;
   private sessionId = 'session-1';
 
   constructor(
@@ -3382,6 +3547,10 @@ class SlashCommandDriver implements MakaSessionDriver {
   }
   async rewindToTurn(_turnId: string): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
+  }
+  startNewSession(): void {
+    this.startNewSessionCalls += 1;
+    this.sessionId = 'session-new';
   }
   getSessionId(): string {
     return this.sessionId;
@@ -3508,6 +3677,7 @@ class DeferredControlDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3560,6 +3730,7 @@ class RejectingPermissionDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3644,6 +3815,7 @@ class PermissionThenErrorDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3688,6 +3860,7 @@ class QuickErrorDriver implements MakaSessionDriver {
   async rewindToTurn(): Promise<MakaSessionSwitchResult> {
     throw new Error('rewind not supported in this fake');
   }
+  startNewSession(): void {}
   getSessionId(): string {
     return 'session-1';
   }
@@ -3717,11 +3890,11 @@ function switchResult(summary: SessionSummary, messages: StoredMessage[] = []): 
   return { summary, messages };
 }
 
-function fakeSessionSummary(sessionId: string, cwd = '/repo'): SessionSummary {
+function fakeSessionSummary(sessionId: string, cwd = '/repo', name = 'Existing chat'): SessionSummary {
   return {
     id: sessionId,
     cwd,
-    name: 'Existing chat',
+    name,
     isFlagged: false,
     isArchived: false,
     labels: [],

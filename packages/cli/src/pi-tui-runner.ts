@@ -104,7 +104,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
   const transcript = new MakaTranscriptComponent(state, metadata);
   const statusLine = new MakaStatusLineComponent(metadata);
-  const editor = new Editor(tui, editorTheme(), { paddingX: 1, autocompleteMaxVisible: 8 });
+  // Show the whole slash-command set at once — discoverability is the point of
+  // the menu. Keep a little headroom above the current command count.
+  const editor = new Editor(tui, editorTheme(), { paddingX: 1, autocompleteMaxVisible: EDITOR_AUTOCOMPLETE_MAX_VISIBLE });
   const editorSurface = new MakaAutocompleteAboveEditorComponent(editor);
   const layout = new MakaPiLayoutComponent(transcript, editorSurface, statusLine, terminal);
   const attention = new AttentionController(terminal, {
@@ -408,10 +410,14 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       return;
     }
 
-    const items: SelectItem[] = currentSessions.slice(0, 10).map((session) => ({
+    // Recency-sorted. Label each row by its human name (the id is the selection
+    // value, not something the user should have to read) and disambiguate
+    // same-named sessions with a short id in the description. The list scrolls,
+    // so every session stays reachable — nothing is capped or hidden.
+    const items: SelectItem[] = currentSessions.map((session) => ({
       value: session.id,
-      label: session.id,
-      description: `${session.name} ${session.model}`,
+      label: session.name || session.id,
+      description: `${shortSessionId(session.id)} ${session.model}`,
     }));
     showSelectPicker(
       'Resume Session (Current Folder)',
@@ -448,6 +454,41 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       },
       { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 48 },
     );
+  };
+
+  const newSession = () => {
+    input.driver.startNewSession();
+    // Fresh transcript for the fresh session; the next prompt creates it on disk.
+    replaceTranscriptWithStoredMessages(state, []);
+    layout.followTailNow();
+    state.entries.push({
+      kind: 'notice',
+      level: 'info',
+      text: 'Started a new session. Send a prompt to begin.',
+    });
+    requestRender();
+  };
+
+  const showHelp = () => {
+    // Derive the command list from the registry so /help never drifts from the
+    // real commands. Keybindings are not commands, so they are listed by hand.
+    const commands = slashCommands
+      .map((command) => `  /${command.name} — ${command.description}`)
+      .join('\n');
+    const keybindings = [
+      '  Ctrl+O — expand or collapse all tool output',
+      '  Ctrl+T — expand or collapse the latest thinking block',
+      '  PageUp / PageDown — scroll the transcript',
+      '  Esc Esc (during a turn) — interrupt the turn',
+      '  Esc Esc (when idle) — rewind to an earlier turn',
+      '  Ctrl+C / Ctrl+D — exit Maka',
+    ].join('\n');
+    state.entries.push({
+      kind: 'notice',
+      level: 'info',
+      text: `Commands\n${commands}\n\nKeybindings\n${keybindings}`,
+    });
+    requestRender();
   };
 
   const showModelList = () => {
@@ -533,6 +574,20 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       description: 'Exit Maka',
       run: () => {
         void close();
+      },
+    },
+    {
+      name: 'help',
+      description: 'Show commands and keybindings',
+      run: () => {
+        void runControl(async () => showHelp());
+      },
+    },
+    {
+      name: 'new',
+      description: 'Start a new session',
+      run: () => {
+        void runControl(async () => newSession());
       },
     },
     {
@@ -1167,6 +1222,17 @@ function padLine(text: string, width: number): string {
 }
 
 const BOTTOM_PICKER_MARGIN_ROWS = 4;
+
+// The editor's autocomplete window height. Sized to fit the whole slash-command
+// menu (10 today) with headroom, so a bare `/` shows every command rather than
+// scrolling a subset.
+const EDITOR_AUTOCOMPLETE_MAX_VISIBLE = 12;
+
+// A short, stable slice of a session id — enough to tell two same-named
+// sessions apart in the picker without showing the full unreadable uuid.
+function shortSessionId(id: string): string {
+  return id.slice(0, 8);
+}
 
 // Two Escapes this close together read as one deliberate "stop the turn".
 const DOUBLE_ESCAPE_INTERRUPT_WINDOW_MS = 600;
