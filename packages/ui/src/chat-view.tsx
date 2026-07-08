@@ -19,7 +19,7 @@ import {
 import { DeepResearchEmptyHero, EmptyChatHero } from './chat-empty-hero.js';
 import { type ClipboardCopyPhase, useClipboardCopyFeedback } from './clipboard-feedback.js';
 import { Markdown } from './markdown.js';
-import { formatAbsoluteTimestamp, turnAbortMarkerLabel } from './chat-display-helpers.js';
+import { formatAbsoluteTimestamp, formatClockTime, turnAbortMarkerLabel } from './chat-display-helpers.js';
 import type { ChatModelChoice } from './chat-model-helpers.js';
 import { prepareSmoothStreamText, useSmoothStreamContent } from './smooth-stream.js';
 import { tokenizeFade, useStreamFade, type StreamFade } from './stream-fade.js';
@@ -72,7 +72,6 @@ function ModulePanelFallback(props: { message: string }) {
     </div>
   );
 }
-import { RelativeTime } from './relative-time.js';
 import { ToolTrow } from './tool-activity.js';
 
 /**
@@ -314,6 +313,29 @@ export function ChatView(props: {
   const storedTools = useMemo(() => materializeTools(visibleMessages), [visibleMessages]);
   const tools = useMemo(() => mergeTools(storedTools, props.tools), [storedTools, props.tools]);
   const turns = useMemo(() => materializeTurns(visibleMessages, props.tools), [visibleMessages, props.tools]);
+  // #642 single render path: the in-flight answer is injected into the tail
+  // turn's TurnView (the SAME node as the eventual committed turn) instead of a
+  // separate streaming <section>, so live→settled is a data-source swap, not an
+  // unmount/mount. The streaming turn is always the last turn: the user message
+  // is committed optimistically (showOptimisticUserMessage) before streaming
+  // starts, so `materializeTurns` already emits it — with an empty assistant
+  // timeline — as `turns[last]`. Only the tail TurnView gets a fresh
+  // `liveStreaming` object per delta (→ it alone re-renders); every sibling
+  // gets a stable `undefined` and its memo skips (the plain-text perf path).
+  // A turn is "still live" — and must keep its non-actionable footer placeholder
+  // instead of a clickable regenerate/branch — while ANY of text, thinking, OR a
+  // tool is in flight. Deriving liveness from streamingText/thinkingText alone
+  // let a tool-only step (tool_start with no answer text yet) fall through to the
+  // settled branch, whose derived status is `completed`, rendering an actionable
+  // footer on a still-running answer (review P2-B). LiveStreamingEntries already
+  // no-ops when text and thinking are both empty, so a tool-only tail renders the
+  // running tool from its timeline with no empty live bubble.
+  const hasInFlightTool = props.tools.some(
+    (tool) =>
+      tool.status === 'running' || tool.status === 'pending' || tool.status === 'waiting_permission',
+  );
+  const streamingActive = !!(props.streamingText || props.thinkingText || hasInFlightTool);
+  const tailTurnId = streamingActive ? turns[turns.length - 1]?.turnId : undefined;
   // One rail tick per turn that carries a user prompt (Codex-style prompt
   // navigation). Memoized so the rail's IntersectionObserver isn't rebuilt
   // on every render.
@@ -622,7 +644,7 @@ export function ChatView(props: {
               )
             )
           )}
-          {turns.map((turn, idx) => {
+          {turns.map((turn) => {
             return (
               <TurnView
                 key={turn.turnId}
@@ -635,83 +657,40 @@ export function ChatView(props: {
                 lineageBadges={props.turnLineageBadgesByTurn?.[turn.turnId]}
                 onLineageBadgeClick={stableLineageBadgeClick}
                 searchHighlighted={highlightedTurnId === turn.turnId}
+                liveStreaming={
+                  turn.turnId === tailTurnId
+                    ? {
+                        streamingText: props.streamingText ?? '',
+                        thinkingText: props.thinkingText,
+                        streamingComplete: props.streamingComplete,
+                        streamingTruncated: props.streamingTruncated,
+                        thinkingTruncated: props.thinkingTruncated,
+                        onStreamingSettled: props.onStreamingSettled,
+                      }
+                    : undefined
+                }
               />
             );
           })}
-          {(props.streamingText || props.thinkingText) && (
-            // PR-STREAM-TURN-CENTER: the in-flight answer must use the SAME
-            // `.maka-turn` shell a committed turn uses. `.maka-turn` owns the
-            // centered 680px reading column (max-width + margin:0 auto). A bare
-            // `.message.assistant` instead left-aligns — its unlayered
-            // margin-right:auto outranks `.maka-message-row`'s margin:0 auto —
-            // so without this wrapper the streaming answer rendered ~110px left
-            // of where it lands once committed, a visible horizontal jump on
-            // text_complete. Wrapping here makes streaming structurally
-            // identical to TurnView's committed turn.
-            <section className="maka-turn maka-turn-streaming">
-              <Message variant="assistant">
-                {/* Same `flex flex-col gap-2` timeline wrapper a committed turn
-                    uses (TurnView), so the live 深度思考 + answer share the exact
-                    spacing rhythm and chrome as the settled timeline — the two
-                    DeepThinking sites are structurally identical. */}
+          {/* #642 fallback: streaming began before the optimistic user turn
+              materialized (rare — e.g. an event replay while messages are still
+              loading), so there is no tail turn to inject into. Render the live
+              answer in a bare `.maka-turn` so it isn't dropped. Mutually
+              exclusive with the tail injection above (only fires when
+              `tailTurnId` is undefined), so the answer never double-renders. */}
+          {streamingActive && !tailTurnId && (
+            <section className="maka-turn" data-live-streaming="true">
+              <Message variant="assistant" className="group/answer">
                 <div className="flex flex-col gap-2">
-                  {/* PR-UI-LAYOUT-42: Reasoning panel for Anthropic-style
-                   * extended thinking. Renders ABOVE the streaming
-                   * answer because thinking always precedes the
-                   * answer. Default-open during streaming so the user
-                   * sees the model reasoning; users can collapse it
-                   * if too verbose. The panel disappears entirely on
-                   * text_complete / abort / error (parent clears the
-                   * thinkingBySession entry). */}
-                  {props.thinkingText && (
-                    <DeepThinking
-                      text={props.thinkingText}
-                      live={!props.streamingText}
-                      truncated={props.thinkingTruncated === true}
-                    />
-                  )}
-                  {props.streamingText && (
-                    <StreamingAssistantBubble
-                      text={props.streamingText}
-                      live={props.streamingComplete !== true}
-                      truncated={props.streamingTruncated === true}
-                      onSettled={props.onStreamingSettled}
-                    />
-                  )}
+                  <LiveStreamingEntries
+                    streamingText={props.streamingText ?? ''}
+                    thinkingText={props.thinkingText}
+                    streamingComplete={props.streamingComplete}
+                    streamingTruncated={props.streamingTruncated}
+                    thinkingTruncated={props.thinkingTruncated}
+                    onStreamingSettled={props.onStreamingSettled}
+                  />
                 </div>
-                {/* Equal-height placeholder for the turn footer toolbar
-                    (TurnFooterActions: mt-0.5 + h-8 buttons). The committed
-                    turn mounts a footer the live section doesn't have; in a
-                    bottom-pinned chat that extra row used to re-anchor the
-                    scroll and shift the whole conversation up by the footer
-                    height at the settle swap. Reserving the same box here
-                    makes the swap height-neutral — the real footer then only
-                    fades in (opacity, no layout). Outside the gap-2 timeline
-                    div, mirroring the committed structure.
-
-                    Unconditional (not gated on streamingText): a settled turn
-                    ALWAYS mounts a footer — deriveTurnFooterActions yields
-                    regenerate/branch from TurnStatus alone, independent of
-                    answer text (turn-footer-actions.ts), and materialize emits
-                    a timeline item for a step's thinking even with empty text
-                    (materialize.ts). So a thinking-only / textless turn
-                    (think → tool → end, or aborted mid-think) settles WITH a
-                    footer too; gating the placeholder on streamingText left
-                    that shape unreserved. We are already inside the
-                    `streamingText || thinkingText` section, so rendering it
-                    always reserves the footer box for every live turn.
-
-                    Groundwork, not a full fix for the textless case: this only
-                    makes the swap height-neutral when the live section is held
-                    until the committed footer mounts. Text turns get that via
-                    the draining→settleAssistantStreaming handshake (refresh the
-                    committed message BEFORE clearing the live slot). Textless /
-                    thinking-only completion currently clears the live section
-                    first and refreshes messages async (drainAssistantStreaming
-                    `!applied.text`), so the swap is non-atomic and can still
-                    flash for that shape. Closing that is tracked in the
-                    single-render-path convergence (#642), which removes the
-                    two-subtree seam entirely. */}
                 <div aria-hidden="true" className="mt-0.5 h-8" />
               </Message>
             </section>
@@ -810,12 +789,13 @@ function AttachmentImage(props: { attachment: AttachmentRef }) {
 const MessageBody = memo(function MessageBody(props: { role: string; text: string; ts?: number; attachments?: readonly AttachmentRef[] }) {
   if (props.role === 'user') {
     // User turn: the message sits in a tinted, width-capped block aligned to
-    // the right (so the right-anchor reads even for long messages), with a
-    // quiet always-visible time + a copy affordance in a meta row beneath it.
-    // The time is no longer hover-gated (was `opacity: 0` until hover, which
-    // hid it from touch + assistive tech). Copy reuses MessageCopyButton in
-    // `footerStyle`, so it's the same quiet ghost action as the assistant
-    // turn footer's copy (same primitive + `markerVariants('footer-action')`).
+    // the right (so the right-anchor reads even for long messages), with an
+    // absolute HH:mm time + a copy affordance in a meta row beneath it. #642:
+    // the whole meta row is hover-gated on the user bubble (`group/usermsg`) —
+    // hidden at rest, revealed on hover / focus-within, matching the assistant
+    // footer's hover reveal. Copy reuses MessageCopyButton in `footerStyle`, so
+    // it's the same quiet ghost action as the assistant turn footer's copy
+    // (same primitive + `markerVariants('footer-action')`).
     return (
       <>
         <Bubble variant="user">
@@ -837,9 +817,20 @@ const MessageBody = memo(function MessageBody(props: { role: string; text: strin
             </div>
           ) : null}
         </Bubble>
-        <div className="maka-message-meta">
+        {/* #642: the whole meta row — absolute HH:mm time + copy — hides by
+            default and appears when the user bubble is hovered or keyboard
+            focus lands inside (keys off `group/usermsg` on the user Message).
+            Absolute wall-clock time (not relative "N 小时前"); the full date
+            stays on the time's `title` and the bubble's own `title`. */}
+        <div className="maka-message-meta opacity-0 [transition:opacity_var(--duration-quick)_var(--ease-out-strong)] group-hover/usermsg:opacity-100 focus-within:opacity-100">
           {props.ts !== undefined && (
-            <RelativeTime ts={props.ts} className="maka-message-time-inline" />
+            <small
+              className="maka-message-time-inline tabular-nums"
+              aria-hidden="true"
+              title={formatAbsoluteTimestamp(props.ts)}
+            >
+              {formatClockTime(props.ts)}
+            </small>
           )}
           <MessageCopyButton text={props.text} footerStyle />
         </div>
@@ -1041,28 +1032,37 @@ const TurnView = memo(function TurnView(props: {
   onLineageBadgeClick?: (targetTurnId: string) => void;
   /** True when a search result just navigated to this turn. */
   searchHighlighted?: boolean;
+  /**
+   * #642 single render path: set only on the active streaming tail turn. When
+   * present, the assistant `Message` renders the live 深度思考 + answer bubble as
+   * the trailing entries of its timeline — the SAME node the committed turn
+   * will settle into, so live→settled is a data-source swap (no unmount/mount).
+   * While live the footer is a reserved-height placeholder, not the real
+   * `TurnFooterActions`: the tail turn's derived status is `completed` (a live
+   * turn has no `turn_state`), so rendering the real footer would offer a
+   * clickable regenerate/branch on a still-streaming answer.
+   */
+  liveStreaming?: {
+    streamingText: string;
+    thinkingText?: string;
+    streamingComplete?: boolean;
+    streamingTruncated?: boolean;
+    thinkingTruncated?: boolean;
+    onStreamingSettled?: () => void;
+  };
 }) {
   const { turn } = props;
   const forwardBadges = props.lineageBadges?.filter((b) => b.direction === 'forward') ?? [];
   const reverseBadges = props.lineageBadges?.filter((b) => b.direction === 'reverse') ?? [];
-  // Streaming-settle polish: fade the footer toolbar in ONLY when it appears
-  // on an already-mounted turn (a live turn just settled). Turns hydrated from
-  // history mount WITH their footer and must not animate (default mounts don't
-  // animate — motion doc), so a ref pins whether the footer was VISIBLE at
-  // mount. "Visible" must mirror the render condition — the footer renders
-  // inside the `turn.timeline.length > 0` assistant block, and during a live
-  // turn `footerActions` can already be non-empty while the timeline is still
-  // empty; keying the ref on footerActions alone would mark it present-at-
-  // mount and suppress the entrance. Once the footer has appeared the class
-  // is inert: CSS animations run on element insertion only, so later
-  // re-renders never re-flash it.
-  const footerVisible = turn.timeline.length > 0 && !!(props.footerActions && props.footerActions.length > 0);
-  const footerVisibleOnMountRef = useRef(footerVisible);
-  const footerEntrance = footerVisible && !footerVisibleOnMountRef.current;
+  // The assistant `Message` mounts once the turn has any timeline content OR
+  // this is the live streaming tail (a thinking-only / textless streaming turn
+  // has an empty committed timeline but must still show its live answer block).
+  const showAssistantMessage = turn.timeline.length > 0 || !!props.liveStreaming;
   return (
     <section
       className="maka-turn"
       data-turn-id={turn.turnId}
+      data-live-streaming={props.liveStreaming ? 'true' : undefined}
       data-search-highlight={props.searchHighlighted ? 'true' : undefined}
       tabIndex={props.searchHighlighted ? -1 : undefined}
     >
@@ -1090,6 +1090,7 @@ const TurnView = memo(function TurnView(props: {
           variant="user"
           aria-label="你发送的消息"
           title={turn.user.ts ? formatAbsoluteTimestamp(turn.user.ts) : undefined}
+          className="group/usermsg"
         >
           <MessageBody role="user" text={turn.user.text} ts={turn.user.ts} attachments={turn.user.attachments} />
         </Message>
@@ -1103,11 +1104,12 @@ const TurnView = memo(function TurnView(props: {
           <MessageBody role="system" text={note.text} ts={note.ts} />
         </Message>
       ))}
-      {turn.timeline.length > 0 && (
+      {showAssistantMessage && (
         <Message
           variant="assistant"
           data-turn-status={turn.status}
           aria-label="Maka 的回答"
+          className="group/answer"
         >
           <div className="flex flex-col gap-2">
             {/* PR109d-c: aborted turn gets a muted "(已中断)" marker + Ban icon
@@ -1143,6 +1145,22 @@ const TurnView = memo(function TurnView(props: {
             {turn.timeline.map((item, index) => (
               <TurnTimelineEntry key={timelineEntryKey(item, index)} item={item} />
             ))}
+            {/* #642: live 深度思考 + answer bubble as the trailing entries of the
+                tail turn. On settle these are replaced by the committed
+                timeline items above (same turnId → same node) — a data-source
+                swap, not an unmount/mount. In a multi-step turn, earlier
+                committed steps render above via `turn.timeline`; only the
+                in-flight step rides here. */}
+            {props.liveStreaming && (
+              <LiveStreamingEntries
+                streamingText={props.liveStreaming.streamingText}
+                thinkingText={props.liveStreaming.thinkingText}
+                streamingComplete={props.liveStreaming.streamingComplete}
+                streamingTruncated={props.liveStreaming.streamingTruncated}
+                thinkingTruncated={props.liveStreaming.thinkingTruncated}
+                onStreamingSettled={props.liveStreaming.onStreamingSettled}
+              />
+            )}
           </div>
           {reverseBadges.length > 0 && (
             <Marker variant="lineage-row-reverse" aria-label="本轮回答的衍生">
@@ -1163,13 +1181,22 @@ const TurnView = memo(function TurnView(props: {
               ))}
             </Marker>
           )}
-          {props.footerActions && props.footerActions.length > 0 && (
-            <TurnFooterActions
-              actions={props.footerActions}
-              onAction={props.onFooterAction ? (actionId) => props.onFooterAction?.(turn.turnId, actionId) : undefined}
-              assistantText={turn.assistant?.text ?? ''}
-              entrance={footerEntrance}
-            />
+          {props.liveStreaming ? (
+            /* #642: reserved-height footer placeholder while streaming — same
+               `mt-0.5 h-8` box the real footer occupies, so the live→settled
+               swap is height-neutral (the footer slot never grows/shrinks). No
+               actionable footer here: the live tail's derived status is
+               `completed`, so a real `TurnFooterActions` would render a
+               clickable regenerate/branch on a still-streaming answer. */
+            <div aria-hidden="true" className="mt-0.5 h-8" />
+          ) : (
+            props.footerActions && props.footerActions.length > 0 && (
+              <TurnFooterActions
+                actions={props.footerActions}
+                onAction={props.onFooterAction ? (actionId) => props.onFooterAction?.(turn.turnId, actionId) : undefined}
+                assistantText={turn.assistant?.text ?? ''}
+              />
+            )
           )}
         </Message>
       )}
@@ -1261,12 +1288,6 @@ function TurnFooterActions(props: {
   onAction?: (actionId: TurnFooterActionMeta['id']) => void;
   /** Assistant text used by the inline copy action. */
   assistantText?: string;
-  /**
-   * True when this footer appeared on an already-mounted turn (a live turn
-   * just settled): fade it in instead of popping. History-hydrated turns pass
-   * false — default mounts don't animate.
-   */
-  entrance?: boolean;
 }) {
   const [copyPhase, setCopyPhase] = useState<ClipboardCopyPhase | null>(null);
   const copyPendingRef = useRef(false);
@@ -1326,13 +1347,6 @@ function TurnFooterActions(props: {
       variant="footer"
       role="toolbar"
       aria-label="本轮回答操作"
-      // Settle entrance: opacity-only fade via the governed
-      // `@keyframes maka-footer-fade-in` (maka-tokens.css) — a `from`-only
-      // keyframe so the fade lands on the footer's own quiet 0.72 opacity
-      // instead of pinning 1. Reduced-motion collapses the duration via the
-      // base.css globals; visual-smoke never exercises a live settle, so the
-      // paused-at-0% hazard cannot occur.
-      className={props.entrance ? '[animation:maka-footer-fade-in_var(--duration-large)_var(--ease-out-strong)_both]' : undefined}
     >
       {props.actions.map((action) => {
         // Per @kenji review: pending state must keep the original button
@@ -1410,6 +1424,44 @@ const STATUS_FOOTER_ICON: Record<TurnFooterActionMeta['id'], ReactNode> = {
  * `live=false` after `text_complete`: keep the bubble mounted until
  * the smoother catches up, then notify the parent to hand off to history.
  */
+/**
+ * #642 single render path: the live 深度思考 + streaming answer, rendered as the
+ * trailing entries of the active tail turn. Shared by `TurnView` (the normal
+ * path — injected into the committed tail turn's timeline) and the ChatView
+ * fallback (rare: streaming began before the optimistic user turn materialized).
+ * Thinking renders above the answer (it always precedes it) and is `live` only
+ * until the answer text starts; the answer bubble fires `onStreamingSettled`
+ * once it finishes catching up.
+ */
+function LiveStreamingEntries(props: {
+  streamingText: string;
+  thinkingText?: string;
+  streamingComplete?: boolean;
+  streamingTruncated?: boolean;
+  thinkingTruncated?: boolean;
+  onStreamingSettled?: () => void;
+}) {
+  return (
+    <>
+      {props.thinkingText && (
+        <DeepThinking
+          text={props.thinkingText}
+          live={!props.streamingText}
+          truncated={props.thinkingTruncated === true}
+        />
+      )}
+      {props.streamingText && (
+        <StreamingAssistantBubble
+          text={props.streamingText}
+          live={props.streamingComplete !== true}
+          truncated={props.streamingTruncated === true}
+          onSettled={props.onStreamingSettled}
+        />
+      )}
+    </>
+  );
+}
+
 function StreamingAssistantBubble(props: { text: string; live: boolean; truncated?: boolean; onSettled?: () => void }) {
   // PR-UI-C1 review fixup (@kenji msg fbb8f119): the smoother
   // typewriters PREFIXES of its input string. If the raw text
@@ -1559,9 +1611,10 @@ function DeepThinking(props: { text: string; live: boolean; truncated?: boolean 
             已截断
           </span>
         )}
-        {/* Quiet trailing chevron: rides in on hover / open, matching the tool
-            trow rows. No always-on affordance so the folded row stays calm. */}
-        <span className="ml-auto inline-flex shrink-0 items-center text-[color:var(--muted-foreground)] opacity-0 [transition:opacity_var(--duration-quick)_var(--ease-out-strong)] group-hover:opacity-100 group-data-[panel-open]:opacity-100">
+        {/* Quiet chevron sits right after the label (near the text, not pinned
+            to the far edge), rides in on hover / open, matching the tool trow
+            rows. No always-on affordance so the folded row stays calm. */}
+        <span className="inline-flex shrink-0 items-center text-[color:var(--muted-foreground)] opacity-0 [transition:opacity_var(--duration-quick)_var(--ease-out-strong)] group-hover:opacity-100 group-data-[panel-open]:opacity-100">
           <ChevronRight
             size={14}
             strokeWidth={2}
@@ -1587,7 +1640,11 @@ function DeepThinking(props: { text: string; live: boolean; truncated?: boolean 
             </pre>
           ) : (
             <>
-              <div className="whitespace-pre-wrap [word-break:break-word] text-[length:var(--font-size-caption)] leading-normal text-[color:var(--muted-foreground)]">
+              {/* Same `max-h-64 overflow-y-auto` bound as the live `<pre>` above
+                  so an expanded panel doesn't jump taller the frame thinking
+                  settles (live→settled swaps this body in place). Long reasoning
+                  stays a compact scroll box in both states. */}
+              <div className="max-h-64 overflow-y-auto whitespace-pre-wrap [word-break:break-word] text-[length:var(--font-size-caption)] leading-normal text-[color:var(--muted-foreground)]">
                 {props.text}
               </div>
               <div className="absolute right-0 top-0 opacity-0 [transition:opacity_var(--duration-quick)_var(--ease-out-strong)] group-hover/reasoning:opacity-100 focus-within:opacity-100">
