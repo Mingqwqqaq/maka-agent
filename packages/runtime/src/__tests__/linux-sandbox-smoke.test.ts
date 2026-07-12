@@ -9,6 +9,7 @@ import { detectLinuxSandboxCapability } from '../sandbox/linux-capability.js';
 import { runProcessWithBoundedTail } from '../shell-exec.js';
 
 const capability = detectLinuxSandboxCapability();
+const requireLinuxSandboxSmoke = process.env.MAKA_REQUIRE_LINUX_SANDBOX_SMOKE === '1';
 const skipReason = process.platform !== 'linux'
   ? 'Linux sandbox smoke runs only on Linux'
   : capability.available
@@ -16,6 +17,10 @@ const skipReason = process.platform !== 'linux'
     : 'bubblewrap is not available';
 
 describe('Linux sandbox smoke', () => {
+  test('required Linux sandbox capability is available', { skip: !requireLinuxSandboxSmoke }, () => {
+    assert.equal(skipReason, false, capabilityFailureMessage());
+  });
+
   test('workspace-write can write workspace files and blocks sibling paths', { skip: skipReason }, async () => {
     if (!capability.available) return;
     const workspace = await mkdtemp(join(tmpdir(), 'maka-linux-sandbox-workspace-'));
@@ -105,6 +110,14 @@ describe('Linux sandbox smoke', () => {
     assert.equal(result.stdout, 'EPERM');
   });
 });
+
+function capabilityFailureMessage(): string {
+  if (process.platform !== 'linux') return 'Linux sandbox smoke requires a Linux runner';
+  if (capability.available) return '';
+  return `Linux sandbox smoke requires usable bubblewrap (${capability.reason})${
+    capability.detail ? `: ${capability.detail}` : ''
+  }`;
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
