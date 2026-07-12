@@ -24,6 +24,7 @@ import { formatAbsoluteTimestamp, formatClockTime, turnAbortMarkerLabel } from '
 import type { ChatModelChoice } from './chat-model-helpers.js';
 import { prepareSmoothStreamText, useSmoothStreamContent } from './smooth-stream.js';
 import { createPinnedBottomFollower } from './pinned-bottom.js';
+import { createTurnSizeWarmup } from './turn-size-warmup.js';
 import { tokenizeFade, useStreamFade, type StreamFade } from './stream-fade.js';
 import { OverlayScrollArea } from './overlay-scroll-area.js';
 import { DialogContent, DialogRoot } from './ui.js';
@@ -350,6 +351,55 @@ export function ChatView(props: {
       isPinned: () => pinnedToBottomRef.current,
     });
   }, [props.activeSession?.id]);
+
+  // Warm up `content-visibility: auto` turns once per transcript DOM so every
+  // turn's real height replaces the 250px `contain-intrinsic-size` estimate.
+  // Without this, scrolling up through never-rendered history keeps inflating
+  // the document and the top recedes ("endless scroll"). Keyed on hasTurns so
+  // the walk starts when history arrives, without re-walking per message.
+  // Section switches need no dependency here: since #831 ChatView mounts only
+  // for sessions, so leaving chat unmounts the component with its scroll DOM
+  // and returning re-runs every effect against the rebuilt `.maka-turn` nodes
+  // (which have no remembered sizes — the E2E mode-switch test locks this).
+  // Gated so sizes are remembered from the FINAL layout, not a transient one
+  // (a stale remembered size gets re-corrected on every viewport arrival —
+  // exactly the drift this walk exists to remove):
+  // - document.fonts.ready: fallback glyph metrics shift prose heights;
+  // - no `.maka-markdown-pending` left in the tree: until the lazy
+  //   markdown-body chunk commits, every bubble is the plain-text Suspense
+  //   fallback (~7.5px taller per turn). Awaiting the import is NOT enough —
+  //   the Suspense retry is a low-priority render that can commit after an
+  //   idle callback — so the DOM is the authority, polled until it settles.
+  //   No warm-anyway deadline: warming a layout the markdown commit is about
+  //   to replace would re-create the drift, and if the chunk never loads the
+  //   un-warmed placeholder geometry is the least of the session's problems.
+  const hasTurns = turns.length > 0;
+  useEffect(() => {
+    if (!hasTurns) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    let disposed = false;
+    let cancelWarmup: (() => void) | undefined;
+    let pollTimer: number | undefined;
+    const warmOnceSettled = () => {
+      if (disposed) return;
+      if (root.querySelector('.maka-markdown-pending')) {
+        pollTimer = window.setTimeout(warmOnceSettled, 100);
+        return;
+      }
+      cancelWarmup = createTurnSizeWarmup({
+        turns: () => root.querySelectorAll<HTMLElement>('.maka-turn'),
+      });
+    };
+    const fontsReady: Promise<unknown> =
+      typeof document !== 'undefined' && document.fonts ? document.fonts.ready : Promise.resolve();
+    void fontsReady.then(warmOnceSettled);
+    return () => {
+      disposed = true;
+      window.clearTimeout(pollTimer);
+      cancelWarmup?.();
+    };
+  }, [props.activeSession?.id, hasTurns]);
 
   useEffect(() => {
     const target = props.scrollTargetTurn;
