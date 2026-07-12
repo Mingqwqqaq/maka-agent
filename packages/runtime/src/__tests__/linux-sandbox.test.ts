@@ -140,6 +140,22 @@ describe('buildBubblewrapArgv', () => {
     assert.equal(argv.includes('--unshare-net'), false);
     assert.equal(argv.includes('--seccomp'), false);
   });
+
+  it('mounts an absolute program directory outside the default host paths', () => {
+    const request = workspaceRequest(createWorkspaceWritePermissionProfile());
+    const programDirectory = '/opt/hostedtoolcache/node/22.23.1/x64/bin';
+    const argv = buildBubblewrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      command: {
+        ...request.command,
+        program: `${programDirectory}/node`,
+      },
+    });
+
+    assert.ok(hasPair(argv, '--dir', '/opt'));
+    assert.ok(hasPair(argv, '--dir', '/opt/hostedtoolcache/node/22.23.1/x64'));
+    assert.ok(hasTriple(argv, '--ro-bind', programDirectory, programDirectory));
+  });
 });
 
 describe('buildNetworkSeccompFilter', () => {

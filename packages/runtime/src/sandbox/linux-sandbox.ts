@@ -203,7 +203,17 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
     argv.push('--ro-bind-try', path, path);
   }
 
+  const programDirectory = absoluteProgramDirectory(command.program);
+  const extraProgramDirectories = programDirectory
+    && !isCoveredByAnyRoot(programDirectory, [
+      ...DEFAULT_READ_ONLY_HOST_PATHS,
+      ...roots.readableRoots,
+      ...roots.writableRoots,
+    ])
+    ? [programDirectory]
+    : [];
   const mountRoots = uniqueRoots([
+    ...extraProgramDirectories,
     ...roots.tempRoots,
     ...roots.readableRoots,
     ...roots.writableRoots,
@@ -212,6 +222,9 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
     argv.push('--dir', directory);
   }
 
+  for (const directory of extraProgramDirectories) {
+    argv.push('--ro-bind', directory, directory);
+  }
   for (const root of roots.tempRoots) argv.push('--tmpfs', root);
   for (const root of roots.readableRoots) argv.push('--ro-bind', root, root);
   for (const root of roots.writableRoots) argv.push('--bind', root, root);
@@ -377,6 +390,17 @@ function addUnique(target: string[], roots: readonly string[]): void {
 
 function uniqueRoots(roots: readonly string[]): readonly string[] {
   return [...new Set(roots)];
+}
+
+function absoluteProgramDirectory(program: string): string | undefined {
+  return posix.isAbsolute(program) ? posix.dirname(program) : undefined;
+}
+
+function isCoveredByAnyRoot(path: string, roots: readonly string[]): boolean {
+  return roots.some((root) => {
+    const relative = posix.relative(root, path);
+    return relative === '' || (relative !== '..' && !relative.startsWith('../'));
+  });
 }
 
 function removeCoveredRoots(roots: readonly string[], covering: readonly string[]): readonly string[] {
