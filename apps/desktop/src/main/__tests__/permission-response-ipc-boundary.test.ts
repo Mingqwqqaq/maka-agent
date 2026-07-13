@@ -345,8 +345,8 @@ describe('permission response IPC boundary', () => {
     );
     assert.match(
       bootstrapSessions[0],
-      /if \(!activeIdRef\.current && next\[0\] && next\[0\]\.lastMessageAt\) setActiveId\(next\[0\]\.id\)/,
-      'only bootstrapSessions() may auto-select the first existing chat on app startup',
+      /bootstrapSelectionLease\.reconcile\(next\);[\s\S]*bootstrapSelectionLease\.release\(\)/,
+      'the fallback bootstrap must share and then release the session owner\'s selection lease',
     );
     assert.match(
       renderer,
@@ -422,6 +422,40 @@ describe('permission response IPC boundary', () => {
       quickChatHandler[0],
       /quickChatPendingRef\.current = false;[\s\S]*?setQuickChatPending\(false\)/,
       'quick chat pending ref must be cleared with the visible pending state',
+    );
+  });
+
+  it('reconciles the first mounted onboarding pull after the pre-mount snapshot seed', async () => {
+    const renderer = await readRendererShellSource('app-shell.tsx');
+    const onboardingSnapshotHook = await readFile(
+      fileURLToPath(new URL('../../../src/renderer/use-onboarding-snapshot.ts', import.meta.url)),
+      'utf8',
+    );
+
+    assert.match(
+      onboardingSnapshotHook,
+      /firstMountedSnapshot:\s*OnboardingSnapshot \| null/,
+      'the snapshot owner must latch the first successful mounted pull separately from the pre-mount seed',
+    );
+    assert.match(
+      renderer,
+      /snapshot = onboarding\.firstMountedSnapshot/,
+      'AppShell must consume the latched mounted snapshot instead of inferring it from a cumulative generation',
+    );
+    assert.doesNotMatch(
+      renderer,
+      /const seededRef = useRef\(false\)/,
+      'a one-shot seed drops a newer snapshot returned by the first mounted pull',
+    );
+    assert.match(
+      renderer,
+      /const next = seedSessions\(snapshot\.sessions\)/,
+      'the mounted pull must replace the session owner even when the latest list is empty',
+    );
+    assert.match(
+      renderer,
+      /setConnections\(snapshot\.connections\)/,
+      'the mounted pull must replace the connection owner even when the latest list is empty',
     );
   });
 
