@@ -15,6 +15,7 @@
 
 import type { ProviderType } from '@maka/core';
 import type { ReactElement } from 'react';
+import cerebrasMarkUrl from '../assets/provider-brands/cerebras.svg';
 import lmStudioBrandMark from '../assets/provider-brands/lmstudio.svg';
 import minimaxBrandMark from '../assets/provider-brands/minimax-logo-only-vertical-color-bg-white-text.svg';
 import xaiMarkUrl from '../assets/provider-brands/xai.svg';
@@ -176,6 +177,8 @@ function Ollama(): ReactElement {
  */
 export function ProviderBrandMark({ type }: { type: ProviderType }): ReactElement {
   switch (type) {
+    case 'cerebras':
+      return <ProviderAssetMask src={cerebrasMarkUrl} />;
     case 'xai':
       return <XAI />;
     case 'siliconflow':
