@@ -18,6 +18,19 @@ type RawProviderModel = {
   context_length?: number;
 };
 
+type RawFireworksModel = {
+  name?: string;
+  displayName?: string;
+  contextLength?: number;
+  supportsImageInput?: boolean;
+  supportsTools?: boolean;
+};
+
+type FireworksModelDiscovery = Extract<
+  (typeof PROVIDER_DEFAULTS)[keyof typeof PROVIDER_DEFAULTS]['modelDiscovery'],
+  { kind: 'fireworks' }
+>;
+
 export async function fetchProviderModels(
   connection: LlmConnection,
   apiKey: string,
@@ -45,6 +58,9 @@ async function fetchProviderModelsStrict(
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json() as { models?: Array<{ name?: string }> };
     return (data.models ?? []).flatMap((model) => model.name ? [{ id: model.name }] : []);
+  }
+  if (discovery.kind === 'fireworks') {
+    return fetchFireworksModels(baseUrl, apiKey, discovery);
   }
 
   switch (definition.protocol) {
@@ -91,6 +107,71 @@ function modelListUrl(baseUrl: string, query: Readonly<Record<string, string>> |
   const url = `${stripTrailing(baseUrl)}/models`;
   const search = query ? new URLSearchParams(query).toString() : '';
   return search ? `${url}?${search}` : url;
+}
+
+async function fetchFireworksModels(
+  baseUrl: string,
+  apiKey: string,
+  discovery: FireworksModelDiscovery,
+): Promise<ModelInfo[]> {
+  const root = stripTrailing(baseUrl).replace(/\/inference\/v1$/, '');
+  const headers = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${apiKey}`,
+  };
+  const fetchPages = async <T>(
+    path: string,
+    query: Readonly<Record<string, string>>,
+    itemKey: 'accounts' | 'models',
+  ): Promise<T[]> => {
+    const items: T[] = [];
+    let pageToken: string | undefined;
+    do {
+      const search = new URLSearchParams(query);
+      if (pageToken) search.set('pageToken', pageToken);
+      const response = await proxiedFetch(
+        `${root}${path}?${search.toString()}`,
+        { headers, timeoutMs: MODEL_FETCH_TIMEOUT_MS },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as {
+        accounts?: T[];
+        models?: T[];
+        nextPageToken?: string;
+      };
+      items.push(...(data[itemKey] ?? []));
+      pageToken = data.nextPageToken || undefined;
+    } while (pageToken);
+    return items;
+  };
+
+  const accounts = await fetchPages<{ name?: string }>(
+    discovery.accountsPath,
+    { pageSize: '200' },
+    'accounts',
+  );
+  const accountNames = [
+    ...accounts.flatMap((account) => (
+      account.name && /^accounts\/[^/]+$/.test(account.name) ? [account.name] : []
+    )),
+    discovery.publicAccount,
+  ].filter((name, index, names) => names.indexOf(name) === index);
+  const modelLists = await Promise.all(accountNames.map((accountName) => (
+    fetchPages<RawFireworksModel>(`/v1/${accountName}/models`, discovery.query, 'models')
+  )));
+
+  return modelLists.flat().flatMap((model) => {
+    if (!model.name) return [];
+    const capabilities: NonNullable<ModelInfo['capabilities']> = {};
+    if (typeof model.supportsImageInput === 'boolean') capabilities.vision = model.supportsImageInput;
+    if (typeof model.supportsTools === 'boolean') capabilities.functionCalling = model.supportsTools;
+    return [{
+      id: model.name,
+      ...(model.displayName ? { displayName: model.displayName } : {}),
+      ...(typeof model.contextLength === 'number' ? { contextWindow: model.contextLength } : {}),
+      ...(Object.keys(capabilities).length ? { capabilities } : {}),
+    }];
+  });
 }
 
 function toModelInfo(model: RawProviderModel): ModelInfo | null {
