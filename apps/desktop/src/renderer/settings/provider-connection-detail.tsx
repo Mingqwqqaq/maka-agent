@@ -25,6 +25,7 @@ import {
   RelativeTime,
   useMountedRef,
   useToast,
+  useUiLocale,
 } from '@maka/ui';
 import { Check } from '@maka/ui/icons';
 import { PasswordInput } from './password-input';
@@ -143,9 +144,10 @@ function UnknownConnectionDetail({ props }: { props: ConnectionDetailProps }) {
 }
 
 function ConnectionDetailInner(props: ConnectionDetailProps) {
+  const locale = useUiLocale();
   const { connection } = props;
   const defaults = PROVIDER_DEFAULTS[connection.providerType];
-  const display = providerDisplay(connection.providerType);
+  const display = providerDisplay(connection.providerType, locale);
   const [apiKey, setApiKey] = useState('');
   const [hasSecret, setHasSecret] = useState<CredentialPresenceStatus>(
     defaults.authKind === 'none' ? true : 'loading',

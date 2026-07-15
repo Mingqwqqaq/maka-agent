@@ -1,5 +1,4 @@
-import { PROVIDER_DEFAULTS, type ProviderType } from '@maka/core';
-import { detectUiLocale, type UiLocale } from '@maka/ui';
+import { PROVIDER_DEFAULTS, type ProviderType, type UiLocale } from '@maka/core';
 import { ProviderBrandMark } from './provider-brand-marks';
 import { PROVIDER_DISPLAY_COPY, type ProviderCopy } from './provider-display-copy';
 
@@ -18,7 +17,7 @@ export function ProviderLogo(props: { type: ProviderType; compact?: boolean }) {
 
 export function providerDisplay(
   type: ProviderType,
-  locale: UiLocale = detectUiLocale(),
+  locale: UiLocale,
 ): ProviderCopy {
   // The copy map covers every registered ProviderType at compile time
   // (`satisfies` in provider-display-copy.ts), but a connection persisted on

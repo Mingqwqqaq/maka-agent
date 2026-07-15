@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { PROVIDER_DEFAULTS, validateSlug, type ProviderType } from '@maka/core';
 import { providerAuthRequiresSecret, providerAuthSupportsApiKey } from '@maka/core/llm-connections';
-import { Button, Chip, Input, useMountedRef } from '@maka/ui';
+import { Button, Chip, Input, useMountedRef, useUiLocale } from '@maka/ui';
 import { buildCatalogRecommendedDefaultModel } from '../model-catalog-choices';
 import { PasswordInput } from './password-input';
 import { providerDisplay } from './provider-display';
@@ -20,8 +20,9 @@ export function AddProviderForm(props: {
   onCancel(): void;
   onCreated(slug: string): Promise<void>;
 }) {
+  const locale = useUiLocale();
   const defaults = PROVIDER_DEFAULTS[props.providerType];
-  const display = providerDisplay(props.providerType);
+  const display = providerDisplay(props.providerType, locale);
   const recommendedDefaultModel = buildCatalogRecommendedDefaultModel(props.providerType);
   const [slug, setSlug] = useState(() => nextSlug(props.providerType, props.existingSlugs));
   const [name, setName] = useState(display.name);

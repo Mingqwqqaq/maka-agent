@@ -8,6 +8,7 @@ import {
   type LlmConnection,
   type ProviderCatalogGroup,
   type ProviderType,
+  type UiLocale,
 } from '@maka/core';
 import {
   Chip,
@@ -15,6 +16,7 @@ import {
   PrimitiveTabs, PrimitiveTabsList, PrimitiveTabsTrigger, PrimitiveTabsPanel,
   Item, ItemMedia, ItemContent, ItemTitle, ItemDescription, ItemActions,
   useMountedRef,
+  useUiLocale,
   useToast,
 } from '@maka/ui';
 import { connectionChipStatus } from './provider-connection-status';
@@ -61,6 +63,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
   const providerDialogLifecycleRef = useRef(0);
   const providersPanelRef = useRef<HTMLDivElement>(null);
   const providerCatalogRef = useRef<HTMLElement>(null);
+  const locale = useUiLocale();
   const toast = useToast();
 
   function closeDialog() {
@@ -125,7 +128,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
   }
 
   function chipAriaLabel(connection: LlmConnection): string {
-    const provider = providerDisplay(connection.providerType).name;
+    const provider = providerDisplay(connection.providerType, locale).name;
     const defaultSuffix = connection.slug === defaultSlug ? '，默认连接' : '';
     const status = connectionChipStatus(connection);
     const statusSuffix = status ? `，${status.label}` : '';
@@ -144,7 +147,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
       if (PROVIDER_DEFAULTS[type].status !== 'ready') return false;
       if (category !== 'recommended' && PROVIDER_DEFAULTS[type].catalogGroup !== category) return false;
       if (!normalizedQuery) return true;
-      const display = providerDisplay(type);
+      const display = providerDisplay(type, locale);
       return [type, display.name, display.description, PROVIDER_DEFAULTS[type].label]
         .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
     });
@@ -208,7 +211,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
                           {connection.name}
                           {connection.slug === defaultSlug && <Chip size="sm" variant="accent">默认</Chip>}
                         </ItemTitle>
-                        <ItemDescription>{providerDisplay(connection.providerType).name}</ItemDescription>
+                        <ItemDescription>{providerDisplay(connection.providerType, locale).name}</ItemDescription>
                       </ItemContent>
                       <ItemActions>
                         {status && <Chip dot size="sm" variant={status.tone}>{status.label}</Chip>}
@@ -282,7 +285,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
 
       {createType && (
         <ProviderConnectionDialog
-          title={`连接 ${providerDisplay(createType).name}`}
+          title={`连接 ${providerDisplay(createType, locale).name}`}
           subtitle="完成必要配置后，连接会出现在模型页上方。"
           providerType={createType}
           onClose={closeDialog}
@@ -307,7 +310,7 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
       {selected && (
         <ProviderConnectionDialog
           title={selected.name}
-          subtitle={connectionDialogSubtitle(selected, selected.slug === defaultSlug)}
+          subtitle={connectionDialogSubtitle(selected, selected.slug === defaultSlug, locale)}
           providerType={selected.providerType}
           onClose={closeDialog}
           finalFocus={() => providerFocusElement(providersPanelRef.current, { kind: 'connection', slug: selected.slug })}
@@ -331,8 +334,8 @@ export function ProvidersPanel({ bridge, initialPage = 'connections' }: {
   );
 }
 
-function connectionDialogSubtitle(connection: LlmConnection, isDefault: boolean): string {
-  const providerName = providerDisplay(connection.providerType).name;
+function connectionDialogSubtitle(connection: LlmConnection, isDefault: boolean, locale: UiLocale): string {
+  const providerName = providerDisplay(connection.providerType, locale).name;
   const parts = providerName === connection.name ? [] : [providerName];
   parts.push(isDefault ? '默认连接' : '模型连接');
   return parts.join(' · ');

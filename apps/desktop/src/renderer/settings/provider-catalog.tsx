@@ -1,12 +1,13 @@
 import { ChevronRight } from '@maka/ui/icons';
 import { PROVIDER_DEFAULTS, type ProviderType } from '@maka/core';
-import { Chip, Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@maka/ui';
+import { Chip, Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle, useUiLocale } from '@maka/ui';
 import { ProviderLogo, providerDisplay } from './provider-display';
 import { isWiredOAuthProvider } from './provider-panel-shared';
 
 export function ProviderCatalogCard(props: { type: ProviderType; count: number; onSelect(): void }) {
+  const locale = useUiLocale();
   const defaults = PROVIDER_DEFAULTS[props.type];
-  const display = providerDisplay(props.type);
+  const display = providerDisplay(props.type, locale);
   const disabled = defaults.status !== 'ready';
   const disabledStatus = providerDisabledStatus(props.type);
   const title = disabled ? providerDisabledTitle(props.type) : `添加 ${display.name}`;

@@ -254,6 +254,7 @@ function NeedsConnectionHero(props: {
   refreshConnectionsPending?: boolean;
   onSkip?: () => Promise<void> | void;
 }) {
+  const locale = useUiLocale();
   const setupSteps = getOnboardingSetupSteps({ kind: 'needs_connection' });
   return (
     <section className="maka-onboarding maka-firstrun" aria-label="欢迎使用 Maka">
@@ -275,7 +276,7 @@ function NeedsConnectionHero(props: {
       <div className="maka-firstrun-list">
         <ul role="list">
           {RECOMMENDED_PROVIDER_TYPES.map((type) => {
-            const display = providerDisplay(type);
+            const display = providerDisplay(type, locale);
             return (
               <li key={type}>
                 <Item

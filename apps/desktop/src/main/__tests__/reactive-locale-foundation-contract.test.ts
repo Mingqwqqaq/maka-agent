@@ -61,4 +61,31 @@ describe('reactive locale foundation', () => {
     assert.match(artifact, /formatRelativeTimestamp\(record\.createdAt, Date\.now\(\), locale\)/);
     assert.doesNotMatch(onboarding, /detectUiLocale/);
   });
+
+  it('keeps provider catalog copy on the same reactive locale path', () => {
+    const display = rendererSource('settings/provider-display.tsx');
+    const copy = rendererSource('settings/provider-display-copy.ts');
+
+    assert.doesNotMatch(display, /detectUiLocale/);
+    assert.match(display, /locale: UiLocale/);
+    assert.doesNotMatch(display, /locale:\s*UiLocale\s*=/, 'providerDisplay must not infer a locale');
+    assert.match(copy, /satisfies Record<ProviderType, UiCatalog<ProviderCopy>>/);
+    assert.doesNotMatch(copy, /ProviderDisplayLocale/);
+
+    for (const file of [
+      'OnboardingHero.tsx',
+      'settings/provider-add-form.tsx',
+      'settings/provider-catalog.tsx',
+      'settings/provider-connection-detail.tsx',
+      'settings/ProvidersPanel.tsx',
+    ]) {
+      const source = rendererSource(file);
+      assert.match(source, /useUiLocale\(\)/, `${file} must consume the reactive locale`);
+      assert.doesNotMatch(
+        source,
+        /providerDisplay\([^,\n)]+\)/,
+        `${file} must pass the reactive locale to providerDisplay`,
+      );
+    }
+  });
 });

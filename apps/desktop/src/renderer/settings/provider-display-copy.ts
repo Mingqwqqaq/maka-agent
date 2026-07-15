@@ -1,4 +1,4 @@
-import type { ProviderType } from '@maka/core';
+import type { ProviderType, UiCatalog } from '@maka/core';
 
 /**
  * Pure-data provider introduction copy, localized zh / en.
@@ -6,9 +6,7 @@ import type { ProviderType } from '@maka/core';
  * No React / @maka/ui imports on purpose: the desktop main-process test
  * runner (node --test over dist/main) imports this module directly, so the
  * copy contract (provider-display-copy-contract.test.ts) asserts the real
- * data instead of regex-parsing TSX source. The locale type is declared
- * locally for the same reason; it is structurally identical to @maka/ui's
- * UiLocale ('zh' | 'en').
+ * data instead of regex-parsing TSX source.
  *
  * These stay in the display layer (not the registry) because they are
  * introduction prose tuned for the catalog, not the runtime provider facts.
@@ -22,8 +20,6 @@ import type { ProviderType } from '@maka/core';
  * Completeness is enforced at compile time: `satisfies Record<ProviderType,
  * …>` fails the build when a registered provider has no bilingual entry.
  */
-export type ProviderDisplayLocale = 'zh' | 'en';
-
 export interface ProviderCopy {
   name: string;
   description: string;
@@ -225,4 +221,4 @@ export const PROVIDER_DISPLAY_COPY = {
     zh: { name: 'Gemini CLI', description: 'Google 账号登录暂未接入聊天发送。' },
     en: { name: 'Gemini CLI', description: 'Google account sign-in is not yet wired to chat.' },
   },
-} satisfies Record<ProviderType, Record<ProviderDisplayLocale, ProviderCopy>>;
+} satisfies Record<ProviderType, UiCatalog<ProviderCopy>>;
