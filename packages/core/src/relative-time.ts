@@ -130,9 +130,8 @@ export function formatCompactTimestamp(
 }
 
 /**
- * Reset cached formatters for deterministic tests. Runtime locale
- * change takes effect without a full reload — the next call will
- * re-instantiate against the new locale.
+ * Reset cached formatters for deterministic tests. Runtime calls select the
+ * cache with an explicit locale, so switching locale does not need a reset.
  */
 export function resetRelativeTimeFormatters(): void {
   cachedRelativeFormat = null;

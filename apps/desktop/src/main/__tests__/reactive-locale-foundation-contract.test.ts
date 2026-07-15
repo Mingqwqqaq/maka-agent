@@ -34,7 +34,12 @@ describe('reactive locale foundation', () => {
 
     assert.match(overlays, /setUiLocalePreference: \(preference: UiLocalePreference\) => void/);
     assert.match(modal, /onUiLocalePreferenceChange\(preference: UiLocalePreference\): void/);
-    assert.match(surface, /props\.onUiLocalePreferenceChange\(next\.personalization\.uiLocale\)/);
+    assert.match(surface, /const uiLocaleUpdateTicketRef = useRef\(0\)/);
+    assert.match(
+      surface,
+      /uiLocaleTicket !== null[\s\S]*uiLocaleTicket === uiLocaleUpdateTicketRef\.current[\s\S]*props\.onUiLocalePreferenceChange\(next\.personalization\.uiLocale\)/,
+      'an unrelated settings request must not suppress a successful locale update',
+    );
     assert.doesNotMatch(appearance, /applyUiLocale/);
     assert.doesNotMatch(theme, /applyUiLocale|UiLocalePreference/);
   });
