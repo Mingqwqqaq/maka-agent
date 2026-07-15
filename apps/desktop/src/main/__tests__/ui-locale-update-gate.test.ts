@@ -43,4 +43,69 @@ describe('UI locale settings update gate', () => {
     );
     assert.deepEqual(savedPreferences, ['auto']);
   });
+
+  it('rejects a stale hydration that started before a newer locale save', () => {
+    const gate = createUiLocaleUpdateGate();
+    const hydration = gate.beginHydration();
+    const saveTicket = gate.begin(true);
+    const applied: string[] = [];
+
+    assert.equal(gate.commit(saveTicket, 'en', (next) => applied.push(next)), true);
+    assert.equal(
+      gate.commitHydration(hydration, 'zh', (next) => applied.push(next)),
+      false,
+    );
+    assert.deepEqual(applied, ['en']);
+  });
+
+  it('rejects hydration started while a locale save is pending', () => {
+    const gate = createUiLocaleUpdateGate();
+    const saveTicket = gate.begin(true);
+    const hydration = gate.beginHydration();
+    const applied: string[] = [];
+
+    assert.equal(
+      gate.commitHydration(hydration, 'zh', (next) => applied.push(next)),
+      false,
+    );
+    assert.equal(gate.commit(saveTicket, 'en', (next) => applied.push(next)), true);
+    assert.deepEqual(applied, ['en']);
+  });
+
+  it('orders locale saves across Settings remounts with one AppShell gate', () => {
+    const appShellGate = createUiLocaleUpdateGate();
+    const firstSurfaceTicket = appShellGate.begin(true);
+    const secondSurfaceTicket = appShellGate.begin(true);
+    const applied: string[] = [];
+
+    assert.equal(
+      appShellGate.commit(secondSurfaceTicket, 'en', (next) => applied.push(next)),
+      true,
+    );
+    assert.equal(
+      appShellGate.commit(firstSurfaceTicket, 'zh', (next) => applied.push(next)),
+      false,
+    );
+    assert.deepEqual(applied, ['en']);
+  });
+
+  it('releases a failed save so a later hydration can apply', () => {
+    const gate = createUiLocaleUpdateGate();
+    const failedSaveTicket = gate.begin(true);
+    const blockedHydration = gate.beginHydration();
+    const applied: string[] = [];
+
+    gate.cancel(failedSaveTicket);
+    assert.equal(
+      gate.commitHydration(blockedHydration, 'zh', (next) => applied.push(next)),
+      false,
+    );
+
+    const retryHydration = gate.beginHydration();
+    assert.equal(
+      gate.commitHydration(retryHydration, 'zh', (next) => applied.push(next)),
+      true,
+    );
+    assert.deepEqual(applied, ['zh']);
+  });
 });

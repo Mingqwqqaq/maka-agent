@@ -16,7 +16,7 @@ describe('reactive locale foundation', () => {
 
     assert.match(source, /useState<UiLocalePreference>\('auto'\)/);
     assert.match(source, /useState<UiLocale \| null>\(null\)/);
-    assert.match(source, /setUiLocalePreference\(uiLocale\)/);
+    assert.match(source, /setUiLocalePreference\(preference\)/);
     assert.match(source, /setUiLocaleOverride\(smoke\?\.locale \?\? null\)/);
     assert.match(
       source,
@@ -26,6 +26,7 @@ describe('reactive locale foundation', () => {
   });
 
   it('feeds the persisted settings result back into React without a DOM side channel', () => {
+    const appShell = rendererSource('app-shell.tsx');
     const overlays = rendererSource('app-shell-overlays.tsx');
     const modal = rendererSource('settings/SettingsModal.tsx');
     const surface = rendererSource('settings/settings-surface.tsx');
@@ -34,7 +35,12 @@ describe('reactive locale foundation', () => {
 
     assert.match(overlays, /setUiLocalePreference: \(preference: UiLocalePreference\) => void/);
     assert.match(modal, /onUiLocalePreferenceChange\(preference: UiLocalePreference\): void/);
-    assert.match(surface, /const \[uiLocaleUpdateGate\] = useState\(createUiLocaleUpdateGate\)/);
+    assert.match(appShell, /const \[uiLocaleUpdateGate\] = useState\(createUiLocaleUpdateGate\)/);
+    assert.match(appShell, /uiLocaleUpdateGate\.beginHydration\(\)/);
+    assert.match(appShell, /uiLocaleUpdateGate\.commitHydration\(/);
+    assert.match(appShell, /uiLocaleUpdateGate=\{uiLocaleUpdateGate\}/);
+    assert.match(surface, /uiLocaleUpdateGate: UiLocaleUpdateGate/);
+    assert.doesNotMatch(surface, /useState\(createUiLocaleUpdateGate\)/);
     assert.match(
       surface,
       /uiLocaleUpdateGate\.commit\([\s\S]*next\.personalization\.uiLocale,[\s\S]*props\.onUiLocalePreferenceChange,[\s\S]*\);[\s\S]*if \(settingsModalMountedRef\.current/,

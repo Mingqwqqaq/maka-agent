@@ -34,7 +34,7 @@ import { settingsActionErrorMessage } from './settings-error-copy';
 import { UsageSettingsPage } from './usage-settings-page';
 import { VoiceModelsSettingsPage } from './voice-settings-page';
 import { WebSearchSettingsPage } from './web-search-settings-page';
-import { createUiLocaleUpdateGate } from './ui-locale-update-gate';
+import type { UiLocaleUpdateGate } from './ui-locale-update-gate';
 
 export function SettingsSurface(props: {
   connections: LlmConnection[];
@@ -46,6 +46,7 @@ export function SettingsSurface(props: {
   themePalette: ThemePalette;
   onThemePaletteChange(palette: ThemePalette): void;
   onUiLocalePreferenceChange(preference: UiLocalePreference): void;
+  uiLocaleUpdateGate: UiLocaleUpdateGate;
   onUserLabelChange?(label: string): void;
   requestedSection?: SettingsSection;
   openProviderCatalog?: boolean;
@@ -111,7 +112,6 @@ export function SettingsSurface(props: {
   const settingsModalMountedRef = useMountedRef();
   const settingsReloadTicketRef = useRef(0);
   const settingsUpdateTicketRef = useRef(0);
-  const [uiLocaleUpdateGate] = useState(createUiLocaleUpdateGate);
   const usageReloadTicketRef = useRef(0);
   const toast = useToast();
 
@@ -151,21 +151,26 @@ export function SettingsSurface(props: {
   async function updateSettings(patch: Parameters<typeof window.maka.settings.update>[0]) {
     const ticket = settingsUpdateTicketRef.current + 1;
     settingsUpdateTicketRef.current = ticket;
-    const uiLocaleTicket = uiLocaleUpdateGate.begin(
+    const uiLocaleTicket = props.uiLocaleUpdateGate.begin(
       patch.personalization?.uiLocale !== undefined,
     );
-    const result = await window.maka.settings.update(patch);
-    const next = result.settings;
-    uiLocaleUpdateGate.commit(
-      uiLocaleTicket,
-      next.personalization.uiLocale,
-      props.onUiLocalePreferenceChange,
-    );
-    if (settingsModalMountedRef.current && ticket === settingsUpdateTicketRef.current) {
-      setSettings(next);
-      props.onUserLabelChange?.(next.personalization.displayName);
+    try {
+      const result = await window.maka.settings.update(patch);
+      const next = result.settings;
+      props.uiLocaleUpdateGate.commit(
+        uiLocaleTicket,
+        next.personalization.uiLocale,
+        props.onUiLocalePreferenceChange,
+      );
+      if (settingsModalMountedRef.current && ticket === settingsUpdateTicketRef.current) {
+        setSettings(next);
+        props.onUserLabelChange?.(next.personalization.displayName);
+      }
+      return result;
+    } catch (error) {
+      props.uiLocaleUpdateGate.cancel(uiLocaleTicket);
+      throw error;
     }
-    return result;
   }
 
   async function reloadUsage(range: UsageRange = settings.usage.range) {

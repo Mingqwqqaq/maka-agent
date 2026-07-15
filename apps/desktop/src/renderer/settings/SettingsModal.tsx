@@ -7,6 +7,7 @@ import type {
   UiLocalePreference,
 } from '@maka/core';
 import { SettingsSurface } from './settings-surface';
+import type { UiLocaleUpdateGate } from './ui-locale-update-gate';
 
 export { SETTINGS_NAV } from './settings-nav';
 export type { SettingsNavGroup } from './settings-nav';
@@ -28,6 +29,7 @@ export function SettingsModal(props: {
   themePalette: ThemePalette;
   onThemePaletteChange(palette: ThemePalette): void;
   onUiLocalePreferenceChange(preference: UiLocalePreference): void;
+  uiLocaleUpdateGate: UiLocaleUpdateGate;
   onUserLabelChange?(label: string): void;
   /**
    * Force the modal to a specific section when it (re-)mounts or when the
@@ -86,6 +88,7 @@ export function SettingsModal(props: {
         themePalette={props.themePalette}
         onThemePaletteChange={props.onThemePaletteChange}
         onUiLocalePreferenceChange={props.onUiLocalePreferenceChange}
+        uiLocaleUpdateGate={props.uiLocaleUpdateGate}
         onUserLabelChange={props.onUserLabelChange}
         requestedSection={props.requestedSection}
         openProviderCatalog={props.openProviderCatalog}

@@ -42,6 +42,7 @@ import { useOnboardingSnapshot } from './use-onboarding-snapshot';
 import type { OnboardingSnapshot } from '../global';
 import { ProviderLogo } from './settings/provider-display';
 import { ProviderBrandMark } from './settings/provider-brand-marks';
+import { createUiLocaleUpdateGate } from './settings/ui-locale-update-gate';
 // The session workbar owns the task ledger, embedded browser, and artifact
 // preview. Keep the combined auxiliary surface out of the first chat paint.
 const SessionWorkbar = lazy(() => import('./session-workbar').then((m) => ({ default: m.SessionWorkbar })));
@@ -218,6 +219,7 @@ export function AppShell({
   const [themePalette, setThemePalette] = useState<ThemePalette>('default');
   const [uiLocalePreference, setUiLocalePreference] = useState<UiLocalePreference>('auto');
   const [uiLocaleOverride, setUiLocaleOverride] = useState<UiLocale | null>(null);
+  const [uiLocaleUpdateGate] = useState(createUiLocaleUpdateGate);
   const [userLabel, setUserLabel] = useState<string>('');
   // Settings → 通用 → 默认权限模式 — DISPLAY-ONLY mirror. The composer's
   // picker shows it before the user makes a per-session choice; the actual
@@ -1014,6 +1016,7 @@ export function AppShell({
   }
 
   async function refreshShellSettings() {
+    const uiLocaleHydration = uiLocaleUpdateGate.beginHydration();
     try {
       const next = await window.maka.settings.get();
       const smoke = await window.maka.visualSmoke.getState();
@@ -1021,8 +1024,14 @@ export function AppShell({
       const palette = next.appearance?.palette ?? 'default';
       const name = next.personalization?.displayName ?? '';
       const uiLocale = next.personalization?.uiLocale ?? 'auto';
-      setUiLocalePreference(uiLocale);
-      setUiLocaleOverride(smoke?.locale ?? null);
+      uiLocaleUpdateGate.commitHydration(
+        uiLocaleHydration,
+        uiLocale,
+        (preference) => {
+          setUiLocalePreference(preference);
+          setUiLocaleOverride(smoke?.locale ?? null);
+        },
+      );
       setThemePref(pref);
       setThemePalette(palette);
       setUserLabel(name);
@@ -1628,6 +1637,7 @@ export function AppShell({
         themePalette={themePalette}
         setThemePalette={setThemePalette}
         setUiLocalePreference={setUiLocalePreference}
+        uiLocaleUpdateGate={uiLocaleUpdateGate}
         setUserLabel={setUserLabel}
         settingsRequestedSection={settingsRequestedSection}
         settingsProviderCatalogOpen={settingsProviderCatalogOpen}
