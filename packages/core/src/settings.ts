@@ -208,9 +208,9 @@ export interface AppearanceSettings {
  * PR-LANG-PREF-0 (WAWQAQ msg `edc9cb41` + xuan `b4f4f2a8`/`54b56858`
  * + kenji `7e532892`): closed UI-locale preference.
  *
- * `'auto'` — use `navigator.language` detection (today's behavior).
+ * `'auto'` — temporarily resolve to Chinese-first UI copy.
  * `'zh'` / `'en'` — user explicit override; takes precedence over
- *   navigator detection but is itself overridden by the visual-smoke
+ *   the temporary fallback but is itself overridden by the visual-smoke
  *   fixture locale (fixtures stay deterministic regardless of the
  *   persisted user preference).
  *
@@ -224,7 +224,7 @@ export interface PersonalizationSettings {
   assistantTone: string;
   /**
    * PR-LANG-PREF-0: UI locale preference (kenji `7e532892` acceptance):
-   * user explicit choice > navigator.language; visual-smoke override
+   * user explicit choice > temporary auto-to-Chinese fallback; visual-smoke override
    * stays for fixture tests. Defaults to `'auto'`.
    */
   uiLocale: UiLocalePreference;

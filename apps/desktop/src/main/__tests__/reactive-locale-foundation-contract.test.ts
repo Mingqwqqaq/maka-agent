@@ -34,11 +34,11 @@ describe('reactive locale foundation', () => {
 
     assert.match(overlays, /setUiLocalePreference: \(preference: UiLocalePreference\) => void/);
     assert.match(modal, /onUiLocalePreferenceChange\(preference: UiLocalePreference\): void/);
-    assert.match(surface, /const uiLocaleUpdateTicketRef = useRef\(0\)/);
+    assert.match(surface, /const \[uiLocaleUpdateGate\] = useState\(createUiLocaleUpdateGate\)/);
     assert.match(
       surface,
-      /uiLocaleTicket !== null[\s\S]*uiLocaleTicket === uiLocaleUpdateTicketRef\.current[\s\S]*props\.onUiLocalePreferenceChange\(next\.personalization\.uiLocale\)/,
-      'an unrelated settings request must not suppress a successful locale update',
+      /uiLocaleUpdateGate\.commit\([\s\S]*next\.personalization\.uiLocale,[\s\S]*props\.onUiLocalePreferenceChange,[\s\S]*\);[\s\S]*if \(settingsModalMountedRef\.current/,
+      'locale success must reach AppShell independently of local Settings ownership',
     );
     assert.doesNotMatch(appearance, /applyUiLocale/);
     assert.doesNotMatch(theme, /applyUiLocale|UiLocalePreference/);

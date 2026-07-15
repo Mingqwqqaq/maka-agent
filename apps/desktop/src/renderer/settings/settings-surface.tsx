@@ -34,6 +34,7 @@ import { settingsActionErrorMessage } from './settings-error-copy';
 import { UsageSettingsPage } from './usage-settings-page';
 import { VoiceModelsSettingsPage } from './voice-settings-page';
 import { WebSearchSettingsPage } from './web-search-settings-page';
+import { createUiLocaleUpdateGate } from './ui-locale-update-gate';
 
 export function SettingsSurface(props: {
   connections: LlmConnection[];
@@ -110,7 +111,7 @@ export function SettingsSurface(props: {
   const settingsModalMountedRef = useMountedRef();
   const settingsReloadTicketRef = useRef(0);
   const settingsUpdateTicketRef = useRef(0);
-  const uiLocaleUpdateTicketRef = useRef(0);
+  const [uiLocaleUpdateGate] = useState(createUiLocaleUpdateGate);
   const usageReloadTicketRef = useRef(0);
   const toast = useToast();
 
@@ -124,7 +125,6 @@ export function SettingsSurface(props: {
     return () => {
       settingsReloadTicketRef.current += 1;
       settingsUpdateTicketRef.current += 1;
-      uiLocaleUpdateTicketRef.current += 1;
       usageReloadTicketRef.current += 1;
     };
   }, []);
@@ -151,18 +151,16 @@ export function SettingsSurface(props: {
   async function updateSettings(patch: Parameters<typeof window.maka.settings.update>[0]) {
     const ticket = settingsUpdateTicketRef.current + 1;
     settingsUpdateTicketRef.current = ticket;
-    const uiLocaleTicket = patch.personalization?.uiLocale === undefined
-      ? null
-      : ++uiLocaleUpdateTicketRef.current;
+    const uiLocaleTicket = uiLocaleUpdateGate.begin(
+      patch.personalization?.uiLocale !== undefined,
+    );
     const result = await window.maka.settings.update(patch);
     const next = result.settings;
-    if (
-      settingsModalMountedRef.current
-      && uiLocaleTicket !== null
-      && uiLocaleTicket === uiLocaleUpdateTicketRef.current
-    ) {
-      props.onUiLocalePreferenceChange(next.personalization.uiLocale);
-    }
+    uiLocaleUpdateGate.commit(
+      uiLocaleTicket,
+      next.personalization.uiLocale,
+      props.onUiLocalePreferenceChange,
+    );
     if (settingsModalMountedRef.current && ticket === settingsUpdateTicketRef.current) {
       setSettings(next);
       props.onUserLabelChange?.(next.personalization.displayName);
