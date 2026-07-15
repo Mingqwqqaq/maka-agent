@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
-import type { SettingsSection, ThemePreference } from '@maka/core';
+import type { SettingsSection, ThemePreference, UiLocale } from '@maka/core';
 import type { InteractionQueues, LiveTurnProjection } from '@maka/ui';
 import type { NavSelection } from '@maka/ui';
 import { applyTheme } from './theme';
@@ -25,6 +25,7 @@ export function createAppShellVisualSmokeActions(options: {
   setWorkbarCollapsed: Dispatch<SetStateAction<boolean>>;
   setWorkbarTab: Dispatch<SetStateAction<SessionWorkbarTab>>;
   setThemePref: Dispatch<SetStateAction<ThemePreference>>;
+  setUiLocaleOverride: Dispatch<SetStateAction<UiLocale | null>>;
 }): AppShellVisualSmokeActions {
   const {
     openPalette,
@@ -40,6 +41,7 @@ export function createAppShellVisualSmokeActions(options: {
     setWorkbarCollapsed,
     setWorkbarTab,
     setThemePref,
+    setUiLocaleOverride,
   } = options;
 
   async function applyVisualSmokeFixture() {
@@ -85,17 +87,15 @@ export function createAppShellVisualSmokeActions(options: {
     // `refreshSessions()` resolves and BEFORE any locale-dependent
     // content (EmptyChatHero / Composer / OnboardingHero quickChat)
     // enters the React tree — all of those gate on sessions /
-    // connection state which load inside this same effect. The
-    // attribute is attached to `<html>` so `detectUiLocale()` reads
-    // the deterministic value on every subsequent render. The
+    // connection state which load inside this same effect. The reactive
+    // override reaches every consumer before the fixture's
+    // session refresh exposes locale-dependent content.
     // AppShell initial mount already ran when this effect fires,
     // but that initial mount renders no locale-aware copy yet
     // (it's a loading shell), so there's no observable host-locale
     // leak in the captured baseline. See @kenji review
     // @msg 7b96e182.
-    if (state.locale) {
-      document.documentElement.setAttribute('data-maka-visual-smoke-locale', state.locale);
-    }
+    setUiLocaleOverride(state.locale ?? null);
     // PR-UI-VISUAL-SMOKE-TIMEZONE (@kenji msg 45486cdf): mirror the
     // locale attribute pattern. When `MAKA_VISUAL_SMOKE_TIMEZONE` is
     // set and validates against `Intl.DateTimeFormat`, the IANA name

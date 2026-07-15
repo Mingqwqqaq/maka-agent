@@ -4,6 +4,7 @@ import type {
   SettingsSection,
   ThemePalette,
   ThemePreference,
+  UiLocalePreference,
 } from '@maka/core';
 import { SearchModal } from '@maka/ui';
 import { KeyboardHelpModal } from './keyboard-help';
@@ -43,6 +44,7 @@ export function AppShellOverlays(props: {
   setThemePref(themePref: ThemePreference): void;
   themePalette: ThemePalette;
   setThemePalette(themePalette: ThemePalette): void;
+  setUiLocalePreference: (preference: UiLocalePreference) => void;
   setUserLabel(userLabel: string): void;
   settingsRequestedSection: SettingsSection | undefined;
   settingsProviderCatalogOpen: boolean;
@@ -83,6 +85,7 @@ export function AppShellOverlays(props: {
     settingsProviderCatalogOpen,
     setThemePalette,
     setThemePref,
+    setUiLocalePreference,
     setUserLabel,
     themePalette,
     themePref,
@@ -101,6 +104,7 @@ export function AppShellOverlays(props: {
             onThemeChange={setThemePref}
             themePalette={themePalette}
             onThemePaletteChange={setThemePalette}
+            onUiLocalePreferenceChange={setUiLocalePreference}
             onUserLabelChange={setUserLabel}
             requestedSection={settingsRequestedSection}
             openProviderCatalog={settingsProviderCatalogOpen}

@@ -7,6 +7,7 @@ import type {
   SettingsSection,
   ThemePalette,
   ThemePreference,
+  UiLocalePreference,
   UpdateAppSettingsResult,
   UsageRange,
   UsageStats,
@@ -43,6 +44,7 @@ export function SettingsSurface(props: {
   onThemeChange(pref: ThemePreference): void;
   themePalette: ThemePalette;
   onThemePaletteChange(palette: ThemePalette): void;
+  onUiLocalePreferenceChange(preference: UiLocalePreference): void;
   onUserLabelChange?(label: string): void;
   requestedSection?: SettingsSection;
   openProviderCatalog?: boolean;
@@ -152,6 +154,7 @@ export function SettingsSurface(props: {
     if (settingsModalMountedRef.current && ticket === settingsUpdateTicketRef.current) {
       setSettings(next);
       props.onUserLabelChange?.(next.personalization.displayName);
+      props.onUiLocalePreferenceChange(next.personalization.uiLocale);
     }
     return result;
   }

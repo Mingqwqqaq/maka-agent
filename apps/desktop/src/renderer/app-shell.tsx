@@ -7,6 +7,8 @@ import type {
   SettingsSection,
   ThemePalette,
   ThemePreference,
+  UiLocale,
+  UiLocalePreference,
 } from '@maka/core';
 import { generalizedErrorMessageChinese, hasSettledInitialOnboarding } from '@maka/core';
 import {
@@ -23,6 +25,7 @@ import {
   type ComposerHandle,
   type MakaUriDest,
   MakaUriContext,
+  LocaleProvider,
   type NavSelection,
   SessionListPanel,
   SkillsPage,
@@ -57,7 +60,7 @@ import { deriveSessionStatusGroups } from './session-status-grouping';
 import { deriveAppShellTurnViewModel } from './app-shell-turn-view-model';
 import { readScrollMotionBehavior } from './scroll-motion-policy';
 import { deriveBranchBanner } from './branch-banner';
-import { applyTheme, applyThemePalette, applyUiLocale } from './theme';
+import { applyTheme, applyThemePalette } from './theme';
 import { safeLocalStorageSet } from './browser-storage';
 import { filterSessions, readNavSelection } from './nav-selection';
 import {
@@ -213,6 +216,8 @@ export function AppShell({
   const [settingsProviderCatalogOpen, setSettingsProviderCatalogOpen] = useState(false);
   const [themePref, setThemePref] = useState<ThemePreference>('auto');
   const [themePalette, setThemePalette] = useState<ThemePalette>('default');
+  const [uiLocalePreference, setUiLocalePreference] = useState<UiLocalePreference>('auto');
+  const [uiLocaleOverride, setUiLocaleOverride] = useState<UiLocale | null>(null);
   const [userLabel, setUserLabel] = useState<string>('');
   // Settings → 通用 → 默认权限模式 — DISPLAY-ONLY mirror. The composer's
   // picker shows it before the user makes a per-session choice; the actual
@@ -785,6 +790,7 @@ export function AppShell({
     setWorkbarCollapsed,
     setWorkbarTab,
     setThemePref,
+    setUiLocaleOverride,
   });
 
   const {
@@ -1014,12 +1020,9 @@ export function AppShell({
       const pref = smoke?.theme ?? next.appearance?.theme ?? 'auto';
       const palette = next.appearance?.palette ?? 'default';
       const name = next.personalization?.displayName ?? '';
-      // PR-LANG-PREF-0: apply persisted UI locale preference to
-      // `<html data-maka-locale>` BEFORE first paint of any
-      // locale-aware surface. `'auto'` clears the explicit attribute
-      // and uses the Chinese-first product fallback.
       const uiLocale = next.personalization?.uiLocale ?? 'auto';
-      applyUiLocale(uiLocale);
+      setUiLocalePreference(uiLocale);
+      setUiLocaleOverride(smoke?.locale ?? null);
       setThemePref(pref);
       setThemePalette(palette);
       setUserLabel(name);
@@ -1206,7 +1209,8 @@ export function AppShell({
   };
 
   return (
-    <div className="appFrame agents-layout-root" data-agents-page>
+    <LocaleProvider preference={uiLocalePreference} override={uiLocaleOverride}>
+      <div className="appFrame agents-layout-root" data-agents-page>
       <div
         className="app maka-shell-2col agents-layout-body"
         aria-hidden={hasModalOpen ? 'true' : undefined}
@@ -1623,6 +1627,7 @@ export function AppShell({
         setThemePref={setThemePref}
         themePalette={themePalette}
         setThemePalette={setThemePalette}
+        setUiLocalePreference={setUiLocalePreference}
         setUserLabel={setUserLabel}
         settingsRequestedSection={settingsRequestedSection}
         settingsProviderCatalogOpen={settingsProviderCatalogOpen}
@@ -1647,6 +1652,7 @@ export function AppShell({
         paletteOnOpenSearchModal={paletteOnOpenSearchModal}
         commandOptions={commandOptions}
       />
-    </div>
+      </div>
+    </LocaleProvider>
   );
 }

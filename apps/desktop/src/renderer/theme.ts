@@ -82,32 +82,3 @@ export function applyThemePalette(palette: ThemePalette): void {
   }
   safeLocalStorageSet('maka-theme-palette-v1', palette);
 }
-
-/**
- * PR-LANG-PREF-0: apply persisted UI locale preference to `<html>`.
- *
- * - `'auto'`  → remove `data-maka-locale`; UI components fall back to
- *               the Chinese-first product default.
- * - `'zh'` / `'en'` → set `data-maka-locale=<value>` so
- *               `detectUiLocale()` returns the user choice synchronously
- *               on every read.
- *
- * Also updates `<html lang>` so screen readers and CSS `:lang()` rules
- * see the right language code. The visual-smoke override
- * (`data-maka-visual-smoke-locale`) still wins over this attribute
- * in `detectUiLocale()` so fixture screenshots stay deterministic.
- */
-export type UiLocalePreference = 'auto' | 'zh' | 'en';
-
-export function applyUiLocale(preference: UiLocalePreference): void {
-  const root = document.documentElement;
-  if (preference === 'auto') {
-    root.removeAttribute('data-maka-locale');
-    // Keep the default shell coherent for assistive tech. Explicit
-    // English still sets both `data-maka-locale` and `lang` below.
-    root.setAttribute('lang', 'zh');
-  } else {
-    root.setAttribute('data-maka-locale', preference);
-    root.setAttribute('lang', preference);
-  }
-}

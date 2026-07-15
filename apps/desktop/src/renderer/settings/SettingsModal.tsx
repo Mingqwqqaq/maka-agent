@@ -4,6 +4,7 @@ import type {
   SettingsSection,
   ThemePalette,
   ThemePreference,
+  UiLocalePreference,
 } from '@maka/core';
 import { SettingsSurface } from './settings-surface';
 
@@ -26,6 +27,7 @@ export function SettingsModal(props: {
    */
   themePalette: ThemePalette;
   onThemePaletteChange(palette: ThemePalette): void;
+  onUiLocalePreferenceChange(preference: UiLocalePreference): void;
   onUserLabelChange?(label: string): void;
   /**
    * Force the modal to a specific section when it (re-)mounts or when the
@@ -83,6 +85,7 @@ export function SettingsModal(props: {
         onThemeChange={props.onThemeChange}
         themePalette={props.themePalette}
         onThemePaletteChange={props.onThemePaletteChange}
+        onUiLocalePreferenceChange={props.onUiLocalePreferenceChange}
         onUserLabelChange={props.onUserLabelChange}
         requestedSection={props.requestedSection}
         openProviderCatalog={props.openProviderCatalog}

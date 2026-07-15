@@ -1,5 +1,6 @@
 import type { PermissionRequestEvent, ToolResultContent } from './events.js';
 import type { SettingsSection } from './settings.js';
+import type { UiLocale } from './ui-locale.js';
 
 export type VisualSmokeScenario =
   | 'all'
@@ -210,17 +211,13 @@ export interface VisualSmokeState {
   theme?: 'light' | 'dark' | 'auto';
   /**
    * PR-UI-VISUAL-SMOKE-LOCALE: UI locale override driven by
-   * `MAKA_VISUAL_SMOKE_LOCALE=zh|en`. PR-UI-14's `detectUiLocale()`
-   * reads `navigator.language` by default, which makes screenshot
-   * baselines drift between hosts (e.g. a CI machine on en-US vs a
-   * Mac mini on zh-CN renders different placeholder text in the
-   * same fixture). When set, the renderer applies
-   * `data-maka-visual-smoke-locale="zh|en"` to `<html>` and
-   * `detectUiLocale()` reads that BEFORE `navigator.language`.
-   * Unrecognized values fall back to undefined (renderer uses
-   * navigator detection as today).
+   * `MAKA_VISUAL_SMOKE_LOCALE=zh|en`. The reactive locale provider
+   * normally follows the persisted preference. When set, the renderer
+   * records `data-maka-visual-smoke-locale="zh|en"` on `<html>` and
+   * resolves that override before the persisted preference.
+   * Unrecognized values fall back to undefined.
    */
-  locale?: 'zh' | 'en';
+  locale?: UiLocale;
   /**
    * PR-UI-VISUAL-SMOKE-TIMEZONE: IANA timezone override driven by
    * `MAKA_VISUAL_SMOKE_TIMEZONE=<IANA name>`. Mirrors the locale

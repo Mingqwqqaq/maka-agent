@@ -70,6 +70,7 @@ import {
   formatBytes,
   useMountedRef,
   useToast,
+  useUiLocale,
 } from '@maka/ui';
 import { ArtifactPreview } from './artifact-preview';
 import { nextArtifactListAction } from './artifact-list-keyboard';
@@ -83,6 +84,7 @@ export function ArtifactPane(props: {
 }) {
   const { sessionId } = props;
   const toast = useToast();
+  const locale = useUiLocale();
   const [records, setRecords] = useState<ArtifactRecord[]>([]);
   const [recordsSessionId, setRecordsSessionId] = useState<string | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -420,7 +422,7 @@ export function ArtifactPane(props: {
                   <span className="maka-artifact-row-name">{record.name}</span>
                   <span className="maka-artifact-row-meta">
                     <span className="maka-artifact-row-size">{formatBytes(record.sizeBytes)}</span>
-                    <span className="maka-artifact-row-time">{formatRelativeTimestamp(record.createdAt)}</span>
+                    <span className="maka-artifact-row-time">{formatRelativeTimestamp(record.createdAt, Date.now(), locale)}</span>
                   </span>
                   {record.status === 'deleted' && (
                     <Badge variant="destructive" className="maka-artifact-row-badge">已删除</Badge>

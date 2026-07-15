@@ -5,10 +5,10 @@ import type {
   PersonalizationSettings,
   ThemePalette,
   ThemePreference,
+  UiLocalePreference,
   UpdateAppSettingsResult,
 } from '@maka/core';
 import { ChoiceCard, ChoiceCardGroup, Input, SettingsSegmented as Segmented, Textarea, useMountedRef, useToast } from '@maka/ui';
-import { applyUiLocale, type UiLocalePreference } from '../theme';
 import { settingsActionErrorMessage } from './settings-error-copy';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; help: string }> = [
@@ -112,14 +112,10 @@ export function PersonalizationSettingsPage(props: {
     const ticket = ++persistTicketRef.current;
     persistPendingCountRef.current += 1;
     try {
-      await props.onUpdate({ personalization: patch });
+      const result = await props.onUpdate({ personalization: patch });
       if (!personalizationMountedRef.current || ticket !== persistTicketRef.current) return;
       if (patch.uiLocale !== undefined) {
-        // PR-LANG-PREF-0: apply the chosen locale to <html> right after save
-        // so the change takes effect immediately in the current window. The
-        // persisted value also drives next-boot detection (main.tsx applies
-        // it on settings load).
-        applyUiLocale(patch.uiLocale);
+        setUiLocale(result.settings.personalization.uiLocale);
       }
     } catch (error) {
       if (personalizationMountedRef.current && ticket === persistTicketRef.current) {
@@ -187,8 +183,8 @@ export function PersonalizationSettingsPage(props: {
         {/*
           PR-LANG-PREF-0 (WAWQAQ msg `edc9cb41` + kenji `7e532892`
           acceptance criteria): 自动 / 中文 / English. User explicit
-          choice wins over navigator.language; visual-smoke override
-          wins over both (deterministic baselines).
+          choice wins over the temporary auto -> zh fallback;
+          visual-smoke override wins over both (deterministic baselines).
         */}
         <div className="settingsFormRow">
           <div>

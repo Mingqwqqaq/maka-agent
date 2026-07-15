@@ -21,7 +21,7 @@
 
 import { ArrowRight, ArrowUp, ChevronRight, RotateCcw, Sparkles, KeyRound, Settings as SettingsIcon, Cpu, AlertCircle, FolderOpen, Paperclip, X } from '@maka/ui/icons';
 import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { RECOMMENDED_PROVIDER_TYPES, type LlmConnection, type OnboardingState, type QuickChatMode, type SettingsSection } from '@maka/core';
+import { RECOMMENDED_PROVIDER_TYPES, type LlmConnection, type OnboardingState, type QuickChatMode, type SettingsSection, type UiCatalog } from '@maka/core';
 import {
   Button,
   Item,
@@ -33,13 +33,12 @@ import {
   Textarea,
   appendPromptContextDraft,
   createChatInputActionOwner,
-  detectUiLocale,
   fileTransferContainsFiles,
   focusTextInputAtEnd,
   isChatInputComposing,
   useMountedRef,
+  useUiLocale,
   type ChatInputActionOwner,
-  type UiLocale,
 } from '@maka/ui';
 import { ProviderLogo, providerDisplay } from './settings/provider-display';
 import { FIRST_RUN_TASK_SUGGESTIONS } from './first-run-task-suggestions';
@@ -53,7 +52,7 @@ import { getOnboardingSetupSteps, type OnboardingSetupStep } from './onboarding-
  * short placeholder, example sentence moved to a `<small>` hint
  * below the textarea so first-run users still know what to type.
  */
-const READY_HERO_COPY_BY_LOCALE: Record<UiLocale, {
+const READY_HERO_COPY_BY_LOCALE: UiCatalog<{
   ariaLabel: string;
   eyebrow: string;
   headline: string;
@@ -552,7 +551,8 @@ function ReadyEmptyHero(props: {
     };
   }, []);
 
-  const copy = READY_HERO_COPY_BY_LOCALE[detectUiLocale()];
+  const locale = useUiLocale();
+  const copy = READY_HERO_COPY_BY_LOCALE[locale];
   const quickChatBusy = props.quickChatPending || submitPending;
   const importStatusText = pendingImportAction === null
     ? null

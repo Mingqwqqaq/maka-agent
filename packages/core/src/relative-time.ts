@@ -130,7 +130,7 @@ export function formatCompactTimestamp(
 }
 
 /**
- * Reset the cached formatters. Used by `applyUiLocale()` so a language
+ * Reset cached formatters for deterministic tests. Runtime locale
  * change takes effect without a full reload — the next call will
  * re-instantiate against the new locale.
  */

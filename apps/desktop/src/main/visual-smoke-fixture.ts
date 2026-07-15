@@ -8,6 +8,7 @@ import type {
   PlanReminder,
   SessionHeader,
   StoredMessage,
+  UiLocale,
   VisualSmokeScenario,
   VisualSmokeState,
 } from '@maka/core';
@@ -161,14 +162,14 @@ export interface VisualSmokeFixture {
   theme: 'light' | 'dark' | 'auto' | null;
   /**
    * PR-UI-VISUAL-SMOKE-LOCALE: UI locale override (zh | en). null
-   * means "let `detectUiLocale()` read `navigator.language`". When set,
-   * the renderer applies `data-maka-visual-smoke-locale=<value>` to
-   * `<html>` so `detectUiLocale()` returns the locked value
+   * means "use the persisted locale preference". When set,
+   * the renderer passes the value to LocaleProvider, which synchronizes
+   * document metadata and consumers to the locked value
    * deterministically — same fixture, same locale, same screenshot
    * across hosts. Driven by env var
    * `MAKA_VISUAL_SMOKE_LOCALE=zh|en`. Unknown values fail closed.
    */
-  locale: 'zh' | 'en' | null;
+  locale: UiLocale | null;
   /**
    * PR-UI-VISUAL-SMOKE-TIMEZONE: IANA timezone override. null means
    * "use the host system timezone" (current behavior). When set, the
@@ -231,9 +232,9 @@ function parseThemeFlag(raw: string | undefined): 'light' | 'dark' | 'auto' | nu
 /**
  * Validate the UI locale override. Accepts only the closed enum
  * `zh | en`; everything else fails closed to null (renderer falls
- * back to `navigator.language` detection). PR-UI-VISUAL-SMOKE-LOCALE.
+ * back to the persisted preference). PR-UI-VISUAL-SMOKE-LOCALE.
  */
-function parseLocaleFlag(raw: string | undefined): 'zh' | 'en' | null {
+function parseLocaleFlag(raw: string | undefined): UiLocale | null {
   if (raw === undefined) return null;
   const normalized = raw.trim().toLowerCase();
   if (normalized === 'zh' || normalized === 'en') return normalized;

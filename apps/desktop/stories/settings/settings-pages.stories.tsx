@@ -209,6 +209,7 @@ function SettingsStory(props: { section: SettingsSection }) {
           onThemeChange={noop}
           themePalette={'default' as ThemePalette}
           onThemePaletteChange={noop}
+          onUiLocalePreferenceChange={noop}
           requestedSection={props.section}
           initialFocusRef={initialFocusRef}
           onOpenDailyReview={noop}

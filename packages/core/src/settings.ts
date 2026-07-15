@@ -712,8 +712,8 @@ export function normalizeSettings(input: unknown): AppSettings {
     // PR-LANG-PREF-0: closed-enum fail-closed for the new
     // `personalization.uiLocale` preference. mergeSettings spreads
     // raw user values, so an unknown value would otherwise reach the
-    // renderer and produce a `data-maka-locale="xx"` attribute with
-    // no detector mapping. Fall back to 'auto' on any miss.
+    // renderer outside the closed reactive-locale contract. Fall back to
+    // 'auto' on any miss.
     personalization: {
       ...base.personalization,
       uiLocale: isUiLocalePreference(base.personalization.uiLocale)

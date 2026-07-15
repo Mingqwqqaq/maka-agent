@@ -1,6 +1,7 @@
 import type { Decorator, Preview } from '@storybook/react-vite';
 import '../src/renderer/styles.css';
 import { THEME_PALETTES } from '../../../packages/core/src/settings.js';
+import { LocaleProvider } from '@maka/ui';
 
 const PALETTE_LABELS: Record<string, string> = {
   default: 'Default',
@@ -15,7 +16,6 @@ const withMakaRoot: Decorator = (Story, context) => {
 
   root.classList.toggle('dark', colorScheme === 'dark');
   root.style.colorScheme = colorScheme;
-  root.setAttribute('lang', 'zh');
 
   if (palette === 'default') {
     root.removeAttribute('data-maka-theme');
@@ -24,9 +24,11 @@ const withMakaRoot: Decorator = (Story, context) => {
   }
 
   return (
-    <div className="h-screen w-screen overflow-y-auto bg-background p-6 text-foreground antialiased">
-      <Story />
-    </div>
+    <LocaleProvider preference="zh">
+      <div className="h-screen w-screen overflow-y-auto bg-background p-6 text-foreground antialiased">
+        <Story />
+      </div>
+    </LocaleProvider>
   );
 };
 

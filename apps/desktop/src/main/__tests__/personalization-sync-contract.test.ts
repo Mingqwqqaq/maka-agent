@@ -207,12 +207,12 @@ describe('Personalization form state sync (PR-PERSONALIZATION-SYNC-0)', () => {
       /return \(\) => \{[\s\S]*persistTicketRef\.current \+= 1;[\s\S]*clearTimeout\(toneDebounceRef\.current\)/,
       'Personalization cleanup must invalidate in-flight saves and cancel the pending debounce',
     );
-    // A stale locale must not be applied after Settings closes: the mount +
-    // ticket guard gates the applyUiLocale side effect.
+    // A stale canonical locale must not be reconciled into the form after
+    // Settings closes: the mount + ticket guard gates the local state write.
     assert.match(
       page,
-      /if \(!personalizationMountedRef\.current \|\| ticket !== persistTicketRef\.current\) return;[\s\S]*applyUiLocale\(patch\.uiLocale\)/,
-      'Personalization save must not apply a stale UI locale after Settings is closed',
+      /if \(!personalizationMountedRef\.current \|\| ticket !== persistTicketRef\.current\) return;[\s\S]*setUiLocale\(result\.settings\.personalization\.uiLocale\)/,
+      'Personalization save must not reconcile a stale UI locale after Settings is closed',
     );
     assert.match(
       page,
