@@ -52,10 +52,16 @@ describe('reactive locale foundation', () => {
 
   it('keeps visual-smoke locale overrides in the same provider path', () => {
     const source = rendererSource('app-shell-visual-smoke.ts');
+    const appShell = rendererSource('app-shell.tsx');
 
     assert.match(source, /setUiLocaleOverride: Dispatch<SetStateAction<UiLocale \| null>>/);
     assert.match(source, /setUiLocaleOverride\(state\.locale \?\? null\)/);
     assert.doesNotMatch(source, /data-maka-visual-smoke-locale/);
+    assert.ok(
+      appShell.indexOf('setUiLocaleOverride(smoke?.locale ?? null)')
+        < appShell.indexOf('uiLocaleUpdateGate.commitHydration('),
+      'visual-smoke override hydration must not be gated by persisted preference hydration',
+    );
   });
 
   it('uses the reactive locale for desktop copy and Intl formatting', () => {

@@ -16,11 +16,17 @@ import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Composer } from '@maka/ui';
+import { Composer, LocaleProvider } from '@maka/ui';
 
 const COMPOSER_TSX = join(process.cwd(), '../../packages/ui/src/composer.tsx');
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 function keydownBody(source: string): string {
   return source.match(/function onTextareaKeyDown\(event: KeyboardEvent<HTMLTextAreaElement>\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
@@ -72,7 +78,7 @@ describe('composer mention popup contract', () => {
   });
 
   it('renders inert (no listbox) when mention props are absent (SSR minimal props)', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderWithLocale(
       createElement(Composer, { onSend: () => {}, onStop: () => {} }),
     );
     assert.doesNotMatch(markup, /role="listbox"/, 'no popup without mention props');

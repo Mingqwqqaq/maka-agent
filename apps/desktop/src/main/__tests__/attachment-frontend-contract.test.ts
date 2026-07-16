@@ -2,14 +2,20 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AttachmentRef, SessionSummary, StoredMessage } from '@maka/core';
-import { ChatView } from '@maka/ui';
+import { ChatView, LocaleProvider } from '@maka/ui';
 
 const REPO_ROOT = process.cwd().endsWith('apps/desktop')
   ? resolve(process.cwd(), '..', '..')
   : process.cwd();
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 async function readRepo(relativePath: string): Promise<string> {
   return readFile(resolve(REPO_ROOT, relativePath), 'utf8');
@@ -123,7 +129,7 @@ describe('attachment frontend contract', () => {
       permissionMode: 'ask',
     };
 
-    const markup = renderToStaticMarkup(createElement(ChatView, {
+    const markup = renderWithLocale(createElement(ChatView, {
       messages,
       activeSession,
       onNew: () => {},

@@ -10,12 +10,18 @@
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AutomationManager, buildAutomationTool, AUTOMATION_TOOL_NAME } from '@maka/runtime';
-import { ToolActivity, type ToolActivityItem } from '@maka/ui';
+import { LocaleProvider, ToolActivity, type ToolActivityItem } from '@maka/ui';
 
 const SESSION = 'sess-preview-contract';
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 function toolCtx() {
   return {
@@ -48,7 +54,7 @@ function renderAutomationResult(text: string): string {
     args: { mode: 'create' },
     result: { kind: 'text', text },
   };
-  return renderToStaticMarkup(createElement(ToolActivity, { items: [item], open: true }));
+  return renderWithLocale(createElement(ToolActivity, { items: [item], open: true }));
 }
 
 describe('Automation tool result preview contract', () => {

@@ -1,15 +1,22 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SessionEvent } from '@maka/core';
 import {
   armLiveTurn,
   ChatView,
+  LocaleProvider,
   type LiveTurnProjection,
   type InteractionQueues,
 } from '@maka/ui';
 import { createAppShellSessionEventHandlers } from '../../renderer/app-shell-session-events.js';
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 function createStateSetter<T>(initial: T): {
   get(): T;
@@ -25,7 +32,7 @@ function createStateSetter<T>(initial: T): {
 }
 
 function renderLiveTurn(liveTurn: LiveTurnProjection): string {
-  return renderToStaticMarkup(createElement(ChatView, {
+  return renderWithLocale(createElement(ChatView, {
     activeSession: {
       id: 'session-1',
       name: 'streaming',
@@ -74,7 +81,7 @@ describe('single live-turn handoff', () => {
 
   it('keeps a completed live answer as the only visible owner until settle', () => {
     const finalText = 'one visible answer';
-    const markup = renderToStaticMarkup(createElement(ChatView, {
+    const markup = renderWithLocale(createElement(ChatView, {
       activeSession: {
         id: 'session-1', name: 'streaming', lastMessageAt: 1, status: 'active', backend: 'ai-sdk',
         labels: [], isFlagged: false, isArchived: false, hasUnread: false,
@@ -103,7 +110,7 @@ describe('single live-turn handoff', () => {
 
   it('keeps an incomplete live answer as the only owner after early persistence', () => {
     const text = 'persisted before a slow tool finishes';
-    const markup = renderToStaticMarkup(createElement(ChatView, {
+    const markup = renderWithLocale(createElement(ChatView, {
       activeSession: {
         id: 'session-1', name: 'streaming', lastMessageAt: 1, status: 'running', backend: 'pi-agent',
         labels: [], isFlagged: false, isArchived: false, hasUnread: false,

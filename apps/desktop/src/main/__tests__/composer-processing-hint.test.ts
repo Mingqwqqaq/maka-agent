@@ -8,12 +8,18 @@
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Composer } from '@maka/ui';
+import { Composer, LocaleProvider } from '@maka/ui';
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 function render(props: Partial<Parameters<typeof Composer>[0]>): string {
-  return renderToStaticMarkup(
+  return renderWithLocale(
     createElement(Composer, {
       onSend: () => {},
       onStop: () => {},

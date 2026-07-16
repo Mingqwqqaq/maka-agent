@@ -20,13 +20,19 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it } from 'node:test';
 import type { ToolActivityItem } from '@maka/ui';
-import { ToolActivity, ToolErrorDetails } from '@maka/ui';
+import { LocaleProvider, ToolActivity, ToolErrorDetails } from '@maka/ui';
 
 const TAIL_MARKER = 'TAIL_MARKER_SCHEMA_DETAILS';
+
+function renderWithLocale(child: ReactNode): string {
+  return renderToStaticMarkup(
+    createElement(LocaleProvider, { preference: 'zh', children: child }),
+  );
+}
 
 // A long, natural-language error whose tail sits past the banner's 240px
 // truncation. Repeating varied prose (not a single-char run) so redactSecrets
@@ -44,11 +50,11 @@ function erroredItem(errorText: string): ToolActivityItem {
 }
 
 function renderErrored(errorText: string): string {
-  return renderToStaticMarkup(createElement(ToolActivity, { items: [erroredItem(errorText)] }));
+  return renderWithLocale(createElement(ToolActivity, { items: [erroredItem(errorText)] }));
 }
 
 function renderExpanded(errorText: string): string {
-  return renderToStaticMarkup(createElement(ToolActivity, { items: [erroredItem(errorText)], open: true }));
+  return renderWithLocale(createElement(ToolActivity, { items: [erroredItem(errorText)], open: true }));
 }
 
 describe('PR-TOOL-ERROR-COLLAPSE-0 contract (issue #741)', () => {
@@ -91,7 +97,7 @@ describe('PR-TOOL-ERROR-COLLAPSE-0 contract (issue #741)', () => {
     // #741 P2: args:{} + errored + non-owned used to leave an empty destructive
     // tool-output box (the raw moved to the disclosure, but showResult kept the
     // shared panel open with nothing in it).
-    const markup = renderToStaticMarkup(createElement(ToolActivity, { items: [{
+    const markup = renderWithLocale(createElement(ToolActivity, { items: [{
       toolUseId: 'tu_empty', toolName: 'unknown_tool', status: 'errored', args: {},
       result: { kind: 'text', text: 'validation failed' },
     }], open: true }));

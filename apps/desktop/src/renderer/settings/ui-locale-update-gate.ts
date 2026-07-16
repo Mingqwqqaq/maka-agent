@@ -38,6 +38,11 @@ export function createUiLocaleUpdateGate(): UiLocaleUpdateGate {
     preference: UiLocalePreference;
     apply: (preference: UiLocalePreference) => void;
   }>();
+  let blockedHydration: {
+    ticket: UiLocaleHydrationTicket;
+    preference: UiLocalePreference;
+    apply: (preference: UiLocalePreference) => void;
+  } | null = null;
 
   function latestUnsettledTicket(): number {
     let latest = 0;
@@ -50,11 +55,27 @@ export function createUiLocaleUpdateGate(): UiLocaleUpdateGate {
     const successful = successfulWrites.get(ticket);
     if (!successful) return false;
     successfulWrites.delete(ticket);
+    blockedHydration = null;
     appliedTicket = Math.max(appliedTicket, ticket);
     for (const staleTicket of successfulWrites.keys()) {
       if (staleTicket < appliedTicket) successfulWrites.delete(staleTicket);
     }
     successful.apply(successful.preference);
+    return true;
+  }
+
+  function applyBlockedHydration(): boolean {
+    if (
+      !blockedHydration
+      || blockedHydration.ticket.id !== latestHydrationTicket
+      || pendingTickets.size > 0
+      || successfulWrites.size > 0
+    ) {
+      return false;
+    }
+    const hydration = blockedHydration;
+    blockedHydration = null;
+    hydration.apply(hydration.preference);
     return true;
   }
 
@@ -72,7 +93,7 @@ export function createUiLocaleUpdateGate(): UiLocaleUpdateGate {
       successfulWrites.delete(ticket);
       if (ticket !== latestTicket) return;
       latestTicket = latestUnsettledTicket();
-      applySuccessfulWrite(latestTicket);
+      if (!applySuccessfulWrite(latestTicket)) applyBlockedHydration();
     },
     commit(ticket, preference, onUiLocalePreferenceChange) {
       if (ticket === null) return false;
@@ -93,16 +114,30 @@ export function createUiLocaleUpdateGate(): UiLocaleUpdateGate {
       };
     },
     commitHydration(ticket, preference, onUiLocalePreferenceChange) {
+      if (ticket.id !== latestHydrationTicket) {
+        return false;
+      }
       if (
-        ticket.id !== latestHydrationTicket
-        || ticket.localeWriteRevision !== writeRevision
-        || ticket.startedWhileWritePending
-        || pendingTickets.size > 0
+        appliedTicket > ticket.localeWriteRevision
+        || (ticket.startedWhileWritePending && appliedTicket >= ticket.localeWriteRevision)
       ) {
         return false;
       }
-      onUiLocalePreferenceChange(preference);
-      return true;
+      if (
+        ticket.localeWriteRevision === writeRevision
+        && !ticket.startedWhileWritePending
+        && pendingTickets.size === 0
+      ) {
+        blockedHydration = null;
+        onUiLocalePreferenceChange(preference);
+        return true;
+      }
+      blockedHydration = {
+        ticket,
+        preference,
+        apply: onUiLocalePreferenceChange,
+      };
+      return applyBlockedHydration();
     },
   };
 }

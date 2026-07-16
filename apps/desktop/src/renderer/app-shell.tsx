@@ -1024,13 +1024,11 @@ export function AppShell({
       const palette = next.appearance?.palette ?? 'default';
       const name = next.personalization?.displayName ?? '';
       const uiLocale = next.personalization?.uiLocale ?? 'auto';
+      setUiLocaleOverride(smoke?.locale ?? null);
       uiLocaleUpdateGate.commitHydration(
         uiLocaleHydration,
         uiLocale,
-        (preference) => {
-          setUiLocalePreference(preference);
-          setUiLocaleOverride(smoke?.locale ?? null);
-        },
+        (preference) => setUiLocalePreference(preference),
       );
       setThemePref(pref);
       setThemePalette(palette);
