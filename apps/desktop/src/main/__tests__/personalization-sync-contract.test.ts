@@ -56,7 +56,7 @@ describe('Personalization form state sync (PR-PERSONALIZATION-SYNC-0)', () => {
 
     assert.match(
       page,
-      /catch \(error\) \{[\s\S]*toast\.error\('保存失败', settingsActionErrorMessage\(error\)\)/,
+      /catch \(error\) \{[\s\S]*toast\.error\(copy\.saveFailed, settingsActionErrorMessage\(error, locale\)\)/,
       'Personalization save failures must use the shared Settings error scrubber',
     );
     assert.doesNotMatch(
@@ -138,12 +138,12 @@ describe('Personalization form state sync (PR-PERSONALIZATION-SYNC-0)', () => {
 
     assert.match(
       page,
-      /onBlur=\{\(event\) => flushDisplayName\(event\.currentTarget\.value\)\}[\s\S]*?aria-label="显示名称"/,
+      /onBlur=\{\(event\) => flushDisplayName\(event\.currentTarget\.value\)\}[\s\S]*?aria-label=\{copy\.displayName\}/,
       'Display name must flush its autosave on blur',
     );
     assert.match(
       page,
-      /onChange=\{\(next\) => persistLocale\(next as UiLocalePreference\)\}[\s\S]*?ariaLabel="界面语言"/,
+      /onChange=\{\(next\) => persistLocale\(next as UiLocalePreference\)\}[\s\S]*?ariaLabel=\{copy\.interfaceLanguage\}/,
       'Locale segmented control must persist immediately on change',
     );
   });
@@ -216,7 +216,7 @@ describe('Personalization form state sync (PR-PERSONALIZATION-SYNC-0)', () => {
     );
     assert.match(
       page,
-      /catch \(error\) \{[\s\S]*if \(personalizationMountedRef\.current && ticket === persistTicketRef\.current\) \{[\s\S]*toast\.error\('保存失败', settingsActionErrorMessage\(error\)\)/,
+      /catch \(error\) \{[\s\S]*if \(personalizationMountedRef\.current && ticket === persistTicketRef\.current\) \{[\s\S]*toast\.error\(copy\.saveFailed, settingsActionErrorMessage\(error, locale\)\)/,
       'Personalization failure toast must only fire while the page still owns the save',
     );
   });

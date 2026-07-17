@@ -41,7 +41,7 @@ describe('Settings network and gateway persistence contract', () => {
     );
     assert.match(
       networkBlock,
-      /\{ onError: \(error\) => toast\.error\('保存网络设置失败', settingsActionErrorMessage\(error\)\) \},[\s\S]*function updateProxy\(patch: Partial<NetworkProxySettings>\) \{[\s\S]*return update\(patch\);/,
+      /\{ onError: \(error\) => toast\.error\(copy\.saveNetworkFailed, settingsActionErrorMessage\(error, locale\)\) \},[\s\S]*function updateProxy\(patch: Partial<NetworkProxySettings>\) \{[\s\S]*return update\(patch\);/,
       'Network proxy field saves must route through the shared draft update and surface a visible failure toast',
     );
     assert.match(
@@ -91,7 +91,7 @@ describe('Settings network and gateway persistence contract', () => {
     );
     assert.match(
       networkBlock,
-      /catch \(error\) \{[\s\S]*toast\.error\('代理测试出错', settingsActionErrorMessage\(error\)\)/,
+      /catch \(error\) \{[\s\S]*toast\.error\(copy\.proxyTestError, settingsActionErrorMessage\(error, locale\)\)/,
       'Renderer-side proxy test IPC rejections must use the Settings error scrubber',
     );
     assert.doesNotMatch(
@@ -147,17 +147,17 @@ describe('Settings network and gateway persistence contract', () => {
     // only wires the failure toast through the hook-level onError callback.
     assert.match(
       networkBlock,
-      /if \(result\.ok && networkPageMountedRef\.current\) \{[\s\S]*toast\.success\('代理可达'/,
+      /if \(result\.ok && networkPageMountedRef\.current\) \{[\s\S]*toast\.success\(copy\.proxyReachable/,
       'Network proxy test success toast must only fire while the page is still mounted',
     );
     assert.match(
       networkBlock,
-      /else if \(networkPageMountedRef\.current\) \{[\s\S]*toast\.error\('代理测试失败', result\.message\);/,
+      /else if \(networkPageMountedRef\.current\) \{[\s\S]*toast\.error\(copy\.proxyTestFailed, result\.message\);/,
       'Network proxy test failure toast must only fire while the page is still mounted',
     );
     assert.match(
       networkBlock,
-      /catch \(error\) \{[\s\S]*if \(networkPageMountedRef\.current\) \{[\s\S]*toast\.error\('代理测试出错', settingsActionErrorMessage\(error\)\);/,
+      /catch \(error\) \{[\s\S]*if \(networkPageMountedRef\.current\) \{[\s\S]*toast\.error\(copy\.proxyTestError, settingsActionErrorMessage\(error, locale\)\);/,
       'Network proxy test thrown-error toast must only fire while the page is still mounted',
     );
     assert.match(
