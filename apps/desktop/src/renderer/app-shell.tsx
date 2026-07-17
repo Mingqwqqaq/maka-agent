@@ -10,16 +10,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import type {
-  ChatDefaultPermissionMode,
-  PermissionMode,
-  PlanReminder,
-  SessionSummary,
-  ThemePalette,
-  ThemePreference,
-  UiLocale,
-  UiLocalePreference,
-} from '@maka/core';
+import type { PermissionMode, PlanReminder, SessionSummary, UiLocale, UiLocalePreference } from '@maka/core';
 import { hasSettledInitialOnboarding, resolveUiLocale } from '@maka/core';
 import {
   AutomationsPage,
@@ -45,9 +36,10 @@ import { useOnboardingSnapshot } from './use-onboarding-snapshot';
 import type { OnboardingSnapshot } from '../global';
 import { ProviderLogo } from './settings/provider-display';
 import { ProviderBrandMark } from './settings/provider-brand-marks';
-import { createUiLocaleUpdateGate } from './settings/ui-locale-update-gate';
 import { getShellCopy, localizedShellErrorMessage } from './locales/shell-copy';
 import { ErrorBoundary } from './error-boundary';
+import { useShellAppearance } from './use-shell-appearance';
+import { useShellSearch } from './use-shell-search';
 import { useSessionGoal } from './use-session-goal';
 import { deriveStaleSessionIds } from './stale-sessions';
 import { deriveProjectGroups } from './session-project-grouping';
@@ -55,7 +47,6 @@ import { deriveSessionStatusGroups } from './session-status-grouping';
 import { deriveAppShellTurnViewModel } from './app-shell-turn-view-model';
 import { readScrollMotionBehavior } from './scroll-motion-policy';
 import { deriveBranchBanner } from './branch-banner';
-import { applyTheme, applyThemePalette } from './theme';
 import { filterSessions, readNavSelection } from './nav-selection';
 import {
   SESSION_LIST_COLLAPSED_WIDTH,
@@ -243,44 +234,31 @@ function AppShellContent({
     openSettingsSection,
     openProviderCatalog,
   } = useSettingsModal();
-  const [themePref, setThemePref] = useState<ThemePreference>('auto');
-  const [themePalette, setThemePalette] = useState<ThemePalette>('default');
+  const {
+    themePref,
+    setThemePref,
+    themePalette,
+    setThemePalette,
+    uiLocaleUpdateGate,
+    userLabel,
+    setUserLabel,
+    defaultPermissionMode,
+    setDefaultPermissionMode,
+    refreshShellSettings,
+  } = useShellAppearance({
+    toastApi,
+    uiLocale,
+    setUiLocaleOverride,
+    setUiLocalePreference,
+  });
   const shellCopy = getShellCopy(uiLocale).app;
-  const [uiLocaleUpdateGate] = useState(createUiLocaleUpdateGate);
-  const [userLabel, setUserLabel] = useState<string>('');
-  // Settings → 通用 → 默认权限模式 — DISPLAY-ONLY mirror. The composer's
-  // picker shows it before the user makes a per-session choice; the actual
-  // authority for a new session's mode is main.ts's sessions:create fallback
-  // (the renderer omits permissionMode unless the user explicitly picked),
-  // so a stale value here can briefly mislabel the chip but never changes
-  // which mode a session is created with.
-  const [defaultPermissionMode, setDefaultPermissionMode] = useState<ChatDefaultPermissionMode>('ask');
   // Persisted composer defaults seed the empty-state model, project path, and
   // recent workspace history so the home view is populated before the async
   // `app:info` round-trip completes on mount.
   const persistedComposerDefaults = loadComposerDefaults();
   const [helpOpen, closeHelp, openHelp] = useKeyboardHelp();
   const [paletteOpen, openPalette, closePalette] = useCommandPalette();
-  // Search modal state. Sidebar `搜索` opens the real thread-search
-  // modal; result selection below can also hand ChatView a turn anchor
-  // so the hit is visible after session navigation.
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  // Funnel bridge: query handed from the palette's 查看全部结果 row into the
-  // search modal. Topbar opens reset it so a plain open starts blank.
-  const [searchModalInitialQuery, setSearchModalInitialQuery] = useState('');
-  const [searchScrollTarget, setSearchScrollTarget] = useState<{
-    sessionId: string;
-    turnId: string;
-    nonce: number;
-  } | null>(null);
   const [viewMode, setViewMode] = useState<SessionViewMode>('status');
-  function closeSearchModal(options?: { restoreFocus?: boolean }) {
-    setSearchModalOpen(false);
-    if (options?.restoreFocus === false) return;
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>('[data-maka-search-trigger="true"]')?.focus({ preventScroll: true });
-    });
-  }
   const composerRef = useRef<ComposerHandle>(null);
   const rendererMountedRef = useRef(true);
   // Active autonomous goal for the current session drives the header
@@ -554,15 +532,17 @@ function AppShellContent({
      change. Stable refs + memos keep the timers alive. */
   const openSessionInChatRef = useRef(openSessionInChat);
   openSessionInChatRef.current = openSessionInChat;
-  const searchModalDeps = useMemo(
-    () => ({
-      searchThread: (request: Parameters<typeof window.maka.search.thread>[0]) => window.maka.search.thread(request),
-    }),
-    [],
-  );
-  const searchModalOnNavigate = useCallback((sessionId: string, turnId?: string) => {
-    openSessionInChatRef.current(sessionId, turnId);
-  }, []);
+  const {
+    searchModalOpen,
+    setSearchModalOpen,
+    searchModalInitialQuery,
+    setSearchModalInitialQuery,
+    searchScrollTarget,
+    setSearchScrollTarget,
+    closeSearchModal,
+    searchModalDeps,
+    searchModalOnNavigate,
+  } = useShellSearch({ openSessionInChatRef });
   const paletteOnSelectSession = useCallback((sessionId: string, turnId?: string) => {
     openSessionInChatRef.current(sessionId, turnId);
   }, []);
@@ -1085,33 +1065,6 @@ function AppShellContent({
 
   function isShellSurfaceOwnerActive(owner: ComposerImportOwner): boolean {
     return navSelectionRef.current.section === owner.navSection && activeIdRef.current === owner.sessionId;
-  }
-
-  async function refreshShellSettings() {
-    const uiLocaleHydration = uiLocaleUpdateGate.beginHydration();
-    try {
-      const next = await window.maka.settings.get();
-      const smoke = await window.maka.visualSmoke.getState();
-      const pref = smoke?.theme ?? next.appearance?.theme ?? 'auto';
-      const palette = next.appearance?.palette ?? 'default';
-      const name = next.personalization?.displayName ?? '';
-      const uiLocale = next.personalization?.uiLocale ?? 'auto';
-      setUiLocaleOverride(smoke?.locale ?? null);
-      uiLocaleUpdateGate.commitHydration(uiLocaleHydration, uiLocale, (preference) =>
-        setUiLocalePreference(preference),
-      );
-      setThemePref(pref);
-      setThemePalette(palette);
-      setUserLabel(name);
-      setDefaultPermissionMode(next.chatDefaults?.permissionMode ?? 'ask');
-      applyTheme(pref);
-      applyThemePalette(palette);
-    } catch (error) {
-      toastApi.error(
-        shellCopy.appearanceLoadErrorTitle,
-        localizedShellErrorMessage(error, shellCopy.appearanceLoadErrorFallback, uiLocale),
-      );
-    }
   }
 
   async function bootstrapSessions() {
