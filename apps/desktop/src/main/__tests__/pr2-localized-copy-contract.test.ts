@@ -1,0 +1,114 @@
+import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, it } from 'node:test';
+import { getSettingsSharedCopy } from '../../renderer/locales/settings-shared-copy.js';
+
+import {
+  findInlineCjkLiterals,
+  findSilentCatalogFallbacks,
+  formatSourceViolations,
+  type LiteralExemption,
+} from './localized-source-contract-helpers.js';
+
+const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
+
+export const PR2_TARGET_PRESENTATION_FILES = [
+  'apps/desktop/src/renderer/FirstRunChecklist.tsx',
+  'apps/desktop/src/renderer/OnboardingHero.tsx',
+  'apps/desktop/src/renderer/command-palette.tsx',
+  'apps/desktop/src/renderer/keyboard-help.tsx',
+  'apps/desktop/src/renderer/settings/SettingsModal.tsx',
+  'apps/desktop/src/renderer/settings/settings-surface.tsx',
+] as const;
+
+export const PR2_PRESENTATION_FILES = [
+  'apps/desktop/src/renderer/settings/SettingsModal.tsx',
+] as const;
+
+const PR2_CATALOG_FILES = [
+  'apps/desktop/src/renderer/locales/settings-shared-copy.ts',
+] as const;
+const PR2_LITERAL_EXEMPTIONS: readonly LiteralExemption[] = [];
+
+function repoSource(file: string): string {
+  return readFileSync(resolve(REPO_ROOT, file), 'utf8');
+}
+
+describe('localized source contract helpers', () => {
+  it('reports inline JSX Chinese but ignores comments and English literals', () => {
+    const source = `
+      // 中文说明不是用户可见文案
+      export function Example() {
+        const label = 'English';
+        return <button aria-label="保存">保存</button>;
+      }
+    `;
+    const violations = findInlineCjkLiterals(source, 'fixture.tsx');
+
+    assert.deepEqual(violations.map((entry) => entry.text), ['保存', '保存']);
+  });
+
+  it('allows Chinese inside an explicitly identified catalog module', () => {
+    assert.deepEqual(findInlineCjkLiterals(
+      `export const copy = { zh: { save: '保存' }, en: { save: 'Save' } };`,
+      'catalog.ts',
+      { allowCatalogCopy: true },
+    ), []);
+  });
+
+  it('requires an exact, reasoned exemption for protocol markers', () => {
+    const exemption: LiteralExemption = {
+      file: 'fixture.ts',
+      text: '协议：',
+      reason: 'non-user-visible-protocol',
+    };
+
+    assert.deepEqual(findInlineCjkLiterals(
+      `export const marker = '协议：';`,
+      'fixture.ts',
+      { exemptions: [exemption] },
+    ), []);
+  });
+
+  it('rejects silent English-to-Chinese catalog fallbacks', () => {
+    const violations = findSilentCatalogFallbacks(
+      `export const copy = catalog[locale] ?? catalog.zh;`,
+      'catalog.ts',
+    );
+
+    assert.equal(violations.length, 1);
+    assert.match(violations[0]?.text ?? '', /catalog\.zh/);
+  });
+});
+
+describe('PR2 migrated presentation copy', () => {
+  it('keeps the migrated manifest within the planned PR2 targets', () => {
+    for (const file of PR2_PRESENTATION_FILES) {
+      assert.ok(PR2_TARGET_PRESENTATION_FILES.includes(file));
+    }
+  });
+
+  it('selects complete Settings copy without fallback', () => {
+    assert.equal(getSettingsSharedCopy('zh').modalLabel, '设置');
+    assert.equal(getSettingsSharedCopy('en').modalLabel, 'Settings');
+  });
+
+  it('contains no inline user-visible Chinese literals', () => {
+    const violations = PR2_PRESENTATION_FILES.flatMap((file) => (
+      findInlineCjkLiterals(repoSource(file), file, {
+        exemptions: PR2_LITERAL_EXEMPTIONS,
+      })
+    ));
+
+    assert.equal(violations.length, 0, formatSourceViolations(violations));
+  });
+
+  it('does not silently fall English copy back to Chinese', () => {
+    const violations = PR2_CATALOG_FILES.flatMap((file) => (
+      findSilentCatalogFallbacks(repoSource(file), file)
+    ));
+
+    assert.equal(violations.length, 0, formatSourceViolations(violations));
+  });
+});

@@ -58,6 +58,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.3",
     "@playwright/test": "^1.61.1",
     "@storybook/react-vite": "^10.4.6",
     "@tailwindcss/vite": "^4.3.1",
