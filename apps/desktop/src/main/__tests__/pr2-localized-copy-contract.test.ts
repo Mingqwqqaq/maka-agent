@@ -31,10 +31,13 @@ export const PR2_TARGET_PRESENTATION_FILES = [
   'apps/desktop/src/renderer/command-palette.tsx',
   'apps/desktop/src/renderer/error-boundary.tsx',
   'apps/desktop/src/renderer/keyboard-help.tsx',
+  'apps/desktop/src/renderer/onboarding-hero-copy.ts',
   'apps/desktop/src/renderer/open-path.ts',
+  'apps/desktop/src/renderer/first-run-task-suggestions.ts',
   'apps/desktop/src/renderer/session-workspace-errors.ts',
   'apps/desktop/src/renderer/settings/SettingsModal.tsx',
   'apps/desktop/src/renderer/settings/settings-surface.tsx',
+  'apps/desktop/src/renderer/use-onboarding-snapshot.ts',
   'packages/ui/src/search-modal.tsx',
   'packages/ui/src/session-sidebar-nav.tsx',
 ] as const;
@@ -55,8 +58,13 @@ export const PR2_PRESENTATION_FILES = [
   'apps/desktop/src/renderer/command-palette.tsx',
   'apps/desktop/src/renderer/error-boundary.tsx',
   'apps/desktop/src/renderer/keyboard-help.tsx',
+  'apps/desktop/src/renderer/FirstRunChecklist.tsx',
+  'apps/desktop/src/renderer/OnboardingHero.tsx',
+  'apps/desktop/src/renderer/first-run-task-suggestions.ts',
+  'apps/desktop/src/renderer/onboarding-hero-copy.ts',
   'apps/desktop/src/renderer/open-path.ts',
   'apps/desktop/src/renderer/session-workspace-errors.ts',
+  'apps/desktop/src/renderer/use-onboarding-snapshot.ts',
   'apps/desktop/src/renderer/settings/SettingsModal.tsx',
   'packages/ui/src/search-modal.tsx',
   'packages/ui/src/session-sidebar-nav.tsx',
@@ -64,6 +72,7 @@ export const PR2_PRESENTATION_FILES = [
 
 const PR2_CATALOG_FILES = [
   'apps/desktop/src/renderer/locales/settings-shared-copy.ts',
+  'apps/desktop/src/renderer/locales/onboarding-copy.ts',
   'apps/desktop/src/renderer/locales/shell-copy.ts',
   'packages/ui/src/shell-controls-copy.ts',
 ] as const;
