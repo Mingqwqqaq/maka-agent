@@ -220,4 +220,14 @@ describe('Personalization form state sync (PR-PERSONALIZATION-SYNC-0)', () => {
       'Personalization failure toast must only fire while the page still owns the save',
     );
   });
+
+  it('rolls the language selector back when locale persistence fails', async () => {
+    const page = await readPersonalizationPage();
+
+    assert.match(
+      page,
+      /catch \(error\) \{[\s\S]*if \(personalizationMountedRef\.current && ticket === persistTicketRef\.current\) \{[\s\S]*if \(patch\.uiLocale !== undefined\) setUiLocale\(value\.uiLocale\);[\s\S]*toast\.error\(copy\.saveFailed/,
+      'A rejected locale save must restore the persisted preference in the selector',
+    );
+  });
 });

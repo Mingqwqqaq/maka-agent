@@ -116,6 +116,7 @@ export function PersonalizationSettingsPage(props: {
       }
     } catch (error) {
       if (personalizationMountedRef.current && ticket === persistTicketRef.current) {
+        if (patch.uiLocale !== undefined) setUiLocale(value.uiLocale);
         toast.error(copy.saveFailed, settingsActionErrorMessage(error, locale));
       }
     } finally {
