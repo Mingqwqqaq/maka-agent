@@ -259,7 +259,7 @@ export function createAppShellChatActions(deps: {
     try {
       const turnId = crypto.randomUUID();
       if (!initialSessionId) {
-        if (pending && pending.length > 0) preflightAttachmentItems(pending);
+        if (pending && pending.length > 0) preflightAttachmentItems(pending, uiLocale);
         const session = await window.maka.sessions.create({
           // Omit permissionMode so main.ts's sessions:create resolves the
           // configured chatDefaults.permissionMode as the single authority.
@@ -328,7 +328,7 @@ export function createAppShellChatActions(deps: {
       if (!sendStillOwnsCurrentSurface) return false;
       if (isNoRealConnectionError(error)) {
         const reason = noRealConnectionReasonFromError(error);
-        showModelSetupToast(noRealConnectionSetupDescription(reason), reason);
+        showModelSetupToast(noRealConnectionSetupDescription(reason, uiLocale), reason);
       } else if (isSessionWorkspaceUnavailableError(error)) {
         showSessionWorkspaceUnavailableToast(toastApi, uiLocale);
       } else {

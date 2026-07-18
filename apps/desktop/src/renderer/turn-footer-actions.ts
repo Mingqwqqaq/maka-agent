@@ -26,7 +26,7 @@
  */
 
 import type { TurnStatus, UiLocale } from '@maka/core';
-import { getDesktopConversationCopy } from './locales/conversation-copy';
+import { getDesktopConversationCopy } from './locales/conversation-copy.js';
 
 export type TurnFooterActionId = 'regenerate' | 'branch' | 'copy' | 'info';
 

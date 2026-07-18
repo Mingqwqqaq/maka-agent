@@ -1,4 +1,4 @@
-import type { SessionStatus, UiCatalog, UiLocale } from '@maka/core';
+import type { ChatConfigurationReason, SessionStatus, UiCatalog, UiLocale } from '@maka/core';
 
 export interface DesktopConversationCopy {
   actions: {
@@ -16,8 +16,18 @@ export interface DesktopConversationCopy {
     operationFailedFallback: string;
     attachmentFailedTitle: string;
     tryAgain: string;
+    modelReboundTitle: string;
+    modelReboundDescription: (modelId?: string) => string;
+    messageReadFailedTitle: string;
   };
   attachments: { tooMany: string; tooLarge: string; duplicate: string };
+  model: {
+    fakeBackendLabel: string;
+    setupTitle: string;
+    connectionMissingTitle: string;
+    configurationFallback: string;
+    configurationReason: Record<ChatConfigurationReason, string>;
+  };
   footer: {
     labels: Record<'regenerate' | 'branch' | 'copy' | 'info', string>;
     pending: string;
@@ -39,7 +49,7 @@ export interface DesktopConversationCopy {
   groups: Record<'pinned' | SessionStatus, string>;
   workbar: { ariaLabel: string; sectionsAriaLabel: string; tasks: string; browser: string; files: string };
   health: {
-    blocked: Record<string, { label: string; tooltip: (connection: string, model: string) => string }>;
+    blocked: Record<ChatConfigurationReason, { label: string; tooltip: (connection: string, model: string) => string }>;
     reauth: { label: string; tooltip: string };
     testError: { label: string; tooltip: string };
   };
@@ -60,8 +70,26 @@ export interface DesktopConversationCopy {
 
 const COPY = {
   zh: {
-    actions: { stopFailedTitle: '停止失败', stopFailedFallback: '会话操作失败，请稍后重试。', refreshSessionsFailedTitle: '刷新会话列表失败', refreshSessionsFailedFallback: '刷新会话列表失败，请稍后重试。', conversationErrorTitle: '对话出错', conversationErrorFallback: '对话运行失败，请稍后重试。', regenerateStartedTitle: '已发起重新生成', regenerateStartedDescription: '正在生成新的一轮回答', branchCreatedTitle: '已创建分支', branchCreatedDescription: (name) => `新会话 ${name}`, operationFailedTitle: '操作失败', operationFailedFallback: '对话操作失败，请稍后重试。', attachmentFailedTitle: '添加附件失败', tryAgain: '请稍后重试。' },
+    actions: { stopFailedTitle: '停止失败', stopFailedFallback: '会话操作失败，请稍后重试。', refreshSessionsFailedTitle: '刷新会话列表失败', refreshSessionsFailedFallback: '刷新会话列表失败，请稍后重试。', conversationErrorTitle: '对话出错', conversationErrorFallback: '对话运行失败，请稍后重试。', regenerateStartedTitle: '已发起重新生成', regenerateStartedDescription: '正在生成新的一轮回答', branchCreatedTitle: '已创建分支', branchCreatedDescription: (name) => `新会话 ${name}`, operationFailedTitle: '操作失败', operationFailedFallback: '对话操作失败，请稍后重试。', attachmentFailedTitle: '添加附件失败', tryAgain: '请稍后重试。', modelReboundTitle: '已切换到可用模型', modelReboundDescription: (modelId) => `原会话使用的连接已不可用${modelId ? ` · ${modelId}` : ''}`, messageReadFailedTitle: '读取对话失败' },
     attachments: { tooMany: '附件数量超过 8 个', tooLarge: '附件大小超过 50MB', duplicate: '附件来源重复，请勿重复添加同一文件。' },
+    model: {
+      fakeBackendLabel: '本地模拟连接',
+      setupTitle: '等待配置真实模型',
+      connectionMissingTitle: '连接已删除',
+      configurationFallback: '模型连接暂时无法用于发送，请到 设置 · 模型 检查后重试。',
+      configurationReason: {
+        missing_default_connection: '等待配置默认模型。请到 设置 · 模型 添加一个可用模型连接后再发送。',
+        connection_missing: '该会话依赖的模型连接已删除，请到 设置 · 模型 重新选择或重建连接。',
+        connection_disabled: '当前模型连接已禁用。请到 设置 · 模型 启用或选择其他默认模型。',
+        missing_api_key: '当前模型连接还没有可用凭据。请到 设置 · 模型 补齐 API key 或重新登录后再发送。',
+        missing_model: '当前模型连接还没有可用模型。请到 设置 · 模型 选择默认模型后再发送。',
+        empty_model_list: '当前模型连接没有启用模型。请到 设置 · 模型 添加或启用模型后再发送。',
+        model_not_enabled: '当前会话选择的模型未启用。请到 设置 · 模型 重新选择可用模型后再发送。',
+        model_not_chat_capable: '当前会话选择的模型不能用于聊天。请到 设置 · 模型 重新选择支持聊天的模型后再发送。',
+        oauth_subscription_not_wired: '这个订阅账号暂时不能作为聊天模型。请先选择可用的 API key 或已接入 OAuth 模型连接。',
+        fake_backend: '当前会话来自旧的本地模拟连接。请到 设置 · 模型 添加真实模型后新建会话。',
+      },
+    },
     footer: { labels: { regenerate: '重新生成', branch: '分支', copy: '复制', info: '详情' }, pending: '正在处理…', regenerateRunning: '当前回答仍在进行中，结束后再重新生成', regenerateAgain: '已重新生成过，再次点击将创建新的并行回答', regenerate: '让模型重新生成本轮回答', branchRunning: '当前回答仍在进行中，结束后再分支', branchAborted: '从中断前的上下文分支出新对话', branch: '基于此回答的上下文分支出新对话', copy: '复制回答到剪贴板', copyEmpty: '此回答尚无可复制的内容' },
     lineage: { regeneratedFrom: '重新生成自旧回答', regeneratedFromTooltip: '这是重新生成的并行回答，点击查看被保留的旧回答', regeneratedTo: '已重新生成 → 新回答', regeneratedToTooltip: '点击跳转到重新生成的新回答' },
     groups: { pinned: '已置顶', running: '进行中', waiting_for_user: '等待你', blocked: '需要处理', active: '会话', review: '待审核', done: '已完成', archived: '归档', aborted: '已中止' },
@@ -85,8 +113,26 @@ const COPY = {
     turnError: { unknown: '未知错误', timeout: '请求超时', auth: '鉴权失败', rateLimit: '触发模型速率限制', network: '网络错误', provider: '模型服务返回错误', stepCap: '达到工具步骤上限', tool: '工具调用失败', permission: '等待权限确认', restarted: '本地应用重启，上一轮没有完成', recovery: { stepCap: '任务可能尚未完成，可以继续', toolError: '先检查工具结果，再决定是否重试', connection: '先检查模型连接或登录状态', partial: '已保留部分输出，可从这里继续', toolRecord: '工具记录已保留，重试前先看结果', retry: '没有执行工具，可直接重试' } },
   },
   en: {
-    actions: { stopFailedTitle: 'Failed to stop', stopFailedFallback: 'The conversation action failed. Try again later.', refreshSessionsFailedTitle: 'Failed to refresh conversations', refreshSessionsFailedFallback: 'The conversation list could not be refreshed. Try again later.', conversationErrorTitle: 'Conversation error', conversationErrorFallback: 'The conversation run failed. Try again later.', regenerateStartedTitle: 'Regeneration started', regenerateStartedDescription: 'Generating a new response', branchCreatedTitle: 'Branch created', branchCreatedDescription: (name) => `New conversation: ${name}`, operationFailedTitle: 'Action failed', operationFailedFallback: 'The conversation action failed. Try again later.', attachmentFailedTitle: 'Failed to add attachment', tryAgain: 'Try again later.' },
+    actions: { stopFailedTitle: 'Failed to stop', stopFailedFallback: 'The conversation action failed. Try again later.', refreshSessionsFailedTitle: 'Failed to refresh conversations', refreshSessionsFailedFallback: 'The conversation list could not be refreshed. Try again later.', conversationErrorTitle: 'Conversation error', conversationErrorFallback: 'The conversation run failed. Try again later.', regenerateStartedTitle: 'Regeneration started', regenerateStartedDescription: 'Generating a new response', branchCreatedTitle: 'Branch created', branchCreatedDescription: (name) => `New conversation: ${name}`, operationFailedTitle: 'Action failed', operationFailedFallback: 'The conversation action failed. Try again later.', attachmentFailedTitle: 'Failed to add attachment', tryAgain: 'Try again later.', modelReboundTitle: 'Switched to an available model', modelReboundDescription: (modelId) => `The previous connection is unavailable${modelId ? ` · ${modelId}` : ''}`, messageReadFailedTitle: 'Failed to load conversation' },
     attachments: { tooMany: 'You can attach at most 8 files', tooLarge: 'Attachments must be 50 MB or smaller', duplicate: 'This attachment was already added.' },
+    model: {
+      fakeBackendLabel: 'Local simulation',
+      setupTitle: 'Configure a real model',
+      connectionMissingTitle: 'Connection deleted',
+      configurationFallback: 'This model connection cannot send right now. Check it in Settings · Models and try again.',
+      configurationReason: {
+        missing_default_connection: 'Set a default model in Settings · Models before sending.',
+        connection_missing: 'The model connection used by this conversation was deleted. Select or create one in Settings · Models.',
+        connection_disabled: 'The current model connection is disabled. Enable it or choose another default in Settings · Models.',
+        missing_api_key: 'The current model connection has no usable credentials. Add an API key or sign in again under Settings · Models.',
+        missing_model: 'The current connection has no usable model. Select a default model in Settings · Models.',
+        empty_model_list: 'The current connection has no enabled models. Add or enable one in Settings · Models.',
+        model_not_enabled: 'The model selected for this conversation is disabled. Choose an enabled model in Settings · Models.',
+        model_not_chat_capable: 'The model selected for this conversation cannot chat. Choose a chat-capable model in Settings · Models.',
+        oauth_subscription_not_wired: 'This subscription account cannot be used as a chat model yet. Choose an available API-key or supported OAuth connection.',
+        fake_backend: 'This conversation used the retired local simulation. Add a real model in Settings · Models, then start a new conversation.',
+      },
+    },
     footer: { labels: { regenerate: 'Regenerate', branch: 'Branch', copy: 'Copy', info: 'Details' }, pending: 'Working…', regenerateRunning: 'Wait for the current response to finish before regenerating', regenerateAgain: 'A regenerated response already exists; click again to create another parallel response', regenerate: 'Generate another response to this turn', branchRunning: 'Wait for the current response to finish before branching', branchAborted: 'Branch from the context before the interruption', branch: 'Branch a new conversation from this response', copy: 'Copy response to clipboard', copyEmpty: 'This response has no content to copy' },
     lineage: { regeneratedFrom: 'Regenerated from previous response', regeneratedFromTooltip: 'This is a parallel regenerated response; click to view the retained previous response', regeneratedTo: 'Regenerated → New response', regeneratedToTooltip: 'Jump to the regenerated response' },
     groups: { pinned: 'Pinned', running: 'Running', waiting_for_user: 'Waiting for you', blocked: 'Needs attention', active: 'Conversations', review: 'Review', done: 'Done', archived: 'Archived', aborted: 'Stopped' },

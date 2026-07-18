@@ -28,7 +28,7 @@ import {
   type SessionStatusPresentation,
   type SessionStatusTone,
 } from '@maka/ui';
-import { getDesktopConversationCopy } from './locales/conversation-copy';
+import { getDesktopConversationCopy } from './locales/conversation-copy.js';
 export { presentSessionStatus } from '@maka/ui';
 export { describeBlockedReason } from '@maka/ui';
 export type { SessionStatusPresentation, SessionStatusTone } from '@maka/ui';

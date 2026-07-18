@@ -285,8 +285,8 @@ function AppShellContent({
   // in their own group, preserving the PR48 pin-floats behavior.
   const visibleSessions = useMemo(() => filterSessions(sessions, navSelection), [sessions, navSelection]);
   const sessionStatusGroups = useMemo(
-    () => deriveSessionStatusGroups(visibleSessions, { pinFirst: true }),
-    [visibleSessions],
+    () => deriveSessionStatusGroups(visibleSessions, { pinFirst: true, locale: uiLocale }),
+    [visibleSessions, uiLocale],
   );
   const sessionProjectGroups = useMemo(() => deriveProjectGroups(visibleSessions), [visibleSessions]);
   const sessionListGroups = viewMode === 'project' ? sessionProjectGroups : sessionStatusGroups;
@@ -361,6 +361,7 @@ function AppShellContent({
     setPendingNewChatThinkingLevel,
     sessionHealthNotice,
   } = useShellChatModel({
+    uiLocale,
     connections,
     connectionsRevision,
     defaultConnection,
@@ -478,13 +479,13 @@ function AppShellContent({
       () =>
         deriveAppShellTurnViewModel({
           uiLocale,
-      activeId,
-      messages,
-      pendingTurnActions,
-      pendingKeyOf,
-    }),
-    [activeId, messages, pendingTurnActions],
-  );
+          activeId,
+          messages,
+          pendingTurnActions,
+          pendingKeyOf,
+        }),
+      [activeId, messages, pendingTurnActions, uiLocale],
+    );
 
   // PR109e-e: click handler for lineage badge → scroll target turn into
   // view. Avoids pulling a separate ref-tracker: relies on the
@@ -898,6 +899,7 @@ function AppShellContent({
   }
 
   const stop = createAppShellStopAction({
+    uiLocale,
     activeIdRef,
     addPendingSessionAction,
     clearPendingSessionAction,
@@ -907,6 +909,7 @@ function AppShellContent({
   });
 
   const { handleEvent, reconcilePersistedMessages, settleAssistantStreaming } = useStableActions(createAppShellSessionEventHandlers, {
+    uiLocale,
     activeIdRef,
     liveTurnBySessionRef,
     refreshMessages,
@@ -969,6 +972,7 @@ function AppShellContent({
     setLiveBrowserSessionIds,
   });
   useAppShellBootstrapSubscriptions({
+    uiLocale,
     activeIdRef,
     applyVisualSmokeFixture,
     bootstrapSessions,
@@ -1156,7 +1160,7 @@ function AppShellContent({
   }
 
   function showModelSetupToast(description: string, reason?: string) {
-    const copy = modelSetupToastCopy(reason, description);
+    const copy = modelSetupToastCopy(reason, description, uiLocale);
     toastApi.toast({
       title: copy.title,
       description: copy.description,

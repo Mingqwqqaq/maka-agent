@@ -1,5 +1,23 @@
 import type { ToolActivityKind, UiCatalog, UiLocale } from '@maka/core';
 
+type BackgroundTerminalStatus = 'running' | 'completed' | 'failed' | 'timed_out' | 'cancelled' | 'orphaned';
+type OfficeDocumentReason =
+  | 'invalid_operation'
+  | 'invalid_path'
+  | 'unsupported_extension'
+  | 'missing_file'
+  | 'not_file'
+  | 'symlink_escape'
+  | 'invalid_selector'
+  | 'invalid_query'
+  | 'invalid_props'
+  | 'file_exists'
+  | 'officecli_missing'
+  | 'officecli_timeout'
+  | 'officecli_failed';
+type WebCredentialCopyKey = 'env' | 'settings' | 'missing' | 'unknown';
+type WebGuidanceKey = 'env' | 'settings' | 'rate_limited' | 'not_configured' | 'timed_out' | 'privacy_mode' | 'unknown';
+
 export interface ToolActivityCopy {
   status: {
     pending: string;
@@ -79,7 +97,7 @@ export interface ToolActivityCopy {
     streamsTruncated: (limit: number) => string;
     outputTruncated: string;
     outputRedacted: string;
-    backgroundStatus: Record<string, string>;
+    backgroundStatus: Record<BackgroundTerminalStatus, string>;
     backgroundUnknown: (status: string) => string;
     officeDocument: string;
     notExecuted: string;
@@ -88,15 +106,15 @@ export interface ToolActivityCopy {
     truncatedSuffix: string;
     officeIncomplete: string;
     diagnostic: (reason: string) => string;
-    officeReason: Record<string, string>;
+    officeReason: Record<OfficeDocumentReason, string>;
     unknownDiagnostic: string;
     workflow: { action: string; status: string; error: string; nodes: string; diagnostics: string };
     webNoResults: string;
     webResults: (count: number) => string;
-    credentialSource: Record<string, string>;
+    credentialSource: Record<WebCredentialCopyKey, string>;
     webFailure: string;
     webSearch: string;
-    webGuidance: Record<string, string>;
+    webGuidance: Record<WebGuidanceKey, string>;
   };
   agent: {
     subagentStatus: Record<'completed' | 'failed' | 'cancelled' | 'running' | 'waiting_permission', string>;

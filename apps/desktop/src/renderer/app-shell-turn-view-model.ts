@@ -21,7 +21,7 @@ export function deriveAppShellTurnViewModel(input: {
   activeId: string | undefined;
   messages: StoredMessage[];
   pendingTurnActions: ReadonlySet<string>;
-  uiLocale?: UiLocale;
+  uiLocale: UiLocale;
   pendingKeyOf(sessionId: string, turnId: string, actionId: TurnFooterActionMeta['id']): string;
 }): AppShellTurnViewModel {
   const turnsForLineage = materializeTurns(input.messages);

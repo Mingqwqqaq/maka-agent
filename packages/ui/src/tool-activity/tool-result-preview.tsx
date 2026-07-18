@@ -499,7 +499,8 @@ function isCancelledStatus(status: string | undefined): boolean {
 
 function shellRunStatusLabel(status: string, locale: import('@maka/core').UiLocale): string {
   const copy = getToolActivityCopy(locale).result;
-  return copy.backgroundStatus[status] ?? copy.backgroundUnknown(status);
+  const label = (copy.backgroundStatus as Readonly<Record<string, string>>)[status];
+  return label ?? copy.backgroundUnknown(status);
 }
 
 function OfficeDocumentPreview(props: {
@@ -554,7 +555,7 @@ function OfficeDocumentPreview(props: {
 function presentOfficeDocumentReason(reason: string | undefined, locale: import('@maka/core').UiLocale): string | undefined {
   if (reason === undefined) return undefined;
   const copy = getToolActivityCopy(locale).result;
-  return copy.officeReason[reason] ?? copy.unknownDiagnostic;
+  return (copy.officeReason as Readonly<Record<string, string>>)[reason] ?? copy.unknownDiagnostic;
 }
 
 function RiveWorkflowPreview(props: {
