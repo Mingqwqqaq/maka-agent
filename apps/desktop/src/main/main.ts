@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeImage, powerMonitor, safeStorage, shell } from 'electron';
+import { app, ipcMain, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -54,8 +54,7 @@ import {
   buildAgentTeamChildTools,
   buildAgentTeamLeadTools,
   buildExpertDispatchToolForTeamId,
-  buildSubagentProjectionTools,
-  buildSubagentSpawnTool,
+  buildParentAgentTools,
   buildSubagentToolGroup,
   getAIModel,
   buildProviderOptions,
@@ -181,6 +180,7 @@ import { registerOnboardingIpc } from './onboarding-ipc-main.js';
 import { registerSessionEntryIpc } from './session-entry-ipc-main.js';
 import { registerPermissionsIpc } from './permissions-ipc-main.js';
 import { registerSettingsIpc } from './settings-ipc-main.js';
+import { createKeepSystemAwakeController } from './keep-system-awake.js';
 import { registerGatewayIpc } from './gateway-ipc-main.js';
 import { registerSessionsIpc } from './sessions-ipc-main.js';
 import {
@@ -254,6 +254,12 @@ try {
 }
 const workspaceRoot = join(app.getPath('userData'), 'workspaces', visualSmokeFixture?.workspaceName ?? 'default');
 let configWatcher: ConfigFileWatcher | undefined;
+// 保持系统唤醒 (settings.system.keepSystemAwake): holds an Electron
+// `powerSaveBlocker` so in-process scheduled tasks keep firing while the
+// machine would otherwise sleep. Injected with electron's blocker; the
+// controller owns the id + double-start guard. The blocker dies with the
+// process, so quit needs no special teardown.
+const keepSystemAwake = createKeepSystemAwakeController(powerSaveBlocker);
 const store = createSessionStore(workspaceRoot);
 const runStore = createAgentRunStore(workspaceRoot);
 const runtimeEventStore = createRuntimeEventStore(workspaceRoot);
@@ -687,10 +693,9 @@ const computerUseTools = applyComputerUseRealModelPolicy(
       )
     : undefined,
 );
-const agentTools: MakaTool[] = [
-  buildSubagentSpawnTool({ taskLedger: taskLedgerStore }),
-  ...buildSubagentProjectionTools(),
-];
+const agentTools: MakaTool[] = buildParentAgentTools({
+  taskLedger: taskLedgerStore,
+});
 const agentTeamLeadTools = buildAgentTeamLeadTools({
   mailbox: agentMailboxStore,
   taskLedger: taskLedgerStore,
@@ -1299,6 +1304,11 @@ async function applySettingsRuntimeEffects(settings: AppSettings, patch: UpdateA
   if (patch.chatDefaults?.permissionMode) {
     await syncDefaultPermissionModeToSessions(settings.chatDefaults.permissionMode);
   }
+  if (patch.system) {
+    // Start/stop the power-save blocker the instant the toggle flips so the
+    // capability reflects the user's choice without waiting for a relaunch.
+    keepSystemAwake.apply(settings.system.keepSystemAwake);
+  }
 }
 
 async function syncDefaultPermissionModeToSessions(mode: Exclude<PermissionMode, 'explore'>): Promise<void> {
@@ -1324,6 +1334,7 @@ async function handleExternalSettingsChange(): Promise<void> {
       network: settings.network,
       botChat: settings.botChat,
       openGateway: settings.openGateway,
+      system: settings.system,
     };
     await applySettingsRuntimeEffects(settings, fullPatch);
   } catch (error) {
@@ -1708,6 +1719,9 @@ async function runBackgroundStartup(): Promise<void> {
   }
   const settings = await settingsStore.get();
   setActiveProxy(toContractNetworkSettings(settings.network).proxy);
+  // Re-hold the power-save blocker at launch if the user left it enabled, so
+  // scheduled tasks survive machine sleep across restarts.
+  keepSystemAwake.apply(settings.system.keepSystemAwake);
   await telemetryRepo.load();
   lookupPricing = buildPricingLookup(telemetryRepo.listPricingOverrides());
   await recoverInterruptedSessionsOnStartup();

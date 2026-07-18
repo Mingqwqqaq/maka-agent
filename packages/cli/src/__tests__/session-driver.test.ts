@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -241,6 +241,100 @@ describe('Maka session driver', () => {
     assert.deepEqual(runtime.sessionUpdates, []);
   });
 
+  test('moves an active session, warns about dirty old cwd, and injects one replayable reminder', async () => {
+    const oldCwd = await mkdtemp(join(tmpdir(), 'maka-move-old-'));
+    const nextCwd = join(oldCwd, 'worktree-next');
+    await mkdir(nextCwd);
+    try {
+      const runtime = new RecordingRuntime();
+      const inspected: string[] = [];
+      const canonicalNextCwd = await realpath(nextCwd);
+      const driver = createMakaSessionDriver({
+        runtime,
+        cwd: oldCwd,
+        llmConnectionSlug: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        inspectCwdChanges: async (cwd) => {
+          inspected.push(cwd);
+          return true;
+        },
+        newId: nextId('turn'),
+      });
+
+      await collectPrompt(driver, 'before move');
+      const result = await driver.moveSession!(nextCwd);
+      assert.deepEqual(result, {
+        previousCwd: oldCwd,
+        cwd: canonicalNextCwd,
+        changed: true,
+        oldCwdDirty: true,
+      });
+      assert.deepEqual(inspected, [oldCwd]);
+      assert.deepEqual(runtime.sessionUpdates.at(-1), {
+        sessionId: 'session-1',
+        patch: {
+          cwd: canonicalNextCwd,
+          pendingCwdReminder: { from: oldCwd, to: canonicalNextCwd },
+        },
+      });
+
+      await collectPrompt(driver, 'after move');
+      assert.match(runtime.sent.at(-1)?.input.text ?? '', new RegExp(`<system-reminder>.*${escapeRegExp(oldCwd)}.*${escapeRegExp(canonicalNextCwd)}`));
+      assert.equal(runtime.sent.at(-1)?.input.displayText, 'after move');
+
+      await collectPrompt(driver, 'later turn');
+      assert.equal(runtime.sent.at(-1)?.input.text, 'later turn');
+    } finally {
+      await rm(oldCwd, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects empty, missing, and non-directory move targets before persistence', async () => {
+    const oldCwd = await mkdtemp(join(tmpdir(), 'maka-move-validate-'));
+    const file = join(oldCwd, 'file.txt');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(file, 'file');
+    try {
+      const runtime = new RecordingRuntime();
+      const driver = createMakaSessionDriver({
+        runtime,
+        cwd: oldCwd,
+        llmConnectionSlug: 'anthropic',
+        model: 'claude-sonnet-4-5',
+      });
+      await collectPrompt(driver, 'start');
+      await assert.rejects(driver.moveSession!(''), /cannot be empty/);
+      await assert.rejects(driver.moveSession!(join(oldCwd, 'missing')), /does not exist/);
+      await assert.rejects(driver.moveSession!(file), /not a directory/);
+      assert.deepEqual(runtime.sessionUpdates, []);
+    } finally {
+      await rm(oldCwd, { recursive: true, force: true });
+    }
+  });
+
+  test('does not carry a pending cwd reminder into a new session', async () => {
+    const oldCwd = await mkdtemp(join(tmpdir(), 'maka-move-new-session-'));
+    const nextCwd = join(oldCwd, 'next');
+    await mkdir(nextCwd);
+    try {
+      const runtime = new RecordingRuntime();
+      const driver = createMakaSessionDriver({
+        runtime,
+        cwd: oldCwd,
+        llmConnectionSlug: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        inspectCwdChanges: async () => false,
+      });
+      await collectPrompt(driver, 'first');
+      await driver.moveSession!(nextCwd);
+      driver.startNewSession();
+      await collectPrompt(driver, 'new session');
+      assert.equal(runtime.sent.at(-1)?.input.text, 'new session');
+    } finally {
+      await rm(oldCwd, { recursive: true, force: true });
+    }
+  });
+
   test('switches to an existing session for the next prompt', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'maka-switch-cwd-'));
     try {
@@ -280,6 +374,40 @@ describe('Maka session driver', () => {
       assert.equal(runtime.sent[0]?.sessionId, 'session-2');
     } finally {
       await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('restores a persisted cwd reminder when resuming a moved session', async () => {
+    const oldCwd = await mkdtemp(join(tmpdir(), 'maka-move-persisted-old-'));
+    const nextCwd = join(oldCwd, 'worktree-next');
+    await mkdir(nextCwd);
+    try {
+      const runtime = new RecordingRuntime();
+      const canonicalNextCwd = await realpath(nextCwd);
+      runtime.sessionSummaries = [{
+        ...sessionSummary({ id: 'session-2', cwd: canonicalNextCwd }),
+        pendingCwdReminder: { from: oldCwd, to: canonicalNextCwd },
+      }];
+      const driver = createMakaSessionDriver({
+        runtime,
+        cwd: oldCwd,
+        llmConnectionSlug: 'anthropic',
+        model: 'claude-sonnet-4-5',
+      });
+
+      await driver.switchSession('session-2');
+      await collectPrompt(driver, 'after restart');
+
+      assert.match(
+        runtime.sent.at(-1)?.input.text ?? '',
+        new RegExp(`<system-reminder>.*${escapeRegExp(oldCwd)}.*${escapeRegExp(canonicalNextCwd)}`),
+      );
+      assert.deepEqual(runtime.sessionUpdates.at(-1), {
+        sessionId: 'session-2',
+        patch: { pendingCwdReminder: undefined },
+      });
+    } finally {
+      await rm(oldCwd, { recursive: true, force: true });
     }
   });
 
@@ -746,7 +874,7 @@ class RecordingRuntime {
   readonly permissionResponses: Array<{ sessionId: string; response: PermissionResponse }> = [];
   readonly userQuestionResponses: Array<{ sessionId: string; response: UserQuestionResponse }> = [];
   readonly permissionModes: Array<{ sessionId: string; mode: PermissionMode }> = [];
-  readonly sessionUpdates: Array<{ sessionId: string; patch: { model?: string; llmConnectionSlug?: string; thinkingLevel?: import('@maka/core/model-thinking').ThinkingLevel | undefined; name?: string } }> = [];
+  readonly sessionUpdates: Array<{ sessionId: string; patch: { cwd?: string; pendingCwdReminder?: SessionSummary['pendingCwdReminder']; model?: string; llmConnectionSlug?: string; thinkingLevel?: import('@maka/core/model-thinking').ThinkingLevel | undefined; name?: string } }> = [];
   readonly branched: Array<{ sessionId: string; sourceTurnId: string }> = [];
   readonly branchedBefore: Array<{ sessionId: string; sourceTurnId: string }> = [];
   readonly sessionMessages = new Map<string, StoredMessage[]>();
@@ -857,10 +985,12 @@ class RecordingRuntime {
     };
   }
 
-  async updateSession(sessionId: string, patch: { model?: string; llmConnectionSlug?: string; thinkingLevel?: import('@maka/core/model-thinking').ThinkingLevel | undefined; name?: string }): Promise<SessionSummary> {
+  async updateSession(sessionId: string, patch: { cwd?: string; pendingCwdReminder?: SessionSummary['pendingCwdReminder']; model?: string; llmConnectionSlug?: string; thinkingLevel?: import('@maka/core/model-thinking').ThinkingLevel | undefined; name?: string }): Promise<SessionSummary> {
     this.sessionUpdates.push({ sessionId, patch });
     return {
       id: sessionId,
+      cwd: patch.cwd ?? '/repo',
+      ...(Object.hasOwn(patch, 'pendingCwdReminder') ? { pendingCwdReminder: patch.pendingCwdReminder } : {}),
       name: 'New Chat',
       isFlagged: false,
       isArchived: false,

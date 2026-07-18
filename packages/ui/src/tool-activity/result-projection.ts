@@ -60,6 +60,7 @@ export function resultOwnsOwnPanel(item: ToolActivityItem): boolean {
     case 'terminal':
     case 'shell_run':
     case 'subagent':
+    case 'agent_swarm':
     case 'explore_agent':
     case 'web_search':
     case 'web_search_error':
@@ -77,6 +78,7 @@ export function isCancelledToolResult(result: ToolActivityItem['result']): boole
   if (result.kind === 'terminal' || result.kind === 'shell_run') {
     return result.status === 'cancelled';
   }
+  if (result.kind === 'agent_swarm') return result.status === 'cancelled';
   return false;
 }
 

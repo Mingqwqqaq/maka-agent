@@ -20,8 +20,8 @@ import type {
 } from '@maka/core';
 import type { BackendSendInput, BackendStopMode, PermissionDecision } from '@maka/core/backend-types';
 import { expect } from '../test-helpers.js';
-import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import { MockLanguageModelV4, simulateReadableStream } from 'ai/test';
+import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import { z } from 'zod';
 import type { LlmConnection } from '@maka/core';
 import { AiSdkBackend } from '../ai-sdk-backend.js';
@@ -407,30 +407,35 @@ describe('SessionManager permission mode updates', () => {
     const backends = new BackendRegistry();
     const built: string[] = [];
     backends.register('fake', (ctx) => {
-      built.push(`${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}`);
+      built.push(`${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}:${ctx.header.cwd}`);
       return new TestBackend(ctx);
     });
     backends.register('ai-sdk', (ctx) => {
-      built.push(`${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}`);
+      built.push(`${ctx.header.backend}:${ctx.header.llmConnectionSlug}:${ctx.header.model}:${ctx.header.cwd}`);
       return new TestBackend(ctx);
     });
     const manager = new SessionManager({ store, backends, newId: nextId(), now: nextNow(5_000) });
     const session = await manager.createSession(makeInput());
 
     await drain(manager.sendMessage(session.id, { turnId: 'turn-1', text: 'hello' }));
-    expect(built).toEqual(['fake:fake:fake-model']);
+    expect(built).toEqual(['fake:fake:fake-model:/tmp/cwd']);
 
     const summary = await manager.updateSession(session.id, {
       backend: 'ai-sdk',
       llmConnectionSlug: 'zai-coding-plan',
       model: 'glm-4.7',
+      cwd: '/tmp/worktree-cwd',
     });
     expect(summary.backend).toBe('ai-sdk');
     expect(summary.llmConnectionSlug).toBe('zai-coding-plan');
+    expect(summary.cwd).toBe('/tmp/worktree-cwd');
     expect(store.disposeCount).toBe(1);
 
     await drain(manager.sendMessage(session.id, { turnId: 'turn-2', text: 'again' }));
-    expect(built).toEqual(['fake:fake:fake-model', 'ai-sdk:zai-coding-plan:glm-4.7']);
+    expect(built).toEqual([
+      'fake:fake:fake-model:/tmp/cwd',
+      'ai-sdk:zai-coding-plan:glm-4.7:/tmp/worktree-cwd',
+    ]);
   });
 
   test('metadata-only updates keep the active backend instance', async () => {
@@ -3900,6 +3905,7 @@ describe('SessionManager permission mode updates', () => {
         backend: 'ai-sdk',
         llmConnectionSlug: 'zai-coding-plan',
         model: 'glm-4.7',
+        cwd: '/tmp/worktree-cwd',
       }),
       /Cannot change backend configuration while a turn is running/,
     );
@@ -6409,15 +6415,15 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 /** Mock model: first request calls the Probe tool, second finishes with text. */
-function steeringToolThenDoneModel(): MockLanguageModelV3 {
+function steeringToolThenDoneModel(): MockLanguageModelV4 {
   const usage = {
     inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
     outputTokens: { total: 10, text: 10, reasoning: 0 },
   };
-  const model: MockLanguageModelV3 = new MockLanguageModelV3({
+  const model: MockLanguageModelV4 = new MockLanguageModelV4({
     doStream: async () => {
       const call = model.doStreamCalls.length;
-      const chunks: LanguageModelV3StreamPart[] = call === 1
+      const chunks: LanguageModelV4StreamPart[] = call === 1
         ? [
             { type: 'stream-start', warnings: [] },
             { type: 'tool-call', toolCallId: 'tool-1', toolName: 'Probe', input: JSON.stringify({ q: 'x' }) },
@@ -6444,7 +6450,7 @@ function steeringToolThenDoneModel(): MockLanguageModelV3 {
  */
 async function steeringDeliverySession(
   runStore: MemoryAgentRunStore,
-  model: MockLanguageModelV3,
+  model: MockLanguageModelV4,
   duringTool: (manager: SessionManager, sessionId: string) => void,
 ) {
   const store = new MemorySessionStore();

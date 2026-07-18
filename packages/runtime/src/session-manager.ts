@@ -1290,6 +1290,7 @@ export function headerToSummary(h: SessionHeader): SessionSummary {
   const summary: SessionSummary = {
     id: h.id,
     cwd: h.cwd,
+    ...(h.pendingCwdReminder ? { pendingCwdReminder: h.pendingCwdReminder } : {}),
     name: h.name === 'New Session' ? 'New Chat' : h.name,
     isFlagged: h.isFlagged,
     isArchived: h.isArchived,
@@ -1318,7 +1319,11 @@ function isNotFoundError(error: unknown): error is NodeJS.ErrnoException {
 }
 
 export function changesBackendConfig(patch: Partial<SessionHeader>): boolean {
-  return 'backend' in patch || 'llmConnectionSlug' in patch || 'model' in patch || 'thinkingLevel' in patch;
+  return 'backend' in patch
+    || 'llmConnectionSlug' in patch
+    || 'model' in patch
+    || 'thinkingLevel' in patch
+    || 'cwd' in patch;
 }
 
 function agentRunStatusForSpawnResult(status: AgentRunHeader['status']): SpawnChildAgentResult['status'] {

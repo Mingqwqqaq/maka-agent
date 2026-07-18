@@ -1,4 +1,4 @@
-import { projectToolActivityArgs } from '@maka/core';
+import { projectAgentSwarmResult, projectToolActivityArgs } from '@maka/core';
 import type {
   SessionEvent,
   ToolActivityKind,
@@ -59,10 +59,16 @@ import {
   type SandboxEscalationPlanResult,
   type SandboxEscalationPlannerContext,
 } from './sandbox-escalation.js';
+import { ChildAgentRunLimiter } from './child-agent-run-limiter.js';
 
 export type ToolModelOutputPart =
   | { type: 'text'; text: string }
-  | { type: 'image-data'; data: string; mediaType: string };
+  | {
+      type: 'file';
+      data: { type: 'data'; data: string | Uint8Array };
+      mediaType: string;
+      filename?: string;
+    };
 
 export interface ToolModelOutput {
   type: 'content';
@@ -130,6 +136,12 @@ export interface MakaToolContext {
   toolCallId: string;
   abortSignal: AbortSignal;
   emitOutput: (stream: ToolOutputStream, chunk: string) => void;
+  /** Diagnostic-only trace projection. It must never affect tool execution. */
+  emitRunTrace?: (
+    type: 'tool_started' | 'tool_completed' | 'tool_failed',
+    message: string,
+    data?: Record<string, unknown>,
+  ) => void;
   /** Trusted expert-team identity supplied by RuntimeKernel/backend wiring. */
   agentTeam?: AgentTeamExecutionContext;
   /** One-call grants already approved and consumed by ToolRuntime. */
@@ -171,6 +183,7 @@ export interface ToolGating {
 
 export const TOOL_ERROR_RESULT_MAX_CHARS = 4000;
 export const MAX_ACTIVE_SUBAGENT_TOOLS_PER_TURN = 5;
+export const MAX_ACTIVE_CHILD_AGENT_RUNS_PER_TURN = 5;
 export const DEFAULT_PERMISSION_TIMEOUT_MS = 300_000;
 
 /**
@@ -233,6 +246,7 @@ export class ToolRuntime {
     { toolUseId: string; questions: UserQuestion[] }
   >();
   private activeSubagentToolCount = 0;
+  private childAgentRunLimiter = new ChildAgentRunLimiter(MAX_ACTIVE_CHILD_AGENT_RUNS_PER_TURN);
   /**
    * Tool-availability gating for the execute boundary. Set by the backend each
    * turn from `ToolAvailabilityRuntime`. Undefined when gating is off (economy
@@ -312,6 +326,11 @@ export class ToolRuntime {
   }
 
   resetTurnState(): void {
+    const priorChildAgentRunLimiter = this.childAgentRunLimiter;
+    this.childAgentRunLimiter = new ChildAgentRunLimiter(MAX_ACTIVE_CHILD_AGENT_RUNS_PER_TURN);
+    priorChildAgentRunLimiter.close(
+      new Error('Child agent run permit scope ended before capacity became available'),
+    );
     this.activeSubagentToolCount = 0;
     this.gating = undefined;
     this.lastFailedToolCallSignature = undefined;
@@ -913,6 +932,7 @@ export class ToolRuntime {
         toolUseId,
         toolName: tool.name,
         errorClass: 'RuntimeLimit',
+        boundary: 'subagent_tool_admission',
       });
       await this.writeSyntheticToolResult(toolUseId, turnId, SUBAGENT_TOOL_LIMIT_MESSAGE, queue);
       this.recordLoopGateOutcome(callSignature, true);
@@ -1035,11 +1055,27 @@ export class ToolRuntime {
           toolCallId: toolUseId,
           abortSignal: ctx.abortSignal,
           emitOutput: output.emit,
+          ...(trace ? {
+            emitRunTrace: (
+              type: 'tool_started' | 'tool_completed' | 'tool_failed',
+              message: string,
+              data?: Record<string, unknown>,
+            ) => trace.emit('tool', type, message, {
+              toolUseId,
+              toolName: tool.name,
+              ...(data ?? {}),
+            }),
+          } : {}),
           ...(this.input.agentTeam ? { agentTeam: this.input.agentTeam } : {}),
           ...(permissionContext ? { permissionContext } : {}),
           ...(this.input.listChildAgents ? { listChildAgents: this.input.listChildAgents } : {}),
           ...(this.input.readChildAgentOutput ? { readChildAgentOutput: this.input.readChildAgentOutput } : {}),
-          ...(this.buildSpawnChildAgentContext(ctx.abortSignal)),
+          ...(this.buildSpawnChildAgentContext({
+            abortSignal: ctx.abortSignal,
+            trace,
+            toolUseId,
+            toolName: tool.name,
+          })),
           askUserQuestion: (questions) => this.askUserQuestion(turnId, toolUseId, questions, queue),
         });
         output.flush();
@@ -1093,6 +1129,7 @@ export class ToolRuntime {
           argsSummary: tool.categoryHint === 'computer_use'
             ? summarizePersistedArgs(persistedArgs)
             : summarizeArgs(tool.name, executionArgs),
+          resultSummary: summarizeToolResultForTelemetry(content),
           bytesIn: byteLength(persistedArgs),
           bytesOut: byteLength(result),
           startedAt,
@@ -1102,6 +1139,7 @@ export class ToolRuntime {
           toolName: tool.name,
           durationMs,
           status: toolResultStatus,
+          resultSummary: summarizeToolResultForTelemetry(content),
         });
 
         void recordToolArtifactsSafely(
@@ -1185,6 +1223,7 @@ export class ToolRuntime {
           argsSummary: tool.categoryHint === 'computer_use'
             ? summarizePersistedArgs(persistedArgs)
             : summarizeArgs(tool.name, executionArgs),
+          resultSummary: summarizeToolResultForTelemetry(terminalFailure.content),
           bytesIn: byteLength(persistedArgs),
           bytesOut: byteLength(terminalFailure.content),
           startedAt,
@@ -1277,20 +1316,92 @@ export class ToolRuntime {
     return { error: message };
   }
 
-  private buildSpawnChildAgentContext(
-    abortSignal: AbortSignal,
-  ): Pick<MakaToolContext, 'spawnChildAgent'> {
+  private buildSpawnChildAgentContext(input: {
+    abortSignal: AbortSignal;
+    trace: RunTraceLike | null;
+    toolUseId: string;
+    toolName: string;
+  }): Pick<MakaToolContext, 'spawnChildAgent'> {
     const parentRunId = this.input.getCurrentRunId?.();
-    if (!parentRunId || !this.input.spawnChildAgent) return {};
+    const spawnChildAgent = this.input.spawnChildAgent;
+    if (!parentRunId || !spawnChildAgent) return {};
+    const limiter = this.childAgentRunLimiter;
     return {
-      spawnChildAgent: (input) => this.input.spawnChildAgent?.({
-        parentRunId,
-        spec: input.spec,
-        prompt: input.prompt,
-        abortSignal,
-        ...(input.onReady ? { onReady: input.onReady } : {}),
-        ...(input.onEvent ? { onEvent: input.onEvent } : {}),
-      }) ?? Promise.reject(new Error('spawnChildAgent is unavailable')),
+      spawnChildAgent: async (spawnInput) => {
+        const waitingForPermit =
+          limiter.activeCount >= limiter.capacity || limiter.waitingCount > 0;
+        if (waitingForPermit) {
+          input.trace?.emit('tool', 'tool_started', 'Child run waiting for shared runtime capacity', {
+            toolUseId: input.toolUseId,
+            toolName: input.toolName,
+            boundary: 'shared_child_run_permit',
+            stage: 'waiting',
+            activeChildRuns: limiter.activeCount,
+            waitingChildRuns: limiter.waitingCount + 1,
+            capacity: limiter.capacity,
+          });
+        }
+        let permit;
+        try {
+          permit = await limiter.acquire(input.abortSignal);
+        } catch (error) {
+          input.trace?.emit('tool', 'tool_failed', 'Child run did not acquire shared runtime capacity', {
+            toolUseId: input.toolUseId,
+            toolName: input.toolName,
+            boundary: 'shared_child_run_permit',
+            stage: 'cancelled_while_waiting',
+            status: input.abortSignal.aborted ? 'aborted' : 'error',
+          });
+          throw error;
+        }
+        const childStartedAt = this.input.now();
+        input.trace?.emit('tool', 'tool_started', 'Child run execution started', {
+          toolUseId: input.toolUseId,
+          toolName: input.toolName,
+          boundary: 'child_run_execution',
+          stage: 'started',
+          waitedForPermit: waitingForPermit,
+          activeChildRuns: limiter.activeCount,
+          waitingChildRuns: limiter.waitingCount,
+          capacity: limiter.capacity,
+        });
+        try {
+          if (input.abortSignal.aborted) {
+            throw input.abortSignal.reason instanceof Error
+              ? input.abortSignal.reason
+              : new Error('Child agent run cancelled before it started');
+          }
+          const result = await spawnChildAgent({
+            parentRunId,
+            spec: spawnInput.spec,
+            prompt: spawnInput.prompt,
+            abortSignal: input.abortSignal,
+            ...(spawnInput.onReady ? { onReady: spawnInput.onReady } : {}),
+            ...(spawnInput.onEvent ? { onEvent: spawnInput.onEvent } : {}),
+          });
+          input.trace?.emit('tool', 'tool_completed', 'Child run execution completed', {
+            toolUseId: input.toolUseId,
+            toolName: input.toolName,
+            boundary: 'child_run_execution',
+            stage: 'completed',
+            status: 'success',
+            durationMs: Math.max(0, this.input.now() - childStartedAt),
+          });
+          return result;
+        } catch (error) {
+          input.trace?.emit('tool', 'tool_failed', 'Child run execution failed', {
+            toolUseId: input.toolUseId,
+            toolName: input.toolName,
+            boundary: 'child_run_execution',
+            stage: 'completed',
+            status: input.abortSignal.aborted ? 'aborted' : 'error',
+            durationMs: Math.max(0, this.input.now() - childStartedAt),
+          });
+          throw error;
+        } finally {
+          permit.release();
+        }
+      },
     };
   }
 
@@ -1812,6 +1923,9 @@ function deriveToolResultStatus(
     if (content.status === 'cancelled') return 'aborted';
     return 'error';
   }
+  if (content.kind === 'agent_swarm') {
+    return content.status === 'cancelled' ? 'aborted' : 'success';
+  }
   if (content.kind === 'rive_workflow' && content.ok === false) return 'error';
   if (content.kind === 'web_search_error') return 'error';
   if (content.kind === 'office_document' && content.ok === false) {
@@ -1834,6 +1948,41 @@ function deriveToolResultStatus(
   // ShellRun observations: their embedded process status stays model-visible,
   // but reading or returning the observation itself succeeded.
   return 'success';
+}
+
+function summarizeToolResultForTelemetry(
+  content: ToolResultContent,
+): NonNullable<ToolInvocationRecord['resultSummary']> {
+  if (content.kind === 'agent_swarm') {
+    const projection = projectAgentSwarmResult(content);
+    return {
+      kind: content.kind,
+      status: projection.status,
+      itemCount: projection.itemCount,
+      startedItemCount: projection.startedItemCount,
+      completedItemCount: projection.completedItemCount,
+      failedItemCount: projection.failedItemCount,
+      cancelledItemCount: projection.cancelledItemCount,
+      artifactCount: projection.artifactCount,
+    };
+  }
+  if (
+    content.kind === 'terminal'
+    || content.kind === 'shell_run'
+    || content.kind === 'subagent'
+  ) {
+    return { kind: content.kind, status: content.status };
+  }
+  if (content.kind === 'explore_agent') {
+    return {
+      kind: content.kind,
+      status: content.terminalStatus ?? (content.ok ? 'completed' : 'failed'),
+    };
+  }
+  if (content.kind === 'rive_workflow') {
+    return { kind: content.kind, status: content.state ?? (content.ok ? 'completed' : 'failed') };
+  }
+  return { kind: content.kind };
 }
 
 function isAmbiguousComputerFailure(raw: unknown): boolean {
