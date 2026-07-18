@@ -138,6 +138,11 @@ type ShellCopy = {
     responseFailedTitle: string;
     responseFailedFallback: string;
     refreshFailedTitle: string;
+    quickChatFailedTitle: string;
+    quickChatFailedFallback: string;
+    expertTeamFailedTitle: string;
+    expertTeamFailedFallback: string;
+    expertTeamNotFound: string;
   };
   projectActions: {
     currentProject: string;
@@ -629,6 +634,11 @@ const SHELL_COPY_BY_LOCALE = {
       responseFailedTitle: '响应失败',
       responseFailedFallback: '会话操作失败，请稍后重试。',
       refreshFailedTitle: '刷新对话失败',
+      quickChatFailedTitle: '开始对话失败',
+      quickChatFailedFallback: '对话暂时无法开始，请稍后重试。',
+      expertTeamFailedTitle: '开始专家团失败',
+      expertTeamFailedFallback: '专家团暂时无法开始，请稍后重试。',
+      expertTeamNotFound: '找不到该专家团。',
     },
     projectActions: {
       currentProject: '当前项目',
@@ -1043,6 +1053,11 @@ const SHELL_COPY_BY_LOCALE = {
       responseFailedTitle: 'Response failed',
       responseFailedFallback: 'The conversation action failed. Try again later.',
       refreshFailedTitle: 'Could not refresh conversation',
+      quickChatFailedTitle: 'Could not start conversation',
+      quickChatFailedFallback: 'The conversation could not be started. Try again later.',
+      expertTeamFailedTitle: 'Could not start expert team',
+      expertTeamFailedFallback: 'The expert team could not be started. Try again later.',
+      expertTeamNotFound: 'That expert team could not be found.',
     },
     projectActions: {
       currentProject: 'Current project',
