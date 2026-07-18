@@ -30,7 +30,7 @@ test('session tools share one user-controlled workbar', async ({ sessionWorkbarW
   await expect(page.getByRole('main', { name: '技能' })).toBeVisible();
 });
 
-test('workbar toggle stays absent without an active session', async ({ window: page }) => {
+test('workbar toggle stays unmounted without an active session', async ({ window: page }) => {
   const toggle = page.locator('.maka-workspace-top-actions button[aria-expanded]');
 
   await expect(toggle).toHaveCount(0);
