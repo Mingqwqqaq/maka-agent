@@ -504,4 +504,3 @@ function SessionBranchBanner(props: {
     </BaseButton>
   );
 }
-
