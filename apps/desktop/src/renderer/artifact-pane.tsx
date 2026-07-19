@@ -40,8 +40,8 @@ import {
   Copy,
   Trash2,
 } from '@maka/ui/icons';
-import type { ArtifactKind, ArtifactRecord } from '@maka/core';
-import { formatRelativeTimestamp, generalizedErrorMessageChinese, redactSecrets } from '@maka/core';
+import type { ArtifactKind, ArtifactRecord, UiLocale } from '@maka/core';
+import { formatRelativeTimestamp, generalizedErrorMessage, generalizedErrorMessageChinese, redactSecrets } from '@maka/core';
 import {
   Alert,
   AlertAction,
@@ -69,6 +69,7 @@ import { ArtifactPreview } from './artifact-preview';
 import { nextArtifactListAction } from './artifact-list-keyboard';
 import { filterUserVisibleArtifacts } from './artifact-visibility';
 import { openPathFailureCopy } from './open-path';
+import { getArtifactCopy, type ArtifactCopy } from './locales/artifact-copy';
 
 export function ArtifactPane(props: {
   sessionId: string;
@@ -78,6 +79,7 @@ export function ArtifactPane(props: {
   const { sessionId } = props;
   const toast = useToast();
   const locale = useUiLocale();
+  const copy = getArtifactCopy(locale);
   const [records, setRecords] = useState<ArtifactRecord[]>([]);
   const [recordsSessionId, setRecordsSessionId] = useState<string | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -127,18 +129,18 @@ export function ArtifactPane(props: {
       }
     } catch (error) {
       if (artifactPaneMountedRef.current && requestSeq === artifactListRequestSeqRef.current) {
-        const message = artifactActionErrorMessage(error);
+        const message = artifactActionErrorMessage(error, locale, copy);
         setListError({ sessionId, message });
         if (recordsSessionIdRef.current !== sessionId) {
           recordsSessionIdRef.current = undefined;
           setRecordsSessionId(undefined);
           setRecords([]);
         } else {
-          toast.error('刷新生成文件失败', message);
+          toast.error(copy.pane.refreshFailed, message);
         }
       }
     }
-  }, [sessionId, toast]);
+  }, [copy, locale, sessionId, toast]);
 
   useEffect(() => {
     void refresh();
@@ -230,11 +232,11 @@ export function ArtifactPane(props: {
       const result = await window.maka.app.openArtifactPath(artifactId);
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
       if (!result.ok) {
-        toast.error('无法在 Finder 中打开生成文件', openPathFailureCopy(result.reason, locale));
+        toast.error(copy.pane.openFailed, openPathFailureCopy(result.reason, locale));
       }
     } catch (error) {
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.error('无法在 Finder 中打开生成文件', artifactActionErrorMessage(error));
+      toast.error(copy.pane.openFailed, artifactActionErrorMessage(error, locale, copy));
     }
   }
 
@@ -249,15 +251,15 @@ export function ArtifactPane(props: {
       const result = await window.maka.artifacts.readText(artifactId);
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
       if (!result.ok) {
-        toast.error('复制失败', '无法读取生成文件文本内容。');
+        toast.error(copy.pane.copyFailed, copy.pane.readTextFailed);
         return;
       }
       await navigator.clipboard.writeText(result.text);
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.success('已复制生成文件文本', `${record.name} · ${formatBytes(record.sizeBytes)}`);
+      toast.success(copy.pane.copied, `${record.name} · ${formatBytes(record.sizeBytes)}`);
     } catch (error) {
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.error('复制失败', artifactActionErrorMessage(error));
+      toast.error(copy.pane.copyFailed, artifactActionErrorMessage(error, locale, copy));
     }
   }
 
@@ -268,26 +270,26 @@ export function ArtifactPane(props: {
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
       if (result.ok) {
         const record = activeRecords.find((entry) => entry.id === artifactId);
-        toast.success('已另存生成文件', record?.name ?? result.saved);
+        toast.success(copy.pane.saved, record?.name ?? result.saved);
         return;
       }
       if (result.reason === 'canceled') return;
-      toast.error('另存失败', saveArtifactFailureCopy(result.reason));
+      toast.error(copy.pane.saveFailed, saveArtifactFailureCopy(result.reason, copy));
     } catch (error) {
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.error('另存失败', artifactActionErrorMessage(error));
+      toast.error(copy.pane.saveFailed, artifactActionErrorMessage(error, locale, copy));
     }
   }
 
   async function deleteArtifact(artifactId: string) {
     const actionSessionId = sessionId;
     const record = activeRecords.find((entry) => entry.id === artifactId);
-    const name = record?.name ?? '生成文件';
+    const name = record?.name ?? copy.pane.fallbackName;
     const ok = await toast.confirm({
-      title: `删除 "${name}"`,
-      description: '软删除：在记录中标记为已删除，文件保留 6 小时可恢复。',
-      confirmLabel: '删除',
-      cancelLabel: '取消',
+      title: copy.pane.deleteTitle(name),
+      description: copy.pane.deleteDescription,
+      confirmLabel: copy.pane.delete,
+      cancelLabel: copy.pane.cancel,
       destructive: true,
     });
     if (!ok) return;
@@ -296,10 +298,10 @@ export function ArtifactPane(props: {
       await window.maka.artifacts.delete(artifactId);
       await refresh();
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.success(`已删除 ${name}`);
+      toast.success(copy.pane.deleted(name));
     } catch (error) {
       if (!isArtifactActionSurfaceActive(actionSessionId)) return;
-      toast.error(`删除 ${name} 失败`, artifactActionErrorMessage(error));
+      toast.error(copy.pane.deleteFailed(name), artifactActionErrorMessage(error, locale, copy));
     }
   }
 
@@ -360,11 +362,11 @@ export function ArtifactPane(props: {
   }
 
   return (
-    <div className="maka-artifact-pane" aria-label="生成文件预览面板" onKeyDown={handlePaneKeyDown}>
+    <div className="maka-artifact-pane" aria-label={copy.pane.panelAria} onKeyDown={handlePaneKeyDown}>
       {activeListError && (
             <Alert variant="error" className="maka-artifact-list-error">
               <AlertTriangle size={14} aria-hidden="true" />
-              <AlertTitle>生成文件列表载入失败</AlertTitle>
+              <AlertTitle>{copy.pane.listLoadFailed}</AlertTitle>
               <AlertDescription>{activeListError}</AlertDescription>
               <AlertAction>
                 <Button
@@ -377,7 +379,7 @@ export function ArtifactPane(props: {
                   data-pending={pendingArtifactListRetry ? 'true' : undefined}
                 >
                   <RefreshCcw size={13} aria-hidden="true" />
-                  <span>{pendingArtifactListRetry ? '重试中…' : '重试'}</span>
+                  <span>{pendingArtifactListRetry ? copy.pane.retrying : copy.pane.retry}</span>
                 </Button>
               </AlertAction>
             </Alert>
@@ -386,7 +388,7 @@ export function ArtifactPane(props: {
             ref={listRef}
             className="maka-artifact-list"
             role="listbox"
-            aria-label="生成文件列表"
+            aria-label={copy.pane.listAria}
             aria-activedescendant={selectedId ? `maka-artifact-row-${selectedId}` : undefined}
             tabIndex={0}
             onKeyDown={handleListKeyDown}
@@ -420,7 +422,7 @@ export function ArtifactPane(props: {
                   </span>
                   {record.status === 'deleted' && (
                 <Badge variant="destructive" className="maka-artifact-row-badge">
-                  已删除
+                  {copy.pane.deletedBadge}
                 </Badge>
                   )}
                 </BaseButton>
@@ -436,7 +438,7 @@ export function ArtifactPane(props: {
             // tabIndex=-1 make the div programmatically focusable without
             // adding a Tab stop (the list is the single Tab stop).
             role="region"
-            aria-label={selected ? `预览 ${selected.name}` : '生成文件预览'}
+            aria-label={selected ? copy.pane.previewNamed(selected.name) : copy.pane.previewAria}
             tabIndex={-1}
           >
             {selected ? (
@@ -454,16 +456,16 @@ export function ArtifactPane(props: {
                   <EmptyMedia variant="icon">
                     <FileText aria-hidden="true" />
                   </EmptyMedia>
-                  <EmptyTitle>{activeRecords.length > 0 ? '暂未选中文件' : '暂无生成文件'}</EmptyTitle>
+                  <EmptyTitle>{activeRecords.length > 0 ? copy.pane.notSelected : copy.pane.empty}</EmptyTitle>
               <EmptyDescription>
-                {activeRecords.length > 0 ? '从上方列表选择文件查看预览。' : '助手生成文件后会显示在这里。'}
+                {activeRecords.length > 0 ? copy.pane.selectHint : copy.pane.emptyHint}
               </EmptyDescription>
                 </EmptyHeader>
               </Empty>
             )}
           </div>
           {selected && (
-            <Toolbar className="maka-artifact-toolbar" aria-label="生成文件操作">
+            <Toolbar className="maka-artifact-toolbar" aria-label={copy.pane.actionsAria}>
               <ToolbarGroup className="maka-artifact-toolbar-group">
                 <Button
                   type="button"
@@ -475,7 +477,7 @@ export function ArtifactPane(props: {
                   aria-busy={pendingArtifactAction === `${selected.id}:open` ? 'true' : undefined}
                 >
                   <FolderOpen size={14} aria-hidden="true" />
-                  <span>{pendingArtifactAction === `${selected.id}:open` ? '打开中…' : '在 Finder 中打开'}</span>
+                  <span>{pendingArtifactAction === `${selected.id}:open` ? copy.pane.opening : copy.pane.openInFinder}</span>
                 </Button>
                 <Button
                   type="button"
@@ -487,7 +489,7 @@ export function ArtifactPane(props: {
                   aria-busy={pendingArtifactAction === `${selected.id}:save` ? 'true' : undefined}
                 >
                   <Save size={14} aria-hidden="true" />
-                  <span>{pendingArtifactAction === `${selected.id}:save` ? '另存中…' : '另存为'}</span>
+                  <span>{pendingArtifactAction === `${selected.id}:save` ? copy.pane.saving : copy.pane.saveAs}</span>
                 </Button>
                 {isTextKind(selected.kind) && (
                   <Button
@@ -500,7 +502,7 @@ export function ArtifactPane(props: {
                     aria-busy={pendingArtifactAction === `${selected.id}:copy` ? 'true' : undefined}
                   >
                     <Copy size={14} aria-hidden="true" />
-                    <span>{pendingArtifactAction === `${selected.id}:copy` ? '复制中…' : '复制'}</span>
+                    <span>{pendingArtifactAction === `${selected.id}:copy` ? copy.pane.copying : copy.pane.copy}</span>
                   </Button>
                 )}
               </ToolbarGroup>
@@ -522,10 +524,10 @@ export function ArtifactPane(props: {
                         mouse hover, replacing the native hover tooltip this
                         button lost in the tooltip migration. */}
                 <span className="maka-artifact-toolbar-destructive-label">
-                  {pendingArtifactAction === `${selected.id}:delete` ? '删除中…' : '删除'}
+                  {pendingArtifactAction === `${selected.id}:delete` ? copy.pane.deleting : copy.pane.delete}
                 </span>
                   </TooltipTrigger>
-                  <TooltipContent>{pendingArtifactAction === `${selected.id}:delete` ? '删除中…' : '删除'}</TooltipContent>
+                  <TooltipContent>{pendingArtifactAction === `${selected.id}:delete` ? copy.pane.deleting : copy.pane.delete}</TooltipContent>
                 </Tooltip>
               </ToolbarGroup>
             </Toolbar>
@@ -540,27 +542,29 @@ function isTextKind(kind: ArtifactKind): boolean {
   return kind === 'file' || kind === 'diff' || kind === 'html';
 }
 
-function saveArtifactFailureCopy(reason: string): string {
+function saveArtifactFailureCopy(reason: string, copy: ArtifactCopy): string {
   switch (reason) {
     case 'not_found':
-      return '生成文件不存在。';
+      return copy.pane.saveFailures.not_found;
     case 'not_allowed':
-      return '生成文件路径检查未通过。';
+      return copy.pane.saveFailures.not_allowed;
     case 'deleted':
-      return '生成文件已删除，不能另存。';
+      return copy.pane.saveFailures.deleted;
     case 'write_failed':
-      return '目标位置无法写入。';
+      return copy.pane.saveFailures.write_failed;
     default:
-      return '无法保存生成文件。';
+      return copy.pane.saveFailures.default;
   }
 }
 
-function artifactActionErrorMessage(error: unknown): string {
+function artifactActionErrorMessage(error: unknown, locale: UiLocale, copy: ArtifactCopy): string {
   const raw = redactSecrets(error instanceof Error ? error.message : String(error ?? '')).trim();
-  if (!raw) return '生成文件操作失败，请稍后重试。';
-  const classified = generalizedErrorMessageChinese(new Error(raw), '');
+  if (!raw) return copy.pane.actionFailed;
+  const classified = locale === 'zh'
+    ? generalizedErrorMessageChinese(new Error(raw), '')
+    : generalizedErrorMessage(new Error(raw), '');
   if (classified) return classified;
-  return /[\u4e00-\u9fff]/.test(raw) ? raw : '生成文件操作失败，请稍后重试。';
+  return locale === 'zh' && /[\u4e00-\u9fff]/.test(raw) ? raw : copy.pane.actionFailed;
 }
 
 function KindIcon(props: { kind: ArtifactKind }) {

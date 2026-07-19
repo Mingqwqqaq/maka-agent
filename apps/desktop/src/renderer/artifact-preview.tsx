@@ -36,18 +36,20 @@ import type {
   ArtifactRecord,
   ArtifactTextReadResult,
 } from '@maka/core';
-import { cn, previewVariants, Spinner } from '@maka/ui';
+import { cn, previewVariants, Spinner, useUiLocale } from '@maka/ui';
 import { RegistryArtifactPreview } from './artifact-preview-registry-shell';
+import { getArtifactCopy, type ArtifactCopy } from './locales/artifact-copy';
 
 export function ArtifactPreview(props: { record: ArtifactRecord; onShowInFolder?: () => void }) {
   const { record, onShowInFolder } = props;
+  const copy = getArtifactCopy(useUiLocale());
   switch (record.kind) {
     case 'file':
-      return <FilePreview record={record} />;
+      return <FilePreview record={record} copy={copy} />;
     case 'diff':
-      return <DiffPreview record={record} />;
+      return <DiffPreview record={record} copy={copy} />;
     case 'html':
-      return <HtmlPreview record={record} />;
+      return <HtmlPreview record={record} copy={copy} />;
     case 'image':
       // PR-UI-RENDER-3a: route image previews through the typed
       // registry shell so the resolution path (mime match / ext
@@ -57,25 +59,25 @@ export function ArtifactPreview(props: { record: ArtifactRecord; onShowInFolder?
       // land.
       return <RegistryArtifactPreview record={record} onShowInFolder={onShowInFolder} />;
     case 'pdf':
-      return <PdfPreview record={record} />;
+      return <PdfPreview record={record} copy={copy} />;
   }
 }
 
 // ---- text-backed previews --------------------------------------------------
 
-function FilePreview(props: { record: ArtifactRecord }) {
+function FilePreview(props: { record: ArtifactRecord; copy: ArtifactCopy }) {
   const result = useTextRead(props.record.id);
-  if (result.state === 'loading') return <PreviewLoading label="加载文件预览…" />;
-  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} />;
+  if (result.state === 'loading') return <PreviewLoading label={props.copy.preview.loadingFile} />;
+  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} copy={props.copy} />;
   return (
     <pre className="maka-artifact-preview-file maka-code">{result.value.text}</pre>
   );
 }
 
-function DiffPreview(props: { record: ArtifactRecord }) {
+function DiffPreview(props: { record: ArtifactRecord; copy: ArtifactCopy }) {
   const result = useTextRead(props.record.id);
-  if (result.state === 'loading') return <PreviewLoading label="加载 diff 预览…" />;
-  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} />;
+  if (result.state === 'loading') return <PreviewLoading label={props.copy.preview.loadingDiff} />;
+  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} copy={props.copy} />;
   const lines = result.value.text.split('\n');
   return (
     <div className={cn('maka-artifact-preview-diff', previewVariants({ part: 'diff' }))} data-kind="file_diff">
@@ -103,10 +105,10 @@ function diffLineKind(line: string): 'add' | 'del' | 'hunk' | 'meta' | 'ctx' {
   return 'ctx';
 }
 
-function HtmlPreview(props: { record: ArtifactRecord }) {
+function HtmlPreview(props: { record: ArtifactRecord; copy: ArtifactCopy }) {
   const result = useTextRead(props.record.id);
-  if (result.state === 'loading') return <PreviewLoading label="加载 HTML 预览…" />;
-  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} />;
+  if (result.state === 'loading') return <PreviewLoading label={props.copy.preview.loadingHtml} />;
+  if (!result.value.ok) return <TextFailureCard record={props.record} reason={result.value.reason} copy={props.copy} />;
   const srcdoc = result.value.text;
   // External links inside the sandboxed iframe (no
   // `allow-popups`) silently fail. We surface the count up-front so the user
@@ -125,11 +127,11 @@ function HtmlPreview(props: { record: ArtifactRecord }) {
         aria-live="polite"
         aria-atomic="true"
       >
-        此预览中已禁用外部链接 · {externalLinkCount} 个链接
+        {props.copy.preview.externalLinks(externalLinkCount)}
       </div>
       <iframe
         className="maka-artifact-preview-html-iframe"
-        title={`生成文件预览 · ${props.record.name}`}
+        title={props.copy.preview.frameTitle(props.record.name)}
         sandbox="allow-scripts"
         srcDoc={srcdoc}
       />
@@ -146,10 +148,10 @@ function HtmlPreview(props: { record: ArtifactRecord }) {
 // mime_disallowed / no_mime_no_ext), the L2 base64 cap, and the
 // Unsupported card with conditional "在 Finder 中打开" CTA.
 
-function PdfPreview(props: { record: ArtifactRecord }) {
+function PdfPreview(props: { record: ArtifactRecord; copy: ArtifactCopy }) {
   const result = useBinaryRead(props.record.id);
-  if (result.state === 'loading') return <PreviewLoading label="加载 PDF 预览…" />;
-  if (!result.value.ok) return <BinaryFailureCard record={props.record} reason={result.value.reason} />;
+  if (result.state === 'loading') return <PreviewLoading label={props.copy.preview.loadingPdf} />;
+  if (!result.value.ok) return <BinaryFailureCard record={props.record} reason={result.value.reason} copy={props.copy} />;
   return (
     <div className="maka-artifact-preview-pdf">
       <embed
@@ -159,7 +161,7 @@ function PdfPreview(props: { record: ArtifactRecord }) {
         height="100%"
       />
       <p className="maka-artifact-preview-pdf-fallback">
-        如果浏览器没有内置 PDF 渲染，请使用工具栏的「在 Finder 中打开」查看。
+        {props.copy.preview.pdfFallback}
       </p>
     </div>
   );
@@ -176,13 +178,13 @@ function PreviewLoading(props: { label: string }) {
   );
 }
 
-function TextFailureCard(props: { record: ArtifactRecord; reason: TextFailureReason }) {
-  const { tone, title, description } = failureCopyText(props.record, props.reason);
+function TextFailureCard(props: { record: ArtifactRecord; reason: TextFailureReason; copy: ArtifactCopy }) {
+  const { tone, title, description } = failureCopyText(props.record, props.reason, props.copy);
   return <FailureCard tone={tone} title={title} description={description} />;
 }
 
-function BinaryFailureCard(props: { record: ArtifactRecord; reason: BinaryFailureReason }) {
-  const { tone, title, description } = failureCopyBinary(props.record, props.reason);
+function BinaryFailureCard(props: { record: ArtifactRecord; reason: BinaryFailureReason; copy: ArtifactCopy }) {
+  const { tone, title, description } = failureCopyBinary(props.record, props.reason, props.copy);
   return <FailureCard tone={tone} title={title} description={description} />;
 }
 
@@ -210,45 +212,40 @@ interface FailureCopy {
   description: string;
 }
 
-function failureCopyText(record: ArtifactRecord, reason: TextFailureReason): FailureCopy {
+function failureCopyText(record: ArtifactRecord, reason: TextFailureReason, copy: ArtifactCopy): FailureCopy {
   switch (reason) {
     case 'not_found':
     case 'read_failed':
       return {
         tone: 'destructive',
-        title: '无法读取生成文件',
-        description: '路径可能已被外部删除。请通过工具栏「在 Finder 中打开」检查文件位置。',
+        ...copy.preview.readFailed,
       };
     case 'not_allowed':
       return {
         tone: 'destructive',
-        title: '无法读取生成文件',
-        description: '路径检查未通过，文件已不在允许预览的生成文件目录内。',
+        ...copy.preview.notAllowed,
       };
     case 'too_large':
       return {
         tone: 'info',
-        title: '文件超出预览大小',
-        description: `${record.sizeBytes} 字节超过文本预览阈值，请通过工具栏「在 Finder 中打开」查看完整内容。`,
+        ...copy.preview.tooLarge(record.sizeBytes),
       };
     case 'deleted':
       return {
         tone: 'info',
-        title: '此生成文件已删除',
-        description: '预览已停止。如需查看原文件请使用「在 Finder 中打开」。',
+        ...copy.preview.deleted,
       };
   }
 }
 
-function failureCopyBinary(record: ArtifactRecord, reason: BinaryFailureReason): FailureCopy {
+function failureCopyBinary(record: ArtifactRecord, reason: BinaryFailureReason, copy: ArtifactCopy): FailureCopy {
   if (reason === 'unsupported_mime') {
     return {
       tone: 'info',
-      title: '不支持的文件类型',
-      description: '该生成文件的 MIME 类型不在内联预览允许列表中。请使用工具栏「在 Finder 中打开」或「另存为」。',
+      ...copy.preview.unsupportedMime,
     };
   }
-  return failureCopyText(record, reason);
+  return failureCopyText(record, reason, copy);
 }
 
 // ---- read hooks ------------------------------------------------------------

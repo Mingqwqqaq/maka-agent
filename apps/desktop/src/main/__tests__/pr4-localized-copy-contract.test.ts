@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { applyAssistantComplete, getDailyReviewCopy, getPlanReminderCopy, getSharedUiCopy, getSkillsCopy, modelMenuGroups } from '@maka/ui';
 import { getOpenGatewaySettingsCopy } from '../../renderer/locales/settings-open-gateway-copy.js';
 import { getBrowserCopy } from '../../renderer/locales/browser-copy.js';
+import { getArtifactCopy } from '../../renderer/locales/artifact-copy.js';
 import {
   findInlineCjkLiterals,
   findSilentCatalogFallbacks,
@@ -45,11 +46,15 @@ const PR4_SHARED_UI_CATALOG_FILES = [
 ] as const;
 
 const PR4_DESKTOP_PRESENTATION_FILES = [
+  'apps/desktop/src/renderer/artifact-pane.tsx',
+  'apps/desktop/src/renderer/artifact-preview.tsx',
+  'apps/desktop/src/renderer/artifact-preview-registry-shell.tsx',
   'apps/desktop/src/renderer/browser-panel.tsx',
   'apps/desktop/src/renderer/settings/open-gateway-settings-page.tsx',
 ] as const;
 
 const PR4_DESKTOP_CATALOG_FILES = [
+  'apps/desktop/src/renderer/locales/artifact-copy.ts',
   'apps/desktop/src/renderer/locales/browser-copy.ts',
   'apps/desktop/src/renderer/locales/settings-open-gateway-copy.ts',
 ] as const;
@@ -95,6 +100,8 @@ describe('PR4 remaining desktop copy contract', () => {
     assert.equal(getOpenGatewaySettingsCopy('en').endpoints.health.title, 'Health check');
     assert.equal(getBrowserCopy('zh').title, '嵌入式浏览器');
     assert.equal(getBrowserCopy('en').title, 'Embedded browser');
+    assert.equal(getArtifactCopy('zh').pane.empty, '暂无生成文件');
+    assert.equal(getArtifactCopy('en').pane.empty, 'No generated files');
   });
 
   it('contains no inline user-visible Chinese in migrated desktop owners', () => {

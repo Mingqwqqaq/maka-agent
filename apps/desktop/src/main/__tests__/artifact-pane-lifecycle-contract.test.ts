@@ -18,7 +18,7 @@ describe('ArtifactPane async lifecycle contract', () => {
   it('drops stale artifact list responses when the active session changes', async () => {
     const src = await readFile(ARTIFACT_PANE_SOURCE, 'utf8');
     const css = await readRendererContractCss();
-    const refreshBlock = src.match(/const refresh = useCallback\(async \(\) => \{[\s\S]*?\}, \[sessionId, toast\]\);/)?.[0] ?? '';
+    const refreshBlock = src.match(/const refresh = useCallback\(async \(\) => \{[\s\S]*?\}, \[[^\]]*sessionId[^\]]*toast[^\]]*\]\);/)?.[0] ?? '';
     const subscriptionEffect = src.match(/useEffect\(\(\) => \{[\s\S]*?window\.maka\.artifacts\.subscribeChanges[\s\S]*?\}, \[sessionId, refresh\]\);/)?.[0] ?? '';
     const retryBlock = src.match(/async function retryArtifactListRefresh[\s\S]*?async function openInFinder/)?.[0] ?? '';
 
@@ -59,7 +59,7 @@ describe('ArtifactPane async lifecycle contract', () => {
     );
     assert.match(
       refreshBlock,
-      /catch \(error\) \{[\s\S]*if \(artifactPaneMountedRef\.current && requestSeq === artifactListRequestSeqRef\.current\) \{[\s\S]*const message = artifactActionErrorMessage\(error\);[\s\S]*setListError\(\{ sessionId, message \}\)[\s\S]*recordsSessionIdRef\.current !== sessionId[\s\S]*setRecords\(\[\]\)[\s\S]*toast\.error\('刷新生成文件失败', message\)/,
+      /catch \(error\) \{[\s\S]*if \(artifactPaneMountedRef\.current && requestSeq === artifactListRequestSeqRef\.current\) \{[\s\S]*const message = artifactActionErrorMessage\(error, locale, copy\);[\s\S]*setListError\(\{ sessionId, message \}\)[\s\S]*recordsSessionIdRef\.current !== sessionId[\s\S]*setRecords\(\[\]\)[\s\S]*toast\.error\(copy\.pane\.refreshFailed, message\)/,
       'artifact list failures must update UI only while mounted and only for the latest request',
     );
     assert.match(
@@ -86,7 +86,7 @@ describe('ArtifactPane async lifecycle contract', () => {
     );
     assert.match(
       src,
-      /activeListError && \([\s\S]*className="maka-artifact-list-error"[\s\S]*生成文件列表载入失败[\s\S]*重试/,
+      /activeListError && \([\s\S]*className="maka-artifact-list-error"[\s\S]*copy\.pane\.listLoadFailed[\s\S]*copy\.pane\.retry/,
       'current-session artifact list failures must render an inline retryable error instead of making the pane disappear',
     );
     assert.match(src, /const \[pendingArtifactListRetry, setPendingArtifactListRetry\] = useState\(false\)/);
@@ -100,7 +100,7 @@ describe('ArtifactPane async lifecycle contract', () => {
     assert.match(src, /disabled=\{pendingArtifactListRetry\}/);
     assert.match(src, /aria-busy=\{pendingArtifactListRetry \? 'true' : undefined\}/);
     assert.match(src, /data-pending=\{pendingArtifactListRetry \? 'true' : undefined\}/);
-    assert.match(src, /pendingArtifactListRetry \? '重试中…' : '重试'/);
+    assert.match(src, /pendingArtifactListRetry \? copy\.pane\.retrying : copy\.pane\.retry/);
     assert.doesNotMatch(src, /className="maka-artifact-error-retry"/);
     assert.doesNotMatch(css, /\.maka-artifact-error-retry/);
     assert.doesNotMatch(src, /className="maka-artifact-error-retry"[\s\S]*onClick=\{\(\) => void refresh\(\)\}/);
@@ -111,8 +111,8 @@ describe('ArtifactPane async lifecycle contract', () => {
     );
     assert.match(
       refreshBlock,
-      /\}, \[sessionId, toast\]\);/,
-      'refresh must include the toast dependency used to surface current-session list failures',
+      /\}, \[[^\]]*copy[^\]]*locale[^\]]*sessionId[^\]]*toast[^\]]*\]\);/,
+      'refresh must include localized copy, locale, session, and toast dependencies',
     );
   });
 
@@ -121,12 +121,12 @@ describe('ArtifactPane async lifecycle contract', () => {
     const openBlock = src.match(/async function openInFinder[\s\S]*?async function copyText/)?.[0] ?? '';
     const copyBlock = src.match(/async function copyText[\s\S]*?async function saveAs/)?.[0] ?? '';
     const saveBlock = src.match(/async function saveAs[\s\S]*?async function deleteArtifact/)?.[0] ?? '';
-    const deleteBlock = src.match(/async function deleteArtifact[\s\S]*?\n  \}\n\n  \/\/ ---- render/)?.[0] ?? '';
+    const deleteBlock = src.match(/async function deleteArtifact[\s\S]*?\r?\n  \}\r?\n\r?\n  \/\/ ---- render/)?.[0] ?? '';
 
-    assert.match(src, /function artifactActionErrorMessage\(error: unknown\)/);
+    assert.match(src, /function artifactActionErrorMessage\(error: unknown, locale: UiLocale, copy: ArtifactCopy\)/);
     assert.match(
       src,
-      /function artifactActionErrorMessage\(error: unknown\): string \{[\s\S]*redactSecrets\(error instanceof Error \? error\.message : String\(error \?\? ''\)\)\.trim\(\)/,
+      /function artifactActionErrorMessage\(error: unknown, locale: UiLocale, copy: ArtifactCopy\): string \{[\s\S]*redactSecrets\(error instanceof Error \? error\.message : String\(error \?\? ''\)\)\.trim\(\)/,
       'artifact action failures must redact raw IPC/file-system errors before toast detail',
     );
     assert.match(
@@ -136,21 +136,21 @@ describe('ArtifactPane async lifecycle contract', () => {
     );
     assert.match(
       src,
-      /\/\[\\u4e00-\\u9fff\]\/\.test\(raw\) \? raw : '生成文件操作失败，请稍后重试。'/,
-      'artifact action failures may preserve already-Chinese diagnostics but must not echo unknown English',
+      /generalizedErrorMessage\(new Error\(raw\), ''\)/,
+      'artifact action failures must classify errors for English copy too',
     );
     assert.doesNotMatch(
       src,
       /if \(error instanceof Error && error\.message\.trim\(\)\) return error\.message\.trim\(\)/,
       'artifact action failure helper must not directly echo raw Error.message',
     );
-    assert.match(openBlock, /catch \(error\) \{[\s\S]*toast\.error\('无法在 Finder 中打开生成文件', artifactActionErrorMessage\(error\)\)/);
+    assert.match(openBlock, /catch \(error\) \{[\s\S]*toast\.error\(copy\.pane\.openFailed, artifactActionErrorMessage\(error, locale, copy\)\)/);
     assert.match(openBlock, /const actionSessionId = sessionId;[\s\S]*const result = await window\.maka\.app\.openArtifactPath\(artifactId\);[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;/);
-    assert.match(copyBlock, /catch \(error\) \{[\s\S]*toast\.error\('复制失败', artifactActionErrorMessage\(error\)\)/);
+    assert.match(copyBlock, /catch \(error\) \{[\s\S]*toast\.error\(copy\.pane\.copyFailed, artifactActionErrorMessage\(error, locale, copy\)\)/);
     assert.match(copyBlock, /const actionSessionId = sessionId;[\s\S]*const result = await window\.maka\.artifacts\.readText\(artifactId\);[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;[\s\S]*await navigator\.clipboard\.writeText\(result\.text\);[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;/);
-    assert.match(saveBlock, /catch \(error\) \{[\s\S]*toast\.error\('另存失败', artifactActionErrorMessage\(error\)\)/);
+    assert.match(saveBlock, /catch \(error\) \{[\s\S]*toast\.error\(copy\.pane\.saveFailed, artifactActionErrorMessage\(error, locale, copy\)\)/);
     assert.match(saveBlock, /const actionSessionId = sessionId;[\s\S]*const result = await window\.maka\.app\.saveArtifactAs\(artifactId\);[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;/);
-    assert.match(deleteBlock, /catch \(error\) \{[\s\S]*toast\.error\(`删除 \$\{name\} 失败`, artifactActionErrorMessage\(error\)\)/);
+    assert.match(deleteBlock, /catch \(error\) \{[\s\S]*toast\.error\(copy\.pane\.deleteFailed\(name\), artifactActionErrorMessage\(error, locale, copy\)\)/);
     assert.match(deleteBlock, /const actionSessionId = sessionId;[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;[\s\S]*await window\.maka\.artifacts\.delete\(artifactId\);[\s\S]*await refresh\(\);[\s\S]*if \(!isArtifactActionSurfaceActive\(actionSessionId\)\) return;/);
   });
 
@@ -193,7 +193,7 @@ describe('ArtifactPane async lifecycle contract', () => {
     assert.match(src, /import \{[^}]*\bButton\b[^}]*\bToolbar\b[^}]*\bToolbarGroup\b[^}]*\bToolbarSeparator\b[^}]*\buseToast\b[^}]*\} from '@maka\/ui';/);
     assert.match(
       toolbarBlock,
-      /<Toolbar className="maka-artifact-toolbar" aria-label="生成文件操作">[\s\S]*<ToolbarGroup className="maka-artifact-toolbar-group">[\s\S]*<ToolbarSeparator className="maka-artifact-toolbar-separator" orientation="vertical" \/>[\s\S]*<ToolbarGroup className="maka-artifact-toolbar-group maka-artifact-toolbar-danger-group">/,
+      /<Toolbar className="maka-artifact-toolbar" aria-label=\{copy\.pane\.actionsAria\}>[\s\S]*<ToolbarGroup className="maka-artifact-toolbar-group">[\s\S]*<ToolbarSeparator className="maka-artifact-toolbar-separator" orientation="vertical" \/>[\s\S]*<ToolbarGroup className="maka-artifact-toolbar-group maka-artifact-toolbar-danger-group">/,
       'Artifact toolbar must use the shared primitive Toolbar shell while keeping actions grouped',
     );
     for (const action of ['open', 'save', 'copy', 'delete']) {
@@ -204,10 +204,10 @@ describe('ArtifactPane async lifecycle contract', () => {
     }
     assert.match(toolbarBlock, /disabled=\{artifactActionBusy\}/, 'toolbar buttons must be disabled while any artifact action is pending');
     assert.match(toolbarBlock, /aria-busy=\{pendingArtifactAction === `\$\{selected\.id\}:open` \? 'true' : undefined\}/);
-    assert.match(toolbarBlock, /打开中…/);
-    assert.match(toolbarBlock, /另存中…/);
-    assert.match(toolbarBlock, /复制中…/);
-    assert.match(toolbarBlock, /删除中…/);
+    assert.match(toolbarBlock, /copy\.pane\.opening/);
+    assert.match(toolbarBlock, /copy\.pane\.saving/);
+    assert.match(toolbarBlock, /copy\.pane\.copying/);
+    assert.match(toolbarBlock, /copy\.pane\.deleting/);
     assert.doesNotMatch(css, /\.maka-artifact-toolbar-button\b/, 'artifact actions must not restore consumer-owned Button states');
     assert.match(toolbarBlock, /variant="secondary"\s+size="sm"/);
     assert.match(toolbarBlock, /variant="destructive" size="icon-sm"/);

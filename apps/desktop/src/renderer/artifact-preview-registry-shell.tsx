@@ -26,7 +26,7 @@
 
 import { useEffect, useState } from 'react';
 import type { ArtifactRecord } from '@maka/core';
-import { Button, Spinner } from '@maka/ui';
+import { Button, Spinner, useUiLocale } from '@maka/ui';
 import {
   type ArtifactPreviewInput,
   type PreviewResolution,
@@ -34,6 +34,7 @@ import {
   formatPreviewSize,
   resolvePreviewKind,
 } from '@maka/ui/artifact-preview-registry';
+import { getArtifactCopy, type ArtifactCopy } from './locales/artifact-copy';
 
 /**
  * Top-level dispatcher: classifies the record and renders the
@@ -67,40 +68,26 @@ export function RegistryArtifactPreview(props: {
  */
 function describeUnsupportedReason(
   reason: Extract<PreviewResolution, { kind: 'unsupported' }>['reason'],
+  copy: ArtifactCopy,
 ): { title: string; description: string } {
   switch (reason) {
     case 'kind_disallowed':
-      return {
-        title: '当前预览暂不支持该类型',
-        description: '此类生成文件不能在面板内直接预览。请使用工具栏「在 Finder 中打开」查看。',
-      };
+      return copy.registry.kindDisallowed;
     case 'mime_disallowed':
-      return {
-        title: '格式暂不支持预览',
-        description: '已识别到文件的 MIME 类型，但当前预览只支持 PNG / JPEG / GIF / WebP / AVIF。',
-      };
+      return copy.registry.mimeDisallowed;
     case 'no_mime_no_ext':
-      return {
-        title: '无法识别文件类型',
-        description: '文件没有 MIME 元数据，扩展名也未匹配。请通过工具栏「在 Finder 中打开」查看。',
-      };
+      return copy.registry.unknownType;
     case 'oversize':
-      return {
-        title: '文件过大，暂不预览',
-        description: '为避免在内存中加载大体积图片，超过 2 MB 的文件不在此处展开预览。',
-      };
+      return copy.registry.oversize;
     case 'read_failed':
       // PR-UI-RENDER-3a fixup (@kenji review @msg 5fa6f6a5) — distinct
       // copy for IPC / read failures. v1 collapsed this into
       // `kind_disallowed` which told the user "format unsupported"
       // when the real cause was a missing / unreadable file.
-      return {
-        title: '加载预览失败',
-        description: '无法读取文件内容（可能已被删除、移动或权限不足）。请通过工具栏「在 Finder 中打开」检查文件。',
-      };
+      return copy.registry.readFailed;
     default: {
       const _exhaustive: never = reason;
-      return { title: '暂不支持的预览', description: String(_exhaustive) };
+      return { title: copy.registry.unsupported, description: String(_exhaustive) };
     }
   }
 }
@@ -114,25 +101,27 @@ export function UnsupportedArtifactPreview(props: {
   reason: Extract<PreviewResolution, { kind: 'unsupported' }>['reason'];
   onShowInFolder?: () => void;
 }) {
-  const copy = describeUnsupportedReason(props.reason);
+  const locale = useUiLocale();
+  const catalog = getArtifactCopy(locale);
+  const copy = describeUnsupportedReason(props.reason, catalog);
   return (
     <div className="maka-artifact-preview-unsupported" data-reason={props.reason} role="status">
       <div className="maka-artifact-preview-unsupported-title">{copy.title}</div>
       <p className="maka-artifact-preview-unsupported-body">{copy.description}</p>
       <dl className="maka-artifact-preview-unsupported-meta">
         <div>
-          <dt>名称</dt>
-          <dd>{props.input.name || '(未命名)'}</dd>
+          <dt>{catalog.registry.name}</dt>
+          <dd>{props.input.name || catalog.registry.unnamed}</dd>
         </div>
         {props.input.mimeType && (
           <div>
-            <dt>类型</dt>
+            <dt>{catalog.registry.type}</dt>
             <dd>{props.input.mimeType}</dd>
           </div>
         )}
         <div>
-          <dt>大小</dt>
-          <dd>{formatPreviewSize(props.input.sizeBytes)}</dd>
+          <dt>{catalog.registry.size}</dt>
+          <dd>{formatPreviewSize(props.input.sizeBytes, locale)}</dd>
         </div>
       </dl>
       {/* @kenji review @msg 9cf1ca7a — only render the button when a
@@ -147,7 +136,7 @@ export function UnsupportedArtifactPreview(props: {
           className="maka-artifact-preview-unsupported-cta"
           onClick={props.onShowInFolder}
         >
-          在 Finder 中打开
+          {catalog.registry.openInFinder}
         </Button>
       )}
     </div>
@@ -175,12 +164,13 @@ function ImageArtifactPreview(props: {
   input: ArtifactPreviewInput;
   onShowInFolder?: () => void;
 }) {
+  const copy = getArtifactCopy(useUiLocale());
   const result = useImagePreviewLoad(props.record.id);
   if (result.state === 'loading') {
     return (
       <div className="maka-artifact-preview-loading" role="status" aria-live="polite">
         <Spinner className="maka-artifact-preview-spinner" aria-hidden="true" role="presentation" />
-        <span>加载图片预览…</span>
+        <span>{copy.registry.loadingImage}</span>
       </div>
     );
   }
