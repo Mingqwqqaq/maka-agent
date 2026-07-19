@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 import { join, resolve } from 'node:path';
 import { readSettingsCombinedSource } from './settings-contract-source-helpers.js';
+import { getPermissionCenterCopy } from '../../renderer/locales/permission-center-copy.js';
+import { getVoiceSettingsCopy } from '../../renderer/locales/settings-voice-copy.js';
 
 const REPO_ROOT = resolve(process.cwd(), '..', '..');
 const CAPABILITY_SNAPSHOT = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'capability-snapshot.ts');
@@ -26,12 +28,14 @@ describe('voice capture smoke Settings contract', () => {
 
   it('runs only a local renderer capture smoke and validates it through the core voice contract', async () => {
     const src = await readSettingsCombinedSource();
+    const zhCopy = getVoiceSettingsCopy('zh');
     assert.match(src, /navigator\.mediaDevices\.getUserMedia/, 'voice page must request local microphone capture');
     assert.match(src, /new MediaRecorder\(stream\)/, 'voice page must use MediaRecorder for local smoke');
     assert.match(src, /validateVoiceCaptureRequest/, 'voice page must validate capture facts through @maka/core/voice');
-    assert.match(src, /样本未保存/, 'voice page must tell users that the sample is not saved');
-    assert.match(src, /等待运行本机录音自检/, 'voice idle state should read as an actionable local check');
-    assert.doesNotMatch(src, /尚未运行本机录音自检/, 'voice idle state should not read like unfinished implementation copy');
+    assert.match(src, /copy\.available\(formatVoiceDuration/, 'voice result must use the active locale catalog');
+    assert.match(zhCopy.available('1.0 秒', '1 MB'), /样本未保存/, 'voice page must tell users that the sample is not saved');
+    assert.match(zhCopy.idle, /等待运行本机录音自检/, 'voice idle state should read as an actionable local check');
+    assert.doesNotMatch(zhCopy.idle, /尚未运行本机录音自检/, 'voice idle state should not read like unfinished implementation copy');
     assert.doesNotMatch(src, /localStorage\.setItem\([^)]*voice/i, 'voice smoke must not persist audio state in localStorage');
   });
 
@@ -118,12 +122,12 @@ describe('voice capture smoke Settings contract', () => {
     );
     assert.match(
       voicePage!,
-      /if \(voicePageMountedRef\.current\) \{[\s\S]*setSmoke\(\{ status: 'ok'[\s\S]*toast\.success\('语音自检通过'/,
+      /if \(voicePageMountedRef\.current\) \{[\s\S]*setSmoke\(\{ status: 'ok'[\s\S]*toast\.success\(copy\.success/,
       'voice capture success toast must only fire while the voice Settings page is still mounted',
     );
     assert.match(
       voicePage!,
-      /if \(voicePageMountedRef\.current\) \{[\s\S]*setPermission\(next\);[\s\S]*toast\.error\('语音自检失败'/,
+      /if \(voicePageMountedRef\.current\) \{[\s\S]*setPermission\(next\);[\s\S]*toast\.error\(copy\.failedTitle/,
       'voice capture failure toast must only fire while the voice Settings page is still mounted',
     );
     assert.match(
@@ -136,17 +140,18 @@ describe('voice capture smoke Settings contract', () => {
   it('uses user-facing copy and a named list for voice privacy boundaries', async () => {
     const src = await readSettingsCombinedSource();
     const voicePage = src.match(/function VoiceModelsSettingsPage\([\s\S]*?async function readBrowserMicrophonePermission/)?.[0];
+    const zhCopy = getVoiceSettingsCopy('zh');
+    const visibleBoundaryCopy = [zhCopy.subtitle, zhCopy.boundaryAria, ...zhCopy.boundaries].join('\n');
     assert.ok(voicePage, 'voice settings page source must be discoverable');
-    const visibleBoundaryCopy = voicePage!.match(/这页现在可以验证麦克风权限和本地录音链路[\s\S]*?<\/ul>/)?.[0];
-    assert.ok(visibleBoundaryCopy, 'voice visible boundary copy must be discoverable');
-    assert.match(visibleBoundaryCopy!, /aria-label="语音能力边界说明"/, 'voice boundary list must have an accessible name');
-    assert.match(visibleBoundaryCopy!, /语音转写和语音朗读模型必须遵守这个边界/, 'voice intro should avoid English STT/TTS acronyms');
-    assert.match(visibleBoundaryCopy!, /转写结果必须先回到消息输入框/, 'voice intro should use user-facing input box copy');
-    assert.match(visibleBoundaryCopy!, /录音样本只在本机内存里用于计算时长和大小/, 'voice boundary copy should avoid implementation metrics');
-    assert.match(visibleBoundaryCopy!, /配置语音转写模型之前/, 'voice cloud boundary should use user-facing provider copy');
-    assert.match(visibleBoundaryCopy!, /转写文本只进入消息输入框草稿/, 'voice draft boundary should use user-facing composer copy');
+    assert.match(voicePage!, /aria-label=\{copy\.boundaryAria\}/, 'voice boundary list must use its localized accessible name');
+    assert.match(voicePage!, /copy\.boundaries\.map/, 'voice boundary list must render the active catalog');
+    assert.match(visibleBoundaryCopy, /语音转写和语音朗读模型必须遵守这个边界/, 'voice intro should avoid English STT/TTS acronyms');
+    assert.match(visibleBoundaryCopy, /转写结果必须先回到消息输入框/, 'voice intro should use user-facing input box copy');
+    assert.match(visibleBoundaryCopy, /录音样本只在本机内存里用于计算时长和大小/, 'voice boundary copy should avoid implementation metrics');
+    assert.match(visibleBoundaryCopy, /配置语音转写模型之前/, 'voice cloud boundary should use user-facing provider copy');
+    assert.match(visibleBoundaryCopy, /转写文本只进入消息输入框草稿/, 'voice draft boundary should use user-facing composer copy');
     assert.doesNotMatch(
-      visibleBoundaryCopy!,
+      visibleBoundaryCopy,
       /renderer 内存|duration \/ bytes|tracks|chunks|STT|TTS|composer 草稿/,
       'voice boundary copy must not leak implementation or English product terms',
     );
@@ -154,7 +159,7 @@ describe('voice capture smoke Settings contract', () => {
 
   it('capability center reports voice as partial smoke, not a dead placeholder', async () => {
     const src = await readFile(CAPABILITY_SNAPSHOT, 'utf8');
-    const voiceBlock = src.match(/id:\s*'voice'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\n\s*\}\),/);
+    const voiceBlock = src.match(/id:\s*'voice'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\r?\n\s*\}\),/);
     assert.ok(voiceBlock, 'voice capability block must exist');
     assert.match(voiceBlock![0], /state:\s*'partial'/, 'voice feature must be partial, not not_available');
     assert.match(voiceBlock![0], /本地麦克风录音自检已可用/, 'voice feature reason must name the shipped smoke path');
@@ -165,7 +170,7 @@ describe('voice capture smoke Settings contract', () => {
 
   it('capability center reports local memory as partial instead of missing write contract only', async () => {
     const src = await readFile(CAPABILITY_SNAPSHOT, 'utf8');
-    const memoryBlock = src.match(/id:\s*'memory_write'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\n\s*\}\),/);
+    const memoryBlock = src.match(/id:\s*'memory_write'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\r?\n\s*\}\),/);
     assert.ok(memoryBlock, 'memory capability block must exist');
     assert.match(memoryBlock![0], /label:\s*'Memory'/, 'capability label should cover visible local memory, not only writes');
     assert.match(memoryBlock![0], /state:\s*'partial'/, 'memory feature must be partial, not not_available');
@@ -175,7 +180,7 @@ describe('voice capture smoke Settings contract', () => {
 
   it('capability center reports activity recorder as partial local Daily Review aggregation', async () => {
     const src = await readFile(CAPABILITY_SNAPSHOT, 'utf8');
-    const activityBlock = src.match(/id:\s*'activity_recorder'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\n\s*\}\),/);
+    const activityBlock = src.match(/id:\s*'activity_recorder'[\s\S]*?runtimeProbe:\s*\{[\s\S]*?\},\r?\n\s*\}\),/);
     assert.ok(activityBlock, 'activity recorder capability block must exist');
     assert.match(activityBlock![0], /state:\s*'partial'/, 'activity recorder must be partial, not not_available');
     assert.match(activityBlock![0], /Daily Review 已聚合本地会话/, 'activity reason must name the shipped local aggregation path');
@@ -189,7 +194,7 @@ describe('voice capture smoke Settings contract', () => {
       readSettingsCombinedSource(),
       readFile(CAPABILITY_SNAPSHOT, 'utf8'),
     ]);
-    assert.match(settings, /case\s+'not_available':\s*return\s+'未开放'/, 'not_available label should be product-facing copy');
+    assert.equal(getPermissionCenterCopy('zh').layers.featureStates.not_available, '未开放', 'not_available label should be product-facing copy');
     assert.doesNotMatch(settings, /尚未实现/, 'Settings capability UI must not render not_available as unfinished implementation copy');
     assert.doesNotMatch(snapshot, /not implemented|missing_token|local gateway disabled|未接入|尚未接入|helper/, 'capability reasons must not leak internal placeholder/error identifiers');
     assert.match(snapshot, /未找到通过完整性检查的 cua-driver artifact/, 'Computer Use unavailable copy must name the failed artifact integrity boundary');

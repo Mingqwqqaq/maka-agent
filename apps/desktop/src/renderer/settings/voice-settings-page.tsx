@@ -2,22 +2,22 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Volume2 } from '@maka/ui/icons';
 import type { VoicePermissionStatus } from '@maka/core';
 import { defaultVoiceCaptureCaps, validateVoiceCaptureRequest } from '@maka/core';
-import { Button, PageHeader, formatBytes, useMountedRef, useToast } from '@maka/ui';
+import { Button, PageHeader, formatBytes, useMountedRef, useToast, useUiLocale } from '@maka/ui';
+import { getVoiceSettingsCopy, type VoiceSettingsCopy } from '../locales/settings-voice-copy';
 import { useActionGuard } from './use-action-guard';
 
 type VoiceSmokeState =
-  | { status: 'idle'; message: string }
-  | { status: 'checking'; message: string }
-  | { status: 'recording'; message: string }
-  | { status: 'ok'; message: string; durationMs: number; audioBytes: number }
-  | { status: 'error'; message: string };
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'recording' }
+  | { status: 'ok'; durationMs: number; audioBytes: number }
+  | { status: 'error'; reason: 'unsupported_media' | 'unsupported_recorder' | 'denied' | 'failed' | string };
 
 export function VoiceModelsSettingsPage() {
+  const locale = useUiLocale();
+  const copy = getVoiceSettingsCopy(locale);
   const [permission, setPermission] = useState<VoicePermissionStatus>('unknown');
-  const [smoke, setSmoke] = useState<VoiceSmokeState>({
-    status: 'idle',
-    message: '等待运行本机录音自检。',
-  });
+  const [smoke, setSmoke] = useState<VoiceSmokeState>({ status: 'idle' });
   const [isBusy, setIsBusy] = useState(false);
   const captureSmokeGuard = useActionGuard<'smoke'>();
   const voicePageMountedRef = useMountedRef();
@@ -47,18 +47,18 @@ export function VoiceModelsSettingsPage() {
     if (captureSmokeGuard.current !== null) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setPermission('unsupported');
-      setSmoke({ status: 'error', message: '当前运行环境不支持浏览器麦克风 API。' });
+      setSmoke({ status: 'error', reason: 'unsupported_media' });
       return;
     }
     if (typeof MediaRecorder === 'undefined') {
       setPermission('unsupported');
-      setSmoke({ status: 'error', message: '当前运行环境不支持 MediaRecorder，无法做本地录音自检。' });
+      setSmoke({ status: 'error', reason: 'unsupported_recorder' });
       return;
     }
 
     captureSmokeGuard.begin('smoke');
     setIsBusy(true);
-    setSmoke({ status: 'checking', message: '正在请求 macOS / 浏览器麦克风权限…' });
+    setSmoke({ status: 'checking' });
     let stream: MediaStream | null = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -70,7 +70,7 @@ export function VoiceModelsSettingsPage() {
       activeVoiceCaptureStreamRef.current = stream;
       if (!voicePageMountedRef.current) return;
       setPermission('granted');
-      setSmoke({ status: 'recording', message: '正在录制 2 秒本地样本；样本只在内存里计算大小，结束后立即丢弃。' });
+      setSmoke({ status: 'recording' });
       const startedAt = performance.now();
       const chunks: Blob[] = [];
       const recorder = new MediaRecorder(stream);
@@ -79,7 +79,7 @@ export function VoiceModelsSettingsPage() {
       });
       const stopped = new Promise<void>((resolve, reject) => {
         recorder.addEventListener('stop', () => resolve(), { once: true });
-        recorder.addEventListener('error', () => reject(new Error('录音自检失败')), { once: true });
+        recorder.addEventListener('error', () => reject(new Error('voice_recording_check_failed')), { once: true });
       });
       recorder.start();
       await waitMs(2_000);
@@ -97,24 +97,23 @@ export function VoiceModelsSettingsPage() {
       });
       if (!validation.ok) {
         if (voicePageMountedRef.current) {
-          setSmoke({ status: 'error', message: voiceValidationCopy(validation.reason) });
+          setSmoke({ status: 'error', reason: validation.reason });
         }
         return;
       }
-      const message = `录音链路可用：${formatVoiceDuration(durationMs)}，${formatBytes(audioBytes)}。样本未保存。`;
+      const message = copy.available(formatVoiceDuration(durationMs, copy), formatBytes(audioBytes));
       if (voicePageMountedRef.current) {
-        setSmoke({ status: 'ok', message, durationMs, audioBytes });
-        toast.success('语音自检通过', message);
+        setSmoke({ status: 'ok', durationMs, audioBytes });
+        toast.success(copy.success, message);
       }
     } catch (error) {
       const next = classifyVoicePermissionError(error);
-      const message = next === 'denied'
-        ? '麦克风权限被拒绝；请在系统设置里允许 Maka 访问麦克风后重试。'
-        : '录音自检失败；请确认系统权限和音频设备可用。';
+      const reason = next === 'denied' ? 'denied' : 'failed';
+      const message = reason === 'denied' ? copy.denied : copy.failed;
       if (voicePageMountedRef.current) {
         setPermission(next);
-        setSmoke({ status: 'error', message });
-        toast.error('语音自检失败', message);
+        setSmoke({ status: 'error', reason });
+        toast.error(copy.failedTitle, message);
       }
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
@@ -129,10 +128,10 @@ export function VoiceModelsSettingsPage() {
   }
 
   return (
-    <section className="settingsFeatureStatusPage" aria-label="语音模型">
+    <section className="settingsFeatureStatusPage" aria-label={copy.aria}>
       {/* Detail sweep: the always-on shipped-feature announcement banner is
           gone — release notes don't live in settings, and its privacy copy
-          duplicated the 隐私 tile + 当前边界 section below. (daily-review
+          duplicated the privacy tile and boundary section below. (daily-review
           made the same banner exception-only earlier.) */}
       <PageHeader
         as_wrapper="div"
@@ -141,27 +140,27 @@ export function VoiceModelsSettingsPage() {
         icon={<Volume2 size={24} />}
         iconClassName="settingsFeatureStatusIcon"
         headingRowClassName="settingsFeatureStatusHeroHeading"
-        title="语音模型"
-        badge={<span className="settingsFeatureStatusBadge">本地自检</span>}
-        subtitle="这页现在可以验证麦克风权限和本地录音链路。语音转写和语音朗读模型必须遵守这个边界：转写结果必须先回到消息输入框，由用户编辑确认后才能发送；音频样本默认不落盘。"
+        title={copy.title}
+        badge={<span className="settingsFeatureStatusBadge">{copy.badge}</span>}
+        subtitle={copy.subtitle}
       />
 
-      <dl className="settingsBotStatusGrid" aria-label="语音能力状态">
+      <dl className="settingsBotStatusGrid" aria-label={copy.statusAria}>
         <div>
-          <dt>麦克风权限</dt>
-          <dd>{voicePermissionLabel(permission)}</dd>
+          <dt>{copy.microphone}</dt>
+          <dd>{copy.permissions[permission]}</dd>
         </div>
         <div>
-          <dt>采集上限</dt>
-          <dd>{Math.round(caps.maxDurationMs / 1000)} 秒 · {Math.round(caps.maxAudioBytes / 1024 / 1024)} MB</dd>
+          <dt>{copy.captureLimit}</dt>
+          <dd>{copy.durationSize(Math.round(caps.maxDurationMs / 1000), Math.round(caps.maxAudioBytes / 1024 / 1024))}</dd>
         </div>
         <div>
-          <dt>通道</dt>
-          <dd>单声道 · ≤ {Math.round(caps.maxSampleRate / 1000)} kHz</dd>
+          <dt>{copy.channels}</dt>
+          <dd>{copy.channelValue(Math.round(caps.maxSampleRate / 1000))}</dd>
         </div>
         <div>
-          <dt>隐私</dt>
-          <dd>不保存音频 · 不进遥测</dd>
+          <dt>{copy.privacy}</dt>
+          <dd>{copy.privacyValue}</dd>
         </div>
       </dl>
 
@@ -174,21 +173,19 @@ export function VoiceModelsSettingsPage() {
           aria-describedby={smokeStatusId}
           data-pending={isBusy ? 'true' : undefined}
         >
-          {isBusy ? '自检中…' : '运行录音自检'}
+          {isBusy ? copy.checking : copy.run}
         </Button>
       </div>
 
       <div id={smokeStatusId} className="settingsNotice" data-tone={smoke.status === 'error' ? undefined : 'passive'} role="status">
-        {smoke.message}
+        {voiceSmokeMessage(smoke, copy)}
       </div>
 
       <div className="settingsFeatureStatusHeroHeading">
-        <h3>当前边界</h3>
+        <h3>{copy.boundary}</h3>
       </div>
-      <ul className="settingsFeatureStatusList" aria-label="语音能力边界说明">
-        <li>录音样本只在本机内存里用于计算时长和大小；自检结束后立即停止采集并丢弃样本。</li>
-        <li>配置语音转写模型之前，不会把音频传给任何云端服务。</li>
-        <li>转写文本只进入消息输入框草稿；用户发送前必须能编辑。</li>
+      <ul className="settingsFeatureStatusList" aria-label={copy.boundaryAria}>
+        {copy.boundaries.map((boundary) => <li key={boundary}>{boundary}</li>)}
       </ul>
     </section>
   );
@@ -215,29 +212,22 @@ function classifyVoicePermissionError(error: unknown): VoicePermissionStatus {
   return 'unknown';
 }
 
-function voicePermissionLabel(status: VoicePermissionStatus): string {
-  switch (status) {
-    case 'granted': return '已授权';
-    case 'denied': return '已拒绝';
-    case 'restricted': return '受系统限制';
-    case 'not_determined': return '待授权';
-    case 'unsupported': return '不支持';
-    case 'unknown': return '未知';
+function voiceSmokeMessage(smoke: VoiceSmokeState, copy: VoiceSettingsCopy): string {
+  if (smoke.status === 'idle') return copy.idle;
+  if (smoke.status === 'checking') return copy.requesting;
+  if (smoke.status === 'recording') return copy.recording;
+  if (smoke.status === 'ok') {
+    return copy.available(formatVoiceDuration(smoke.durationMs, copy), formatBytes(smoke.audioBytes));
   }
+  if (smoke.reason === 'unsupported_media') return copy.unsupportedMedia;
+  if (smoke.reason === 'unsupported_recorder') return copy.unsupportedRecorder;
+  if (smoke.reason === 'denied') return copy.denied;
+  if (smoke.reason === 'failed') return copy.failed;
+  return copy.validation[smoke.reason as keyof VoiceSettingsCopy['validation']] ?? copy.validation.default;
 }
 
-function voiceValidationCopy(reason: string): string {
-  switch (reason) {
-    case 'duration_exceeded': return '录音超过时长上限。';
-    case 'audio_too_large': return '录音样本超过大小上限。';
-    case 'invalid_audio_shape': return '录音格式不符合当前采集契约。';
-    case 'permission_not_granted': return '麦克风权限未授予。';
-    default: return '语音采集自检未通过。';
-  }
-}
-
-function formatVoiceDuration(durationMs: number): string {
-  return `${Math.max(0, durationMs / 1000).toFixed(1)} 秒`;
+function formatVoiceDuration(durationMs: number, copy: VoiceSettingsCopy): string {
+  return copy.duration(Math.max(0, durationMs / 1000).toFixed(1));
 }
 
 function waitMs(ms: number): Promise<void> {

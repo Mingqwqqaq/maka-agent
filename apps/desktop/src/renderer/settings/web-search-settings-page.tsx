@@ -1,14 +1,15 @@
 import { useRef, useState } from 'react';
 import type { AppSettings, UpdateAppSettingsResult, WebSearchCredentialStatus } from '@maka/core';
 import { normalizeSearchUrl, webSearchCredentialStatusFromResponse } from '@maka/core';
-import { Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, redactSecrets, useMountedRef, useToast } from '@maka/ui';
+import { Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, redactSecrets, useMountedRef, useToast, useUiLocale } from '@maka/ui';
+import { getWebSearchSettingsCopy, type WebSearchSettingsCopy } from '../locales/settings-web-search-copy';
 import { PasswordInput } from './password-input';
 import { settingsActionErrorMessage } from './settings-error-copy';
 import { SettingsRows } from './settings-rows';
 import { useKeyedActionGuard } from './use-action-guard';
 
 /**
- * PR-WEB-SEARCH-TAVILY-0: Settings → 联网搜索.
+ * PR-WEB-SEARCH-TAVILY-0: Settings → Web search.
  *
  * Current provider support is Tavily only. Renderer never sees the cleartext API
  * key — `props.settings.webSearch.providers.tavily.apiKey` arrives
@@ -16,7 +17,7 @@ import { useKeyedActionGuard } from './use-action-guard';
  * `MASKED_TOKEN_SENTINEL`). Re-submitting the sentinel is treated as
  * "keep current" in `mergeWebSearchSettings`.
  *
- * The "测试" button calls `web-search:test` (main-process Tavily call)
+ * The test button calls `web-search:test` (main-process Tavily call)
  * and surfaces ok/fail via toast. The live-query verifier runs a real query
  * and renders 3-5 plain-text rows.
  */
@@ -24,6 +25,8 @@ export function WebSearchSettingsPage(props: {
   settings: AppSettings;
   onUpdate(patch: Parameters<typeof window.maka.settings.update>[0]): Promise<UpdateAppSettingsResult>;
 }) {
+  const locale = useUiLocale();
+  const copy = getWebSearchSettingsCopy(locale);
   const webSearch = props.settings.webSearch;
   const tavily = webSearch.providers.tavily;
   const tavilyKey = tavily.apiKey;
@@ -70,14 +73,14 @@ export function WebSearchSettingsPage(props: {
 
   async function updateWebSearch(
     patch: NonNullable<Parameters<typeof window.maka.settings.update>[0]['webSearch']>,
-    failureTitle = '保存联网搜索设置失败',
+    failureTitle = copy.saveFailed,
   ): Promise<boolean> {
     try {
       await props.onUpdate({ webSearch: patch });
       return true;
     } catch (error) {
       if (webSearchMountedRef.current) {
-        toast.error(failureTitle, settingsActionErrorMessage(error));
+        toast.error(failureTitle, settingsActionErrorMessage(error, locale));
       }
       return false;
     }
@@ -108,7 +111,7 @@ export function WebSearchSettingsPage(props: {
           },
         },
       },
-      '保存联网搜索状态失败',
+      copy.saveStatusFailed,
     );
   }
 
@@ -119,7 +122,7 @@ export function WebSearchSettingsPage(props: {
       if (!saved) return;
       if (!webSearchMountedRef.current) return;
       setDraftKey('');
-      toast.success('已保存 Tavily 密钥', '可点击「测试」做一次真实请求验证。');
+      toast.success(copy.keySaved, copy.keySavedDetail);
     });
   }
 
@@ -129,7 +132,7 @@ export function WebSearchSettingsPage(props: {
       if (!saved) return;
       if (!webSearchMountedRef.current) return;
       setDraftKey('');
-      toast.success('已清空 Tavily 凭据', '联网搜索已自动关闭。');
+      toast.success(copy.credentialsCleared, copy.credentialsClearedDetail);
     });
   }
 
@@ -150,13 +153,13 @@ export function WebSearchSettingsPage(props: {
         void persistCredentialStatus(webSearchCredentialStatusFromResponse(result), testedCredentialVersion);
       }
       if (result.ok) {
-        toast.success('Tavily 凭据可用', `返回 ${result.results.length} 条结果。`);
+        toast.success(copy.credentialValid, copy.resultCount(result.results.length));
       } else {
-        toast.error('Tavily 测试失败', result.message);
+        toast.error(copy.testFailed, copy.errors[result.reason]);
       }
     } catch (err) {
       if (webSearchMountedRef.current) {
-        toast.error('Tavily 测试出错', settingsActionErrorMessage(err));
+        toast.error(copy.testError, settingsActionErrorMessage(err, locale));
       }
     } finally {
       releaseTest();
@@ -190,14 +193,14 @@ export function WebSearchSettingsPage(props: {
           void persistCredentialStatus('valid', queriedCredentialVersion);
         }
       } else {
-        setLiveQueryError(result.message);
+        setLiveQueryError(copy.errors[result.reason]);
         if (hasUsableKey) {
           void persistCredentialStatus(webSearchCredentialStatusFromResponse(result), queriedCredentialVersion);
         }
       }
     } catch (err) {
       if (isCurrentLiveQuery(queryOwner)) {
-        setLiveQueryError(settingsActionErrorMessage(err));
+        setLiveQueryError(settingsActionErrorMessage(err, locale));
       }
     } finally {
       releaseLiveQuery();
@@ -213,11 +216,13 @@ export function WebSearchSettingsPage(props: {
     credentialSource,
     webSearch.enabled,
     tavily.credentialStatus,
+    copy,
   );
   const queryDisabledReason = webSearchQueryDisabledReason({
     hasUsableKey,
     enabled: webSearch.enabled,
     query: liveQuery,
+    copy,
   });
   const checkedAtMs = tavily.credentialCheckedAt
     ? Date.parse(tavily.credentialCheckedAt)
@@ -230,23 +235,23 @@ export function WebSearchSettingsPage(props: {
       <SettingsRows className="settingsWebSearchCredentialCard">
         <div className="settingsRow settingsWebSearchEnableRow">
           <div>
-            <strong>启用联网搜索</strong>
-            <small>开关启用后，界面里显式触发的查询才会真的请求 Tavily。模型不会自动调用。</small>
+            <strong>{copy.enabled}</strong>
+            <small>{copy.enabledHelp}</small>
           </div>
           <div className="settingsWebSearchControlCluster">
-            <div className="settingsWebSearchStatusCluster" role="group" aria-label="联网搜索凭据状态">
+            <div className="settingsWebSearchStatusCluster" role="group" aria-label={copy.statusAria}>
               <Chip variant={statusCopy.tone}>
                 {statusCopy.label}
               </Chip>
               {hasCheckedAt && (
                 <small>
-                  最近测试 <RelativeTime ts={checkedAtMs} />
+                  {copy.lastTest}<RelativeTime ts={checkedAtMs} />
                 </small>
               )}
-              <small>{presentWebSearchCredentialSource(credentialSource, hasStoredKey)}</small>
+              <small>{presentWebSearchCredentialSource(credentialSource, hasStoredKey, copy)}</small>
             </div>
             <Switch
-              ariaLabel="启用联网搜索"
+              ariaLabel={copy.enabledAria}
               checked={webSearch.enabled}
               disabled={!hasUsableKey || pendingWebSearchEnabled}
               onChange={(enabled) => void setEnabled(enabled)}
@@ -256,26 +261,26 @@ export function WebSearchSettingsPage(props: {
 
         <div className="settingsRow settingsWebSearchKeyRow">
           <div>
-            <strong>Tavily 密钥</strong>
+            <strong>{copy.key}</strong>
             <small>
               {usingEnvKey
-                ? '当前使用环境变量 TAVILY_API_KEY / MAKA_TAVILY_API_KEY；如需改用保存的密钥，请移除环境变量后重启。'
-                : <>保存在主进程设置中，渲染器永远看不到明文。在 <a href="https://tavily.com" target="_blank" rel="noreferrer noopener">tavily.com</a> 申请。</>}
+                ? copy.envKeyHelp
+                : <>{copy.savedKeyHelp} <a href="https://tavily.com" target="_blank" rel="noreferrer noopener">tavily.com</a></>}
             </small>
           </div>
           <PasswordInput
             value={draftKey}
             onChange={setDraftKey}
             disabled={usingEnvKey || credentialActionBusy}
-            placeholder={usingEnvKey ? '由环境变量提供' : hasStoredKey ? '已保存（输入新密钥可替换）' : 'tvly-xxxxxxxx'}
-            ariaLabel="Tavily 密钥"
+            placeholder={usingEnvKey ? copy.envPlaceholder : hasStoredKey ? copy.storedPlaceholder : copy.keyPlaceholder}
+            ariaLabel={copy.keyAria}
           />
         </div>
 
         <div className="settingsRow settingsWebSearchCredentialActionRow">
           <div>
-            <strong>凭据操作</strong>
-            <small>保存后可以测试一次真实请求；清空凭据会同步关闭联网搜索。</small>
+            <strong>{copy.actions}</strong>
+            <small>{copy.actionsHelp}</small>
           </div>
           <div className="settingsActionRow settingsWebSearchActionButtons">
             <Button
@@ -283,7 +288,7 @@ export function WebSearchSettingsPage(props: {
               disabled={credentialActionBusy || usingEnvKey || draftKey.length === 0}
               onClick={() => void saveDraftKey()}
             >
-              {pendingCredentialAction === 'save' ? '保存中…' : '保存密钥'}
+              {pendingCredentialAction === 'save' ? copy.saving : copy.saveKey}
             </Button>
             <Button
               type="button"
@@ -291,7 +296,7 @@ export function WebSearchSettingsPage(props: {
               disabled={credentialActionBusy || (draftKey.length === 0 && !hasUsableKey)}
               onClick={() => void runTest()}
             >
-              {testing ? '测试中…' : '测试凭据'}
+              {testing ? copy.testing : copy.testKey}
             </Button>
             {hasStoredKey && (
               <Button
@@ -300,7 +305,7 @@ export function WebSearchSettingsPage(props: {
                 disabled={credentialActionBusy}
                 onClick={() => void clearKey()}
               >
-                {pendingCredentialAction === 'clear' ? '清空中…' : '清空密钥'}
+                {pendingCredentialAction === 'clear' ? copy.clearing : copy.clearKey}
               </Button>
             )}
           </div>
@@ -310,20 +315,20 @@ export function WebSearchSettingsPage(props: {
       <SettingsRows className="settingsWebSearchQueryCard">
         <div className="settingsRow settingsWebSearchQueryIntroRow">
           <div>
-            <strong>真实查询验证</strong>
-            <small>直接发一条真实查询，看到 Tavily 返回的标题 / 摘要 / 来源域名。结果只显示在此页面，不写入会话也不写入遥测。</small>
+            <strong>{copy.liveTitle}</strong>
+            <small>{copy.liveHelp}</small>
           </div>
         </div>
         <div className="settingsRow settingsWebSearchQueryInputRow">
           <div>
-            <strong>查询</strong>
-            <small>输入一条用于验证联网搜索配置的真实请求。</small>
+            <strong>{copy.query}</strong>
+            <small>{copy.queryHelp}</small>
           </div>
           <Input
             value={liveQuery}
             onChange={(event) => updateLiveQuery(event.currentTarget.value)}
-            placeholder="例如：本周 AI 产品发布动态"
-            aria-label="联网搜索真实查询"
+            placeholder={copy.queryPlaceholder}
+            aria-label={copy.queryAria}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !liveQueryRunning) {
                 event.preventDefault();
@@ -334,8 +339,8 @@ export function WebSearchSettingsPage(props: {
         </div>
         <div className="settingsRow settingsWebSearchSearchRow">
           <div>
-            <strong>执行查询</strong>
-            <small>按钮可用时会走主进程 Tavily 请求并刷新下方结果。</small>
+            <strong>{copy.execute}</strong>
+            <small>{copy.executeHelp}</small>
           </div>
           <div className="settingsWebSearchSearchControls">
             <Button
@@ -343,7 +348,7 @@ export function WebSearchSettingsPage(props: {
               disabled={liveQueryRunning || queryDisabledReason !== null}
               onClick={() => void runLiveQuery()}
             >
-              {liveQueryRunning ? '搜索中…' : '搜索'}
+              {liveQueryRunning ? copy.searching : copy.search}
             </Button>
             {!liveQueryRunning && queryDisabledReason && (
               <small className="settingsWebSearchDisabledReason">
@@ -356,7 +361,7 @@ export function WebSearchSettingsPage(props: {
 
       {liveQueryError && (
         <div className="settingsConnectionMeta" role="alert">
-          <span>查询失败：{liveQueryError}</span>
+          <span>{copy.queryFailed(liveQueryError)}</span>
         </div>
       )}
       {(() => {
@@ -387,11 +392,11 @@ export function WebSearchSettingsPage(props: {
                 )
             : null;
         if (safeRows && safeRows.length === 0 && !liveQueryError) {
-          return <div className="settingsConnectionMeta">没有结果。</div>;
+          return <div className="settingsConnectionMeta">{copy.noResults}</div>;
         }
         if (safeRows && safeRows.length > 0) {
           return (
-            <ul className="settingsWebSearchResults" aria-label="联网搜索真实查询结果">
+            <ul className="settingsWebSearchResults" aria-label={copy.resultsAria}>
               {safeRows.map((row, idx) => (
                 <li key={`${row.url}-${idx}`} className="settingsWebSearchResult">
                   <a href={row.url} target="_blank" rel="noreferrer noopener">{row.title}</a>
@@ -408,10 +413,10 @@ export function WebSearchSettingsPage(props: {
   );
 }
 
-function webSearchQueryDisabledReason(input: { hasUsableKey: boolean; enabled: boolean; query: string }): string | null {
-  if (!input.hasUsableKey) return '先保存 Tavily 密钥，或设置 TAVILY_API_KEY 环境变量';
-  if (!input.enabled) return '先启用联网搜索';
-  if (input.query.trim().length === 0) return '输入查询后再搜索';
+function webSearchQueryDisabledReason(input: { hasUsableKey: boolean; enabled: boolean; query: string; copy: WebSearchSettingsCopy }): string | null {
+  if (!input.hasUsableKey) return input.copy.disabledReasons.noKey;
+  if (!input.enabled) return input.copy.disabledReasons.disabled;
+  if (input.query.trim().length === 0) return input.copy.disabledReasons.noQuery;
   return null;
 }
 
@@ -419,30 +424,32 @@ function presentWebSearchCredentialStatus(
   credentialSource: AppSettings['webSearch']['providers']['tavily']['credentialSource'],
   enabled: boolean,
   status: WebSearchCredentialStatus,
+  copy: WebSearchSettingsCopy,
 ): { label: string; tone: 'success' | 'info' | 'warning' | 'destructive' } {
-  if (credentialSource === 'none') return { label: '等待保存密钥', tone: 'warning' };
+  if (credentialSource === 'none') return { label: copy.statuses.not_configured, tone: 'warning' };
   if (status === 'valid') {
     return enabled
-      ? { label: '已验证 · 已启用', tone: 'success' }
-      : { label: '已验证 · 未启用', tone: 'info' };
+      ? { label: copy.statuses.validEnabled, tone: 'success' }
+      : { label: copy.statuses.validDisabled, tone: 'info' };
   }
-  if (status === 'invalid_credentials') return { label: '密钥无效', tone: 'destructive' };
-  if (status === 'rate_limited') return { label: 'Tavily 限流', tone: 'warning' };
-  if (status === 'timeout') return { label: '测试超时', tone: 'warning' };
-  if (status === 'network_error') return { label: '网络异常', tone: 'warning' };
-  if (status === 'not_configured') return { label: '等待配置', tone: 'warning' };
+  if (status === 'invalid_credentials') return { label: copy.statuses.invalid_credentials, tone: 'destructive' };
+  if (status === 'rate_limited') return { label: copy.statuses.rate_limited, tone: 'warning' };
+  if (status === 'timeout') return { label: copy.statuses.timeout, tone: 'warning' };
+  if (status === 'network_error') return { label: copy.statuses.network_error, tone: 'warning' };
+  if (status === 'not_configured') return { label: copy.statuses.not_configured, tone: 'warning' };
   return enabled
-    ? { label: '未测试 · 已启用', tone: 'warning' }
-    : { label: '未测试', tone: 'info' };
+    ? { label: copy.statuses.unknownEnabled, tone: 'warning' }
+    : { label: copy.statuses.untested, tone: 'info' };
 }
 
 function presentWebSearchCredentialSource(
   credentialSource: AppSettings['webSearch']['providers']['tavily']['credentialSource'],
   hasStoredKey: boolean,
+  copy: WebSearchSettingsCopy,
 ): string {
   if (credentialSource === 'env') {
-    return hasStoredKey ? '来源：环境变量（已保存密钥备用）' : '来源：环境变量';
+    return hasStoredKey ? copy.sources.envWithSaved : copy.sources.env;
   }
-  if (credentialSource === 'saved') return '来源：本机已保存密钥';
-  return '来源：未配置';
+  if (credentialSource === 'saved') return copy.sources.saved;
+  return copy.sources.none;
 }

@@ -20,6 +20,7 @@ import {
   SETTINGS_SOURCE_REPO_PATHS,
 } from './settings-contract-source-helpers.js';
 import { readMainProcessCombinedSource } from './main-process-contract-source-helpers.js';
+import { getWebSearchSettingsCopy } from '../../renderer/locales/settings-web-search-copy.js';
 
 const REPO_ROOT = resolve(process.cwd(), '..', '..');
 const TOOL_RESULT_PREVIEW = join(REPO_ROOT, 'packages/ui/src/tool-activity/tool-result-preview.tsx');
@@ -42,7 +43,7 @@ const RENDERER_FILES = [
 describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
   it('unsupported provider copy describes the current configuration, not a roadmap gap', async () => {
     const main = await readMainProcessCombinedSource();
-    const unsupportedBlock = main.match(/const unsupportedWebSearchProviderResponse[\s\S]*?;\n\s*ipcMain\.handle/);
+    const unsupportedBlock = main.match(/const unsupportedWebSearchProviderResponse[\s\S]*?;\r?\n\s*ipcMain\.handle/);
 
     assert.ok(unsupportedBlock, 'main process must centralize unsupported-provider copy');
     assert.match(unsupportedBlock![0], /reason:\s*'unsupported_provider'/);
@@ -142,22 +143,22 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
     assert.ok(page, 'Web search settings page block must exist');
     assert.match(
       page![0],
-      /async function updateWebSearch\([\s\S]*?failureTitle = '保存联网搜索设置失败'[\s\S]*?await props\.onUpdate\(\{ webSearch: patch \}\);[\s\S]*?return true;[\s\S]*?catch \(error\) \{[\s\S]*?if \(webSearchMountedRef\.current\) \{[\s\S]*?toast\.error\(failureTitle, settingsActionErrorMessage\(error\)\);[\s\S]*?\}[\s\S]*?return false;/,
+      /async function updateWebSearch\([\s\S]*?failureTitle = copy\.saveFailed[\s\S]*?await props\.onUpdate\(\{ webSearch: patch \}\);[\s\S]*?return true;[\s\S]*?catch \(error\) \{[\s\S]*?if \(webSearchMountedRef\.current\) \{[\s\S]*?toast\.error\(failureTitle, settingsActionErrorMessage\(error, locale\)\);[\s\S]*?\}[\s\S]*?return false;/,
       'Web search settings updates must surface persistence failures',
     );
     assert.match(
       page![0],
-      /return updateWebSearch\([\s\S]*'保存联网搜索状态失败'[\s\S]*\);/,
+      /return updateWebSearch\([\s\S]*copy\.saveStatusFailed[\s\S]*\);/,
       'Credential status writeback failures should have their own visible copy',
     );
     assert.match(
       page![0],
-      /const saved = await updateWebSearch\(\{ providers: \{ tavily: \{ apiKey: draftKey \} \} \}\);[\s\S]*if \(!saved\) return;[\s\S]*if \(!webSearchMountedRef\.current\) return;[\s\S]*toast\.success\('已保存 Tavily 密钥'/,
+      /const saved = await updateWebSearch\(\{ providers: \{ tavily: \{ apiKey: draftKey \} \} \}\);[\s\S]*if \(!saved\) return;[\s\S]*if \(!webSearchMountedRef\.current\) return;[\s\S]*toast\.success\(copy\.keySaved/,
       'Saving a Tavily key must not show success after a failed settings save',
     );
     assert.match(
       page![0],
-      /const saved = await updateWebSearch\(\{ enabled: false, providers: \{ tavily: \{ apiKey: '' \} \} \}\);[\s\S]*if \(!saved\) return;[\s\S]*if \(!webSearchMountedRef\.current\) return;[\s\S]*toast\.success\('已清空 Tavily 凭据'/,
+      /const saved = await updateWebSearch\(\{ enabled: false, providers: \{ tavily: \{ apiKey: '' \} \} \}\);[\s\S]*if \(!saved\) return;[\s\S]*if \(!webSearchMountedRef\.current\) return;[\s\S]*toast\.success\(copy\.credentialsCleared/,
       'Clearing a Tavily key must not show success after a failed settings save',
     );
     assert.match(
@@ -220,9 +221,9 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
     assert.match(page![0], /const credentialActionBusy = pendingCredentialAction !== null \|\| testing/);
     assert.match(page![0], /disabled=\{usingEnvKey \|\| credentialActionBusy\}/, 'Credential input should freeze while save, clear, or test is pending.');
     assert.match(page![0], /disabled=\{credentialActionBusy \|\| usingEnvKey \|\| draftKey\.length === 0\}/);
-    assert.match(page![0], /pendingCredentialAction === 'save' \? '保存中…' : '保存密钥'/);
+    assert.match(page![0], /pendingCredentialAction === 'save' \? copy\.saving : copy\.saveKey/);
     assert.match(page![0], /disabled=\{credentialActionBusy \|\| \(draftKey\.length === 0 && !hasUsableKey\)\}/);
-    assert.match(page![0], /disabled=\{credentialActionBusy\}[\s\S]*pendingCredentialAction === 'clear' \? '清空中…' : '清空密钥'/);
+    assert.match(page![0], /disabled=\{credentialActionBusy\}[\s\S]*pendingCredentialAction === 'clear' \? copy\.clearing : copy\.clearKey/);
     assert.match(page![0], /onChange=\{\(event\) => updateLiveQuery\(event\.currentTarget\.value\)\}/);
     assert.match(page![0], /disabled=\{!hasUsableKey \|\| pendingWebSearchEnabled\}/);
   });
@@ -274,7 +275,7 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
     );
     assert.match(
       page![0],
-      /if \(isCurrentLiveQuery\(queryOwner\)\) \{[\s\S]*setLiveQueryError\(settingsActionErrorMessage\(err\)\);[\s\S]*\}/,
+      /if \(isCurrentLiveQuery\(queryOwner\)\) \{[\s\S]*setLiveQueryError\(settingsActionErrorMessage\(err, locale\)\);[\s\S]*\}/,
       'Live-query thrown errors must not set inline error state after unmount or after the query input changed',
     );
     assert.match(
@@ -291,12 +292,12 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
     assert.ok(page, 'Web search settings page block must exist');
     assert.match(
       page![0],
-      /catch \(err\) \{[\s\S]*toast\.error\('Tavily 测试出错', settingsActionErrorMessage\(err\)\)/,
+      /catch \(err\) \{[\s\S]*toast\.error\(copy\.testError, settingsActionErrorMessage\(err, locale\)\)/,
       'Tavily credential-test thrown errors must not echo raw IPC/provider messages',
     );
     assert.match(
       page![0],
-      /catch \(err\) \{[\s\S]*setLiveQueryError\(settingsActionErrorMessage\(err\)\)/,
+      /catch \(err\) \{[\s\S]*setLiveQueryError\(settingsActionErrorMessage\(err, locale\)\)/,
       'Tavily live-query thrown errors must render scrubbed Settings copy',
     );
     assert.doesNotMatch(
@@ -309,11 +310,15 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
   it('Settings live query button explains the actionable disabled reason', async () => {
     const settings = await readSettingsCombinedSource();
     const helper = settings.match(/function webSearchQueryDisabledReason[\s\S]*?function presentWebSearchCredentialStatus/);
+    const zhCopy = getWebSearchSettingsCopy('zh');
 
     assert.ok(helper, 'Web search settings must have a dedicated disabled-reason helper');
-    assert.match(helper![0], /先保存 Tavily 密钥，或设置 TAVILY_API_KEY 环境变量/);
-    assert.match(helper![0], /先启用联网搜索/);
-    assert.match(helper![0], /输入查询后再搜索/);
+    assert.match(helper![0], /input\.copy\.disabledReasons\.noKey/);
+    assert.match(helper![0], /input\.copy\.disabledReasons\.disabled/);
+    assert.match(helper![0], /input\.copy\.disabledReasons\.noQuery/);
+    assert.match(zhCopy.disabledReasons.noKey, /TAVILY_API_KEY/);
+    assert.match(zhCopy.disabledReasons.disabled, /启用联网搜索/);
+    assert.match(zhCopy.disabledReasons.noQuery, /输入查询/);
     assert.match(settings, /disabled=\{liveQueryRunning \|\| queryDisabledReason !== null\}/);
     assert.match(settings, /\{queryDisabledReason\}/);
     assert.doesNotMatch(
@@ -350,7 +355,7 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
       assert.match(page![0], new RegExp(`className="${rowClass}"`), `Web search Settings must keep ${rowClass} inside grouped rows`);
     }
     assert.match(page![0], /className="settingsWebSearchDisabledReason"/);
-    assert.match(page![0], /<ul className="settingsWebSearchResults" aria-label="联网搜索真实查询结果">/);
+    assert.match(page![0], /<ul className="settingsWebSearchResults" aria-label=\{copy\.resultsAria\}>/);
     assert.doesNotMatch(
       page![0],
       /settingsFormRow|settingsFormGrid|style=\{\{/,
@@ -365,12 +370,13 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
     const settings = await readSettingsCombinedSource();
     const page = settings.match(/function WebSearchSettingsPage[\s\S]*?function webSearchQueryDisabledReason/);
     const helper = settings.match(/function presentWebSearchCredentialStatus[\s\S]*?function MemorySettingsPage/);
+    const zhCopy = getWebSearchSettingsCopy('zh');
 
     assert.ok(page, 'Web search settings page block must exist');
     assert.ok(helper, 'Web search settings must centralize credential status presentation');
     assert.match(
       page![0],
-      /<div className="settingsWebSearchStatusCluster" role="group" aria-label="联网搜索凭据状态">/,
+      /<div className="settingsWebSearchStatusCluster" role="group" aria-label=\{copy\.statusAria\}>/,
       'Web search credential status badge/source cluster must expose an accessible group name',
     );
     assert.doesNotMatch(
@@ -378,10 +384,12 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
       /<div className="settingsWebSearchStatusCluster">/,
       'Web search credential status cluster must not regress to an anonymous group beside the enable switch',
     );
-    assert.match(helper![0], /等待保存密钥/);
-    assert.match(helper![0], /等待配置/);
-    assert.match(helper![0], /来源：环境变量/);
-    assert.match(helper![0], /来源：本机已保存密钥/);
+    assert.match(helper![0], /copy\.statuses\.not_configured/);
+    assert.match(helper![0], /copy\.sources\.env/);
+    assert.match(helper![0], /copy\.sources\.saved/);
+    assert.match(zhCopy.statuses.not_configured, /等待配置/);
+    assert.match(zhCopy.sources.env, /来源：环境变量/);
+    assert.match(zhCopy.sources.saved, /来源：本机已保存密钥/);
     assert.doesNotMatch(helper![0], /未保存 key|等待保存 key|已保存 key|label:\s*'未配置'/);
   });
 
@@ -391,15 +399,16 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
 
     assert.ok(page, 'Web search settings page block must exist');
     assert.match(page![0], /const usingEnvKey = credentialSource === 'env'/);
-    assert.match(page![0], /由环境变量提供/);
-    assert.match(page![0], /TAVILY_API_KEY \/ MAKA_TAVILY_API_KEY/);
+    assert.match(page![0], /copy\.envPlaceholder/);
+    assert.match(page![0], /copy\.envKeyHelp/);
+    assert.match(getWebSearchSettingsCopy('zh').envKeyHelp, /TAVILY_API_KEY \/ MAKA_TAVILY_API_KEY/);
     assert.match(page![0], /disabled=\{usingEnvKey \|\| credentialActionBusy\}/);
     assert.doesNotMatch(page![0], /process\.env|TAVILY_API_KEY[\s\S]{0,40}apiKey/);
   });
 
   it('settings IPC masks Tavily keys even on save responses', async () => {
     const helper = await readFile(join(REPO_ROOT, 'apps/desktop/src/main/settings-ipc-helpers.ts'), 'utf8');
-    const webSearchMaskBlock = helper.match(/webSearch:\s*\{[\s\S]*?credentialSource: getTavilyCredentialSource\(settings\),[\s\S]*?\n\s*\},\n\s*\},\n\s*\},/);
+    const webSearchMaskBlock = helper.match(/webSearch:\s*\{[\s\S]*?credentialSource: getTavilyCredentialSource\(settings\),[\s\S]*?\r?\n\s*\},\r?\n\s*\},\r?\n\s*\},/);
 
     assert.ok(webSearchMaskBlock, 'settings IPC must have a dedicated webSearch mask block');
     assert.match(webSearchMaskBlock![0], /apiKey:\s*maskSensitive\(settings\.webSearch\.providers\.tavily\.apiKey\) \?\? ''/);
@@ -413,12 +422,16 @@ describe('web-search renderer boundary (PR-WEB-SEARCH-TAVILY-0)', () => {
   it('Settings live query copy uses product language instead of demo/debug wording', async () => {
     const settings = await readSettingsCombinedSource();
     const page = settings.match(/function WebSearchSettingsPage[\s\S]*?function webSearchQueryDisabledReason/);
+    const zhCopy = getWebSearchSettingsCopy('zh');
 
     assert.ok(page, 'Web search settings page block must exist');
-    assert.match(page![0], /真实查询验证/);
-    assert.match(page![0], /不写入会话也不写入遥测/);
-    assert.match(page![0], /<ul className="settingsWebSearchResults" aria-label="联网搜索真实查询结果">/);
-    assert.match(page![0], /本周 AI 产品发布动态/);
+    assert.match(page![0], /copy\.liveTitle/);
+    assert.match(page![0], /copy\.liveHelp/);
+    assert.match(page![0], /<ul className="settingsWebSearchResults" aria-label=\{copy\.resultsAria\}>/);
+    assert.match(page![0], /placeholder=\{copy\.queryPlaceholder\}/);
+    assert.match(zhCopy.liveTitle, /真实查询验证/);
+    assert.match(zhCopy.liveHelp, /不写入会话也不写入遥测/);
+    assert.match(zhCopy.queryPlaceholder, /本周 AI 产品发布动态/);
     assert.doesNotMatch(page![0], /Electron safeStorage|Tavily API key|保存 key|清空 key|等待保存 key|key 无效/);
     assert.doesNotMatch(page![0], />试一下</);
     assert.doesNotMatch(page![0], />试一下<|不入 telemetry|demoQuery|demoRunning|runDemo|demoResults|demoError|试一下" demo/);

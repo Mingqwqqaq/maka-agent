@@ -11,6 +11,8 @@ import { getMcpCatalog } from '../../renderer/mcp-catalog.js';
 import { getPermissionCenterCopy } from '../../renderer/locales/permission-center-copy.js';
 import { getDataSettingsCopy } from '../../renderer/locales/settings-data-copy.js';
 import { getUsageSettingsCopy } from '../../renderer/locales/settings-usage-copy.js';
+import { getVoiceSettingsCopy } from '../../renderer/locales/settings-voice-copy.js';
+import { getWebSearchSettingsCopy } from '../../renderer/locales/settings-web-search-copy.js';
 import {
   findInlineCjkLiterals,
   findSilentCatalogFallbacks,
@@ -61,6 +63,8 @@ const PR4_DESKTOP_PRESENTATION_FILES = [
   'apps/desktop/src/renderer/settings/data-settings-page.tsx',
   'apps/desktop/src/renderer/settings/usage-settings-page.tsx',
   'apps/desktop/src/renderer/settings/open-gateway-settings-page.tsx',
+  'apps/desktop/src/renderer/settings/voice-settings-page.tsx',
+  'apps/desktop/src/renderer/settings/web-search-settings-page.tsx',
 ] as const;
 
 const PR4_DESKTOP_CATALOG_FILES = [
@@ -72,6 +76,8 @@ const PR4_DESKTOP_CATALOG_FILES = [
   'apps/desktop/src/renderer/locales/settings-usage-copy.ts',
   'apps/desktop/src/renderer/mcp-catalog.ts',
   'apps/desktop/src/renderer/locales/settings-open-gateway-copy.ts',
+  'apps/desktop/src/renderer/locales/settings-voice-copy.ts',
+  'apps/desktop/src/renderer/locales/settings-web-search-copy.ts',
 ] as const;
 
 function repoSource(file: string): string {
@@ -124,6 +130,10 @@ describe('PR4 remaining desktop copy contract', () => {
     assert.equal(getPermissionCenterCopy('en').title, 'Permissions and capabilities');
     assert.equal(getDataSettingsCopy('en').rows.workspace, 'Workspace path');
     assert.equal(getUsageSettingsCopy('en').tabs[0], 'Request log');
+    assert.equal(getVoiceSettingsCopy('zh').microphone, '麦克风权限');
+    assert.equal(getVoiceSettingsCopy('en').microphone, 'Microphone permission');
+    assert.equal(getWebSearchSettingsCopy('zh').search, '搜索');
+    assert.equal(getWebSearchSettingsCopy('en').search, 'Search');
   });
 
   it('contains no inline user-visible Chinese in migrated desktop owners', () => {
