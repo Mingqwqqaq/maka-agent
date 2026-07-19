@@ -6,13 +6,9 @@ import { startConfigFileWatcher, type ConfigFileWatcher } from './config-file-wa
 import {
   DEFAULT_SESSION_NAME,
   filterModelVisibleTaskLedgerTasks,
-  isDeepResearchSession,
-  resolveModelVisionSupport,
   DEEP_RESEARCH_SESSION_LABEL,
-  expertTeamIdFromLabels,
 } from '@maka/core';
 import type {
-  AppSettings,
   BotProvider,
   ConnectionEvent,
   CreateSessionInput,
@@ -20,10 +16,8 @@ import type {
   SessionChangedEvent,
   SessionChangedReason,
   SessionEvent,
-  UpdateAppSettingsInput,
 } from '@maka/core';
 import { deriveBotStatusPersistenceUpdate } from './bot-status-persistence.js';
-import { WEB_SEARCH_TOOL_NAME } from './web-search/agent-tool.js';
 import { runThreadSearch } from './search/thread-search.js';
 import { assembleDesktopTools } from './tool-assembly.js';
 import { createToolArtifactPersistence } from './tool-artifact-persistence.js';
@@ -34,22 +28,16 @@ import { CursorSubscriptionService } from './oauth/cursor-subscription-service.j
 import { AntigravitySubscriptionService } from './oauth/antigravity-subscription-service.js';
 import { importLegacyOAuthTokenFiles } from './oauth/shared-credential-bridge.js';
 import type { WorkspacePrivacyContext } from '@maka/core/incognito';
-import type { LlmCallRecord, ToolInvocationRecord } from '@maka/core/usage-stats/types';
 import { ok } from '@maka/core/settings/result';
 import {
-  AiSdkBackend,
   BackendRegistry,
   FakeBackend,
   PermissionEngine,
   SessionManager,
-  buildMcpTools,
-  buildExpertDispatchToolForTeamId,
   createLocalContinuationSafetyInspector,
   getAIModel,
   generateSessionTitle as generateRuntimeSessionTitle,
   buildProviderOptions,
-  recordLlmCall,
-  recordToolInvocation,
   buildPricingLookup,
   BotRegistry,
   setActiveProxy,
@@ -62,17 +50,11 @@ import type {
   GoalTurnOutcome,
   HostCapabilities,
   HostCapabilitiesResolver,
-  SessionActivityLease,
-  ToolArtifactRecorderInput,
-  ToolResultArchiveReaderInput,
-  ToolResultArchiveReadResult,
-  ToolResultArchiveRecorderInput,
 } from '@maka/runtime';
 import type { LlmConnection } from '@maka/core/llm-connections';
 import {
   createAgentRunStore,
   createAgentMailboxStore,
-  createAttachmentByteReader,
   createArtifactStore,
   createReadImageSnapshotter,
   createConnectionStore,
@@ -88,16 +70,13 @@ import { McpClientManager } from '@maka/mcp';
 import { registerMcpIpcMain } from './mcp-ipc-main.js';
 import {
   ensureSessionCanSendOrRebind,
-  errorCode,
   errorMessage,
-  errorReason,
   requireReadyConnection,
 } from './chat-readiness.js';
 import { createFileCredentialStore, migrateLegacyCredentials } from './credential-store.js';
 import { bindOnboardingDeps, createOnboardingService } from './onboarding-service.js';
 import { handleQuickChatStart as runQuickChatStart, type QuickChatResult } from './quick-chat.js';
 import { createDailyReviewArchiveStore } from './daily-review-archive-store.js';
-import { preserveSensitivePlaceholders } from './settings-ipc-helpers.js';
 import { resolveDefaultPermissionMode } from './permission-mode-default.js';
 import {
   resolveVisualSmokeFixture,
@@ -107,34 +86,19 @@ import { resolveBuildInfo } from './build-info.js';
 import { OpenGatewayService } from './open-gateway.js';
 import { LocalMemoryService } from './local-memory-service.js';
 import { createAttachmentApprovalRegistry } from './attachment-approval.js';
-import {
-  buildLlmHistorySummarizer,
-  cleanupLegacyHistoryCompactArtifacts,
-  loadHistoryCompactBlocksFromArtifacts,
-  loadSynthesisCacheBlocksFromArtifacts,
-  persistSynthesisCacheBlocksToArtifacts,
-} from '@maka/runtime';
+import { cleanupLegacyHistoryCompactArtifacts } from '@maka/runtime';
 import { computerUseServiceHealth } from './computer-use-host.js';
-import {
-  computerUseAvailabilityForModel,
-  computerUseToolsForModel,
-} from './computer-use-model-tools.js';
 import { createMainWindowController } from './main-window.js';
 import { createDailyReviewMainService } from './daily-review-main.js';
 import { createPlanReminderMainService } from './plan-reminders-main.js';
 import { createBotIncomingMainService } from './bot-incoming-main.js';
 import { createSubscriptionModelFetch } from './subscription-model-fetch.js';
-import { buildDefaultContextBudgetPolicy, resolveSelectedModelContextWindow } from '@maka/runtime';
 import { createSystemPromptMainService } from './system-prompt-main.js';
 import { createMainTaskLedgerWiring } from './task-ledger-wiring.js';
 import { createMainAutomationWiring, evaluateAutomationCanFire } from './automation-wiring.js';
 import { createMainGoalWiring } from './goal-wiring.js';
-import { startDesktopSessionTurn, type SessionGoalBoundary } from './session-turn-stream.js';
 import { createOAuthModelConnectionsMainService } from './oauth-model-connections-main.js';
-import {
-  maskNetworkSettings,
-  toContractNetworkSettings,
-} from './network-settings-main.js';
+import { toContractNetworkSettings } from './network-settings-main.js';
 import { registerMemoryIpc } from './memory-ipc-main.js';
 import { registerSubscriptionIpc } from './subscription-ipc-main.js';
 import { registerBrowserIpc } from './browser-ipc-main.js';
@@ -157,6 +121,8 @@ import { registerSettingsIpc } from './settings-ipc-main.js';
 import type { SettingsIpcHandle } from './settings-ipc-main.js';
 import { createVisualSmokeBotOnboardingAdapters } from './bot-onboarding-visual-smoke.js';
 import { createKeepSystemAwakeController } from './keep-system-awake.js';
+import { createSettingsRuntimeEffects } from './settings-runtime-effects.js';
+import { createAiSdkBackendFactory, createSessionStreamer } from './session-stream.js';
 import { registerGatewayIpc } from './gateway-ipc-main.js';
 import { registerSessionsIpc } from './sessions-ipc-main.js';
 import {
@@ -346,20 +312,6 @@ const planReminderStore = createPlanReminderStore(workspaceRoot);
 const taskLedgerWiring = createMainTaskLedgerWiring(workspaceRoot);
 const taskLedgerStore = taskLedgerWiring.store;
 const agentMailboxStore = createAgentMailboxStore(workspaceRoot);
-
-interface StreamEventsOptions {
-  turnId: string;
-  goalBoundary: SessionGoalBoundary;
-  activity?: SessionActivityLease;
-  observeEvent?: (event: SessionEvent) => void;
-}
-
-interface StreamEventsResult {
-  turnId: string;
-  ok: boolean;
-  error?: string;
-  outcome: GoalTurnOutcome;
-}
 
 const sessionActivities = new SessionActivityRegistry();
 
@@ -723,148 +675,33 @@ const planReminders = createPlanReminderMainService({
 
 app.setName('Maka');
 
-function modelSupportsVision(connection: LlmConnection, model: string): boolean {
-  return resolveModelVisionSupport(connection.providerType, connection.models, model);
-}
-
-backends.register('ai-sdk', async (ctx) => {
-  // MCP is optional. A corrupt mcp.json remains visible in the MCP module,
-  // but must not prevent builtin-only conversations from creating a backend.
-  await ensureMcpReady().catch(() => {});
-  const { connection, apiKey, model } = await getReadyConnection(ctx.header.llmConnectionSlug, ctx.header.model);
-  const modelFetch = buildSubscriptionModelFetch(connection, ctx.sessionId, model);
-  const memoryPromptSnapshot = await systemPromptService.buildLocalMemoryPromptFragment();
-  const supportsVision = modelSupportsVision(connection, model);
-  const candidateTools = isComputerUseRealModelE2e
-    ? computerUseTools
-    : ctx.tools
-      ? [...ctx.tools]
-      : [...builtinTools, ...buildMcpTools(mcpManager)];
-  const candidateToolAvailability = isComputerUseRealModelE2e
-    ? { economy: false, groups: [] }
-    : toolAvailability;
-  // Expert-team lead: a main session (ctx.tools undefined) labeled
-  // `mode:expert-team:<teamId>` gets the team-bound expert_dispatch tool.
-  // Child turns receive scoped `ctx.tools` and inherit the label, but must NOT
-  // get expert_dispatch — members cannot spawn nested teams.
-  const expertTeamId = ctx.tools ? undefined : expertTeamIdFromLabels(ctx.header.labels);
-  const expertDispatchTool = expertTeamId
-    ? buildExpertDispatchToolForTeamId(expertTeamId, { taskLedger: taskLedgerStore })
-    : undefined;
-  const agentTeam = ctx.agentTeam ?? (expertTeamId
-    ? { role: 'lead' as const, teamId: expertTeamId, agentId: 'lead' }
-    : undefined);
-  const backendTools = computerUseToolsForModel(
-    candidateTools,
-    computerUseTools,
-    supportsVision,
-  );
-  const backendToolAvailability = computerUseAvailabilityForModel(
-    candidateToolAvailability,
-    supportsVision,
-  );
-  const backendToolNames = new Set([
-    ...backendTools.map((tool) => tool.name),
-    ...(expertDispatchTool ? [expertDispatchTool.name, ...agentTeamLeadTools.map((tool) => tool.name)] : []),
-  ]);
-  const backendCapabilities = new Set<string>();
-  for (const [capability, tools] of [
-    ['rive', riveTools],
-    ['office', officeTools],
-    ['browser', browserTools],
-    ['computer_use', computerUseTools],
-  ] as const) {
-    if (tools.some((tool) => backendToolNames.has(tool.name))) backendCapabilities.add(capability);
-  }
-  const backendSkillHost: HostCapabilities = {
-    toolNames: backendToolNames,
-    capabilities: backendCapabilities,
-  };
-  // Child backends share the parent sessionId but intentionally have a
-  // narrower tool surface. They do not receive the Desktop Skill tool, so
-  // they must not overwrite the parent session's resolver entry.
-  if (!ctx.tools) desktopSessionSkillHosts.set(ctx.sessionId, backendSkillHost);
-
-  return new AiSdkBackend({
-    sessionId: ctx.sessionId,
-    header: { ...ctx.header, model },
-    appendMessage: ctx.appendMessage ?? ((message) => ctx.store.appendMessage(ctx.sessionId, message)),
-    connection,
-    apiKey: apiKey ?? '',
-    modelId: model,
-    permissionEngine,
-    modelFactory: (input) => getAIModel({ ...input, fetch: modelFetch }),
-    tools: expertDispatchTool
-      ? [...backendTools, expertDispatchTool, ...agentTeamLeadTools]
-      : backendTools,
-    agentTeam,
-    toolAvailability: backendToolAvailability,
-    spawnChildAgent: (input) => runtime.spawnChildAgent(ctx.sessionId, input),
-    listChildAgents: () => runtime.listChildAgents(ctx.sessionId),
-    readChildAgentOutput: (input) => runtime.readChildAgentOutput(ctx.sessionId, input),
-    providerOptions: buildProviderOptions(connection, model, ctx.header.thinkingLevel),
-    contextBudget: buildDefaultContextBudgetPolicy(connection, {
-      name: 'desktop-default-history-budget',
-      modelId: model,
-    }),
-    systemPrompt: ({ cwd }) => systemPromptService.buildBackendSystemPrompt(ctx.header, cwd, {
-      memoryFragment: memoryPromptSnapshot,
-      childInstruction: ctx.systemPrompt,
-      skillBudget: { contextWindow: resolveSelectedModelContextWindow(connection, model) },
-      host: backendSkillHost,
-    }),
-    turnTailPrompt: ({ cwd, sessionId }) => systemPromptService.buildTurnTailPrompt(cwd, sessionId),
-    shellRunContextSummary: ctx.shellRunContextSummary,
-    lookupPricing,
-    recordLlmCall: (event: LlmCallRecord) => recordLlmCall({ repo: telemetryRepo, lookupPricing }, event),
-    recordToolInvocation: (event: ToolInvocationRecord) =>
-      recordToolInvocation(
-        { repo: telemetryRepo },
-        // PR-AGENT-WEB-SEARCH-TOOL-0: scrub the query out of the
-        // telemetry record. The agent passes the raw user query as
-        // the tool argument; persisting it in `argsSummary` would
-        // leak user-derived content into the usage log.
-        event.toolName === WEB_SEARCH_TOOL_NAME
-          ? { ...event, argsSummary: undefined }
-          : event,
-      ),
-    recordToolArtifacts: (event: ToolArtifactRecorderInput) => persistToolArtifacts(ctx.header.cwd, event),
-    archiveToolResult: (event: ToolResultArchiveRecorderInput) => persistArchivedToolResult(event),
-    readToolResultArchive: (event: ToolResultArchiveReaderInput) => readArchivedToolResult(event),
-    readAttachmentBytes: createAttachmentByteReader({ artifactStore, sessionId: ctx.sessionId }),
-    ...(runtimePersistence.runtimeCommitStore
-      ? { runtimeCommitSink: runtimePersistence.runtimeCommitStore }
-      : {}),
-    supportsVision,
-    loadHistoryCompact: (event) => loadHistoryCompactBlocksFromArtifacts(artifactStore, event),
-    loadHistoryCompactCheckpoint: ctx.loadHistoryCompactCheckpoint,
-    summarizeHistoryCompact: buildLlmHistorySummarizer({
-      // Reuse the same connection/model the session already drives, so the
-      // summary stays consistent with the model that will consume it.
-      resolveModel: () =>
-        getAIModel({ connection, apiKey: apiKey ?? '', modelId: model, fetch: modelFetch }),
-      providerOptions: buildProviderOptions(connection, model, ctx.header.thinkingLevel),
-    }),
-    loadSynthesisCache: (event) => loadSynthesisCacheBlocksFromArtifacts(artifactStore, event),
-    writeSynthesisCache: (event) => persistSynthesisCacheBlocksToArtifacts(artifactStore, event, {
-      onArtifactCreated: (artifact) => {
-        safeSendToRenderer('artifacts:changed', {
-          reason: 'created',
-          artifactId: artifact.id,
-          sessionId: artifact.sessionId,
-          ts: Date.now(),
-        });
-      },
-    }),
-    recordRunTrace: ctx.recordRunTrace,
-    recordHistoryCompactCheckpoint: ctx.recordHistoryCompactCheckpoint,
-    loadTurnRuntimeEvents: ctx.loadTurnRuntimeEvents,
-    recordActiveFullCompactBlock: ctx.recordActiveFullCompactBlock,
-    recordSemanticCompactBlock: ctx.recordSemanticCompactBlock,
-    newId: randomUUID,
-    now: Date.now,
-  });
-});
+backends.register('ai-sdk', createAiSdkBackendFactory({
+  isComputerUseRealModelE2e,
+  ensureMcpReady,
+  getReadyConnection,
+  buildSubscriptionModelFetch,
+  systemPromptService,
+  mcpManager,
+  permissionEngine,
+  taskLedgerStore,
+  telemetryRepo,
+  artifactStore,
+  desktopSessionSkillHosts,
+  riveTools,
+  officeTools,
+  browserTools,
+  computerUseTools,
+  agentTeamLeadTools,
+  builtinTools,
+  toolAvailability,
+  persistToolArtifacts,
+  persistArchivedToolResult,
+  readArchivedToolResult,
+  runtimeCommitStore: runtimePersistence.runtimeCommitStore,
+  safeSendToRenderer,
+  getRuntime: () => runtime,
+  getLookupPricing: () => lookupPricing,
+}));
 
 backends.register('fake', (ctx) =>
   new FakeBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store, appendMessage: ctx.appendMessage }),
@@ -1142,147 +979,26 @@ function canCreateFakeSessionFromRenderer(): boolean {
   );
 }
 
-async function normalizeSettingsPatch(patch: UpdateAppSettingsInput): Promise<UpdateAppSettingsInput> {
-  const current = await settingsStore.get();
-  return preserveSensitivePlaceholders(patch, current);
-}
-
-async function applySettingsRuntimeEffects(settings: AppSettings, patch: UpdateAppSettingsInput): Promise<void> {
-  if (patch.network) {
-    const network = toContractNetworkSettings(settings.network);
-    setActiveProxy(network.proxy);
-    safeSendToRenderer('settings:network:changed', maskNetworkSettings(network));
-  }
-  if (patch.botChat) {
-    await botRegistry.applySettings(settings.botChat);
-  }
-  if (patch.openGateway) {
-    const status = await openGateway.sync(settings.openGateway);
-    safeSendToRenderer('gateway:statusChanged', status);
-  }
-  if (patch.chatDefaults?.permissionMode) {
-    await syncDefaultPermissionModeToSessions(settings.chatDefaults.permissionMode);
-  }
-  if (patch.system) {
-    // Start/stop the power-save blocker the instant the toggle flips so the
-    // capability reflects the user's choice without waiting for a relaunch.
-    keepSystemAwake.apply(settings.system.keepSystemAwake);
-  }
-}
-
-async function syncDefaultPermissionModeToSessions(mode: Exclude<PermissionMode, 'explore'>): Promise<void> {
-  const sessions = await runtime.listSessions();
-  await Promise.all(sessions.map(async (session) => {
-    if (session.permissionMode === mode) return;
-    if (isDeepResearchSession(session.labels)) return;
-    if (session.status === 'running' || session.status === 'waiting_for_user') return;
-    try {
-      await runtime.setPermissionMode(session.id, mode);
-      emitSessionsChanged('mode-change', session.id);
-    } catch {
-      // Best effort: the persisted global default is still the authority for
-      // new sessions; busy sessions can be reconciled on a later change.
-    }
-  }));
-}
-
-async function handleExternalSettingsChange(): Promise<void> {
-  try {
-    const settings = await settingsStore.get();
-    const fullPatch: UpdateAppSettingsInput = {
-      network: settings.network,
-      botChat: settings.botChat,
-      openGateway: settings.openGateway,
-      system: settings.system,
-    };
-    await applySettingsRuntimeEffects(settings, fullPatch);
-  } catch (error) {
-    console.error('[config-watcher] failed to apply external settings change:', error);
-  }
-  // Always notify renderer, even on partial failure above
-  safeSendToRenderer('settings:externalChanged', { ts: Date.now() });
-}
-
-function streamEvents(
-  sessionId: string,
-  iterator: AsyncIterable<SessionEvent>,
-  options: StreamEventsOptions,
-): Promise<StreamEventsResult> {
-  let userAppendBroadcasted = false;
-  const turnId = options.turnId;
-  const started = startDesktopSessionTurn({
-    sessionId,
-    events: iterator,
-    turnId,
-    goalBoundary: options.goalBoundary,
-    activities: sessionActivities,
-    ...(options.activity ? { activity: options.activity } : {}),
-    beginExternalTurn: (externalSessionId, externalTurnId) =>
-      goalWiring.coordinator.beginExternalTurn(externalSessionId, externalTurnId),
-    onEvent: (event) => {
-      if (!userAppendBroadcasted) {
-        emitSessionsChanged('message-appended', sessionId);
-        userAppendBroadcasted = true;
-      }
-      safeSendToRenderer(`sessions:event:${sessionId}`, event);
-      openGateway.publishSessionEvent(sessionId, event);
-      if (isStatusChangingSessionEvent(event)) {
-        emitSessionsChanged('status-change', sessionId);
-      }
-      if (isTurnStatusChangingSessionEvent(event)) {
-        emitSessionsChanged('turn-status-change', sessionId);
-        computerUseOverlay.clearForSession(sessionId);
-        computerUseTools.clearSession(sessionId);
-      }
-      options.observeEvent?.(event);
-    },
-    onStreamError: (error) => {
-      const event = {
-        type: 'error',
-        id: randomUUID(),
-        turnId,
-        ts: Date.now(),
-        recoverable: false,
-        code: errorCode(error),
-        reason: errorReason(error),
-        message: errorMessage(error),
-      } satisfies SessionEvent;
-      safeSendToRenderer(`sessions:event:${sessionId}`, event);
-      openGateway.publishSessionEvent(sessionId, event);
-      emitSessionsChanged('status-change', sessionId);
-      emitSessionsChanged('turn-status-change', sessionId);
-      computerUseOverlay.clearForSession(sessionId);
-      computerUseTools.clearSession(sessionId);
-    },
-    onDrained: () => {
-      emitSessionsChanged('message-appended', sessionId);
-    },
+const { normalizeSettingsPatch, applySettingsRuntimeEffects, handleExternalSettingsChange } =
+  createSettingsRuntimeEffects({
+    settingsStore,
+    botRegistry,
+    openGateway,
+    keepSystemAwake,
+    runtime,
+    safeSendToRenderer,
+    emitSessionsChanged,
   });
-  if (started.kind === 'unavailable') throw new Error(started.reason);
-  return started.completion.then((outcome) => {
-    const failureReason = outcome.kind === 'errored' || outcome.kind === 'suspended'
-      ? outcome.reason
-      : undefined;
-    return {
-      turnId,
-      ok: outcome.kind === 'completed',
-      ...(failureReason ? { error: failureReason } : {}),
-      outcome,
-    };
-  });
-}
 
-function isStatusChangingSessionEvent(event: SessionEvent): boolean {
-  return event.type === 'permission_request' ||
-    event.type === 'permission_decision_ack' ||
-    event.type === 'complete' ||
-    event.type === 'abort' ||
-    event.type === 'error';
-}
-
-function isTurnStatusChangingSessionEvent(event: SessionEvent): boolean {
-  return event.type === 'complete' || event.type === 'abort' || event.type === 'error';
-}
+const streamEvents = createSessionStreamer({
+  sessionActivities,
+  goalWiring,
+  openGateway,
+  computerUseOverlay,
+  computerUseTools,
+  safeSendToRenderer,
+  emitSessionsChanged,
+});
 
 async function ensureSessionCanSend(sessionId: string): Promise<void> {
   const header = await readAvailableSessionHeader(sessionId);
