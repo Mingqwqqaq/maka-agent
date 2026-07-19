@@ -29,7 +29,9 @@ import {
   TooltipTrigger,
   useMountedRef,
   useToast,
+  useUiLocale,
 } from '@maka/ui';
+import { getBrowserCopy, type BrowserCopy } from './locales/browser-copy';
 
 const EMPTY_STATE: BrowserState = {
   url: '',
@@ -42,18 +44,19 @@ const EMPTY_STATE: BrowserState = {
   hasPage: false,
 };
 
-function browserAddressFailureCopy(reason: 'unsupported_scheme' | 'invalid_url'): string {
+function browserAddressFailureCopy(reason: 'unsupported_scheme' | 'invalid_url', copy: BrowserCopy): string {
   switch (reason) {
     case 'unsupported_scheme':
-      return '嵌入式浏览器只支持打开 HTTP/HTTPS 网页地址。';
+      return copy.unsupportedScheme;
     case 'invalid_url':
-      return '这个地址无法识别，请检查网址后重试。';
+      return copy.invalidUrl;
   }
 }
 
 export function BrowserPanel(props: { sessionId: string; hidden: boolean }) {
   const { sessionId, hidden } = props;
   const toast = useToast();
+  const copy = getBrowserCopy(useUiLocale());
   const stripRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<BrowserState>(EMPTY_STATE);
   // The address input is editable; it only snaps to the live URL when the user
@@ -134,50 +137,50 @@ export function BrowserPanel(props: { sessionId: string; hidden: boolean }) {
     const result = normalizeBrowserAddressInput(address);
     if (!result.ok) {
       if (result.reason !== 'empty') {
-        toast.error('无法打开地址', browserAddressFailureCopy(result.reason));
+        toast.error(copy.openFailed, browserAddressFailureCopy(result.reason, copy));
       }
       return;
     }
     const ownerSessionId = sessionId;
     void window.maka.browser.navigate(ownerSessionId, result.url).catch(() => {
       if (isBrowserPanelSessionCurrent(ownerSessionId)) {
-        toast.error('浏览器导航失败', '页面暂时无法打开，请稍后重试。');
+        toast.error(copy.navigationFailed, copy.navigationFailedDetail);
       }
     });
-  }, [address, isBrowserPanelSessionCurrent, sessionId, toast]);
+  }, [address, copy, isBrowserPanelSessionCurrent, sessionId, toast]);
 
   return (
-    <div className="maka-browser-panel" aria-label="嵌入式浏览器">
+    <div className="maka-browser-panel" aria-label={copy.panelAria}>
       <div className="maka-browser-toolbar">
         <Tooltip>
           <TooltipTrigger
             render={<Button variant="quiet" size="icon-sm" />}
             type="button"
-            aria-label="浏览器后退"
+            aria-label={copy.backAria}
             disabled={!state.canGoBack}
             onClick={() => void window.maka.browser.back(sessionId)}
           >
             <ChevronLeft size={16} aria-hidden />
           </TooltipTrigger>
-          <TooltipContent>后退</TooltipContent>
+          <TooltipContent>{copy.back}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={<Button variant="quiet" size="icon-sm" />}
             type="button"
-            aria-label="浏览器前进"
+            aria-label={copy.forwardAria}
             disabled={!state.canGoForward}
             onClick={() => void window.maka.browser.forward(sessionId)}
           >
             <ChevronRight size={16} aria-hidden />
           </TooltipTrigger>
-          <TooltipContent>前进</TooltipContent>
+          <TooltipContent>{copy.forward}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={<Button variant="quiet" size="icon-sm" />}
             type="button"
-            aria-label={state.loading ? '停止加载页面' : '刷新页面'}
+            aria-label={state.loading ? copy.stopAria : copy.refreshAria}
             disabled={!state.hasPage && !state.loading}
             onClick={() =>
               state.loading ? void window.maka.browser.stop(sessionId) : void window.maka.browser.reload(sessionId)
@@ -185,14 +188,14 @@ export function BrowserPanel(props: { sessionId: string; hidden: boolean }) {
           >
             {state.loading ? <X size={16} aria-hidden /> : <RotateCw size={16} aria-hidden />}
           </TooltipTrigger>
-          <TooltipContent>{state.loading ? '停止' : '刷新'}</TooltipContent>
+          <TooltipContent>{state.loading ? copy.stop : copy.refresh}</TooltipContent>
         </Tooltip>
         <Input
           className="maka-browser-address"
           type="text"
           spellCheck={false}
-          aria-label="浏览器地址"
-          placeholder="输入网址并回车"
+          aria-label={copy.addressAria}
+          placeholder={copy.addressPlaceholder}
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           onFocus={() => {
@@ -213,12 +216,12 @@ export function BrowserPanel(props: { sessionId: string; hidden: boolean }) {
           <TooltipTrigger
             render={<Button variant="quiet" size="icon-sm" />}
             type="button"
-            aria-label="关闭浏览器页面"
+            aria-label={copy.closeAria}
             onClick={() => void window.maka.browser.close(sessionId)}
           >
             <X size={16} aria-hidden />
           </TooltipTrigger>
-          <TooltipContent>关闭页面</TooltipContent>
+          <TooltipContent>{copy.close}</TooltipContent>
         </Tooltip>
       </div>
       <div className="maka-browser-strip" ref={stripRef}>
@@ -228,9 +231,9 @@ export function BrowserPanel(props: { sessionId: string; hidden: boolean }) {
               <EmptyMedia variant="icon">
                 <Globe aria-hidden="true" />
               </EmptyMedia>
-              <EmptyTitle>嵌入式浏览器</EmptyTitle>
+              <EmptyTitle>{copy.title}</EmptyTitle>
               <EmptyDescription className="maka-browser-empty-hint">
-                输入网址打开页面，或让助手帮你导航并操作。
+                {copy.description}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
