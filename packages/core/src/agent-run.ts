@@ -19,6 +19,18 @@ export const AGENT_RUN_STATUSES = [
 
 export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
 
+export interface AgentRunContinuationSource {
+  sourceInvocationId: string;
+  sourceRunId: string;
+  sourceTurnId: string;
+  sourceRuntimeEventHighWater: number;
+}
+
+const AGENT_RUN_CONTINUATION_SOURCE_SHAPE = defineObjectShape<AgentRunContinuationSource>()(
+  ['sourceInvocationId', 'sourceRunId', 'sourceTurnId', 'sourceRuntimeEventHighWater'],
+  [],
+);
+
 export interface AgentRunHeader {
   runId: string;
   /** Durable Runtime invocation spine. Optional only for legacy run headers. */
@@ -30,6 +42,8 @@ export interface AgentRunHeader {
   llmConnectionSlug: string;
   modelId: string;
   cwd: string;
+  /** Authoritative host identity for the workspace observed when the run was created. */
+  workspaceIdentity?: string;
   permissionMode: PermissionMode;
   createdAt: number;
   updatedAt: number;
@@ -42,6 +56,8 @@ export interface AgentRunHeader {
   regeneratedFromTurnId?: string;
   branchOfTurnId?: string;
   parentSessionId?: string;
+  /** Durable claim that this run is the continuation child for one source boundary. */
+  continuationSource?: AgentRunContinuationSource;
   /** Non-user trigger for this run (e.g. a scheduled automation fire). */
   automationId?: string;
   failureClass?: string;
@@ -132,6 +148,8 @@ const AGENT_RUN_HEADER_SHAPE = defineObjectShape<AgentRunHeader>()(
     'regeneratedFromTurnId',
     'branchOfTurnId',
     'parentSessionId',
+    'workspaceIdentity',
+    'continuationSource',
     'automationId',
     'failureClass',
     'failureMessage',
@@ -172,12 +190,22 @@ export function decodeAgentRunHeader(value: unknown): AgentRunHeader {
       value.regeneratedFromTurnId,
       value.branchOfTurnId,
       value.parentSessionId,
+      value.workspaceIdentity,
       value.automationId,
       value.failureClass,
       value.failureMessage,
       value.abortSource,
       value.traceWriteError,
-    ].every(isOptionalString);
+    ].every(isOptionalString) &&
+    (value.continuationSource === undefined ||
+      (isRecord(value.continuationSource) &&
+        hasExactShape(value.continuationSource, AGENT_RUN_CONTINUATION_SOURCE_SHAPE) &&
+        typeof value.continuationSource.sourceInvocationId === 'string' &&
+        typeof value.continuationSource.sourceRunId === 'string' &&
+        typeof value.continuationSource.sourceTurnId === 'string' &&
+        typeof value.continuationSource.sourceRuntimeEventHighWater === 'number' &&
+        Number.isSafeInteger(value.continuationSource.sourceRuntimeEventHighWater) &&
+        value.continuationSource.sourceRuntimeEventHighWater >= 0));
   if (!valid) throw new Error('Invalid AgentRun header schema');
   return value as unknown as AgentRunHeader;
 }
@@ -233,4 +261,16 @@ export interface AgentRunStore {
     event: AgentRunEvent | null,
     options?: { replaceEventId?: string },
   ): Promise<void>;
+}
+
+/**
+ * Whether a run contributes directly to the owning session's transcript.
+ * Continuations carry parent lineage for recovery, but unlike child-agent runs
+ * their output remains part of the parent session conversation.
+ */
+export function isSessionInlineRun(run: {
+  readonly parentRunId?: string;
+  readonly continuationSource?: unknown;
+}): boolean {
+  return run.parentRunId === undefined || run.continuationSource !== undefined;
 }

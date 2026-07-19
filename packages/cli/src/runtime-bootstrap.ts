@@ -20,12 +20,16 @@ import {
   buildChildAgentTools,
   createBuiltinSandboxManager,
   createFilesystemWorkerLaunchSpecProvider,
+  createLocalContinuationSafetyInspector,
   FilesystemWorkerClient,
   buildDefaultContextBudgetPolicy,
   buildSkillAgentTool,
+  SKILL_TOOL_NAME,
   buildGoalTools,
   buildParentAgentTools,
-  buildSubagentToolGroup,
+  assertProductBindingCatalogClean,
+  buildDeferredToolGroupsFromCatalog,
+  buildHostCapabilitiesFromBinding,
   buildLlmHistorySummarizer,
   cleanupLegacyHistoryCompactArtifacts,
   buildProviderOptions,
@@ -52,9 +56,9 @@ import {
   createAutomationStore,
   createConnectionStore,
   createFileCredentialStore,
+  openRuntimeEventPersistence,
   createForeignSessionStore,
   createReadImageSnapshotter,
-  createRuntimeEventStore,
   createSessionStore,
   createSettingsStore,
   createShellRunStore,
@@ -164,7 +168,11 @@ export async function createMakaCliRuntimeContext(
 ): Promise<MakaCliRuntimeContext> {
   const store = createSessionStore(input.workspaceRoot);
   const runStore = createAgentRunStore(input.workspaceRoot);
-  const runtimeEventStore = createRuntimeEventStore(input.workspaceRoot);
+  const runtimePersistence = await openRuntimeEventPersistence({
+    workspaceRoot: input.workspaceRoot,
+    sqliteCanonical: process.env.MAKA_RUNTIME_SQLITE_CANONICAL === '1',
+  });
+  const runtimeEventStore = runtimePersistence.runtimeEventStore;
   const shellRunStore = createShellRunStore(input.workspaceRoot);
   const artifactStore = createArtifactStore(input.workspaceRoot);
   const connectionStore = createConnectionStore(input.workspaceRoot);
@@ -498,25 +506,31 @@ export async function createMakaCliRuntimeContext(
         })
       : [];
   const subagentTools = input.surface === 'tui' ? buildParentAgentTools() : [];
-  const toolAvailability: ToolAvailabilityConfig | undefined =
-    input.surface === 'tui'
-      ? {
-          economy: !process.env.MAKA_DISABLE_DEFERRED_TOOLS,
-          groups: [buildSubagentToolGroup()],
-        }
-      : undefined;
   // CLI host capability surface for the skill-compatibility gate: the tool
   // names registered on this host. The CLI has no Office tools, so bundled
   // Office skills (requiredTools includes OfficeDocument/OfficeDocumentEdit)
   // are hard-hidden here without seeding them — desktop owns Office seeding.
+  // Catalog ∩ binding (#1099 S2): capability tags and deferred groups come from
+  // the shared catalog rather than a parallel hand list.
   const surfaceTools = input.surface === 'tui' ? [buildAskUserQuestionTool()] : [];
-  const host: HostCapabilities = {
-    toolNames: new Set(
-      [...tools, automationTool, ...goalTools, ...subagentTools, ...surfaceTools].map(
-        (tool) => tool.name,
-      ),
-    ),
-  };
+  const cliBoundToolNames = [
+    ...tools,
+    automationTool,
+    ...goalTools,
+    ...subagentTools,
+    ...surfaceTools,
+  ].map((tool) => tool.name);
+  // Skill is always registered on this host; include it before the instance exists.
+  const cliBoundToolNamesWithSkill = [...cliBoundToolNames, SKILL_TOOL_NAME];
+  assertProductBindingCatalogClean('cli', cliBoundToolNamesWithSkill);
+  const host: HostCapabilities = buildHostCapabilitiesFromBinding(cliBoundToolNamesWithSkill);
+  const toolAvailability: ToolAvailabilityConfig | undefined =
+    input.surface === 'tui'
+      ? {
+          economy: !process.env.MAKA_DISABLE_DEFERRED_TOOLS,
+          groups: buildDeferredToolGroupsFromCatalog('cli', cliBoundToolNamesWithSkill),
+        }
+      : undefined;
   const skillTool = buildSkillAgentTool(
     ({ cwd }) => resolveSkillDiscoveryPaths(cwd, input.workspaceRoot),
     host,
@@ -621,6 +635,9 @@ export async function createMakaCliRuntimeContext(
       now: Date.now,
       ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
       ...(input.permissionRules !== undefined ? { permissionRules: input.permissionRules } : {}),
+      ...(runtimePersistence.runtimeCommitStore
+        ? { runtimeCommitSink: runtimePersistence.runtimeCommitStore }
+        : {}),
     });
   });
 
@@ -628,8 +645,33 @@ export async function createMakaCliRuntimeContext(
     store,
     runStore,
     runtimeEventStore,
+    ...(runtimePersistence.runtimeCommitStore
+      ? { toolBoundaryProtocol: runtimePersistence.runtimeCommitStore.toolBoundaryProtocol }
+      : {}),
     shellRuns,
     backends,
+    safeBoundaryResumeEnabled: process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '1',
+    onContinuationLifecycleEvent: (event) => {
+      console.info('[runtime-resume]', JSON.stringify(event));
+    },
+    inspectContinuationSafety: createLocalContinuationSafetyInspector({
+      readSessionCwd: async (sessionId) => (await store.readHeader(sessionId)).cwd,
+      listAvailableToolNames: async () => allTools.map((tool) => tool.name),
+      hasPendingBackgroundOperations: async (sessionId) => {
+        const [shellUpdates, runs] = await Promise.all([
+          shellRuns.listSessionUpdates(sessionId),
+          runStore.listSessionRuns(sessionId),
+        ]);
+        return (
+          shellUpdates.some((update) => update.result.status === 'running') ||
+          runs.some(
+            (run) =>
+              run.parentRunId !== undefined &&
+              ['created', 'running', 'waiting_permission'].includes(run.status),
+          )
+        );
+      },
+    }),
     ...(input.surface === 'tui' ? { childTools: childAgentTools } : {}),
     runtimeInvocationObserver: input.runtimeInvocationObserver,
     onSessionTitleChanged: input.onSessionTitleChanged,
@@ -778,6 +820,7 @@ export async function createMakaCliRuntimeContext(
       goalManager.dispose();
       await shellRuns.terminateAll();
       shellRunListeners.clear();
+      runtimePersistence.close();
     },
   };
 }

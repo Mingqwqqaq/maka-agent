@@ -322,9 +322,9 @@ export function BotChatChannelDetail(props: {
         )}
 
         {support === 'planned' && (
-          <div className="settingsNotice" data-tone="passive">
-            {detailCopy.planned}
-          </div>
+          <Alert variant="passive">
+            <AlertDescription>{detailCopy.planned}</AlertDescription>
+          </Alert>
         )}
 
         {/* WeChat keeps scan login as a first-class action, separate from
@@ -507,10 +507,9 @@ function BotCredentialFields(props: {
             );
           case 'notice':
             return (
-              <div key={`notice-${index}`} className="settingsBotInfoNotice">
-                <span className="settingsBotInfoNoticeIcon" aria-hidden="true">ⓘ</span>
-                <span>{field.text}</span>
-              </div>
+              <Alert key={`notice-${index}`} variant="info">
+                <AlertDescription>{field.text}</AlertDescription>
+              </Alert>
             );
         }
       })}

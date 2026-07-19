@@ -229,6 +229,7 @@ function SessionListGroups(props: {
   onSelectSession(sessionId: string): void;
   rowActions?: SessionRowActions;
 }) {
+  const copy = getConversationCopy(useUiLocale()).sessions;
   const [expandedByKey, setExpandedByKey] = useState<Record<string, boolean>>(() => {
     const out: Record<string, boolean> = {};
     for (const g of props.groups) out[g.key] = g.defaultExpanded;
@@ -295,7 +296,7 @@ function SessionListGroups(props: {
                 {/* Collapsed history buckets keep a subdued count so users
                   can tell whether expanding the group is worth it. Open
                   groups intentionally omit counts to keep the rail flat. */}
-                <span className="maka-list-group-count">（{group.sessions.length}）</span>
+                <span className="maka-list-group-count">{copy.groupCount(group.sessions.length)}</span>
               </BaseButton>
             ) : (
               <div className="maka-list-group-label">

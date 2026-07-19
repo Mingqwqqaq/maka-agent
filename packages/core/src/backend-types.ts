@@ -15,7 +15,16 @@ import type { PermissionResponse } from './permission.js';
 import type { UserQuestionResponse } from './user-question.js';
 import type { ContextBudgetDiagnostic } from './usage-stats/types.js';
 
+export interface RuntimeContinuationMetadata {
+  sourceInvocationId: string;
+  sourceRunId: string;
+  sourceTurnId: string;
+  sourceRuntimeEventHighWater: number;
+}
+
 export interface BackendSendInput {
+  /** Durable invocation spine id; distinct from runId for continuations. */
+  invocationId?: string;
   /** AgentRun id for this invocation, when the caller has a run ledger. */
   runId?: string;
   /** Caller-generated turn id shared by the persisted UserMessage and every emitted event. */
@@ -41,6 +50,8 @@ export interface BackendSendInput {
    * compatibility projection.
    */
   runtimeContext?: RuntimeEvent[];
+  /** Continue from an already committed RuntimeEvent boundary without adding another user turn. */
+  continuation?: RuntimeContinuationMetadata;
   /**
    * Steering pull — a LEASE, and the single atomic commit point of delivery.
    * Backends that support mid-turn steering call this at every step boundary;

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { uiLocaleToIntlLocale, type AppSettings, type UiLocale, type UpdateAppSettingsResult, type UsageRange, type UsageStats } from '@maka/core';
-import { Button, Input, Segmented, SettingsSelect, SettingsSwitch as Switch, useToast, useUiLocale } from '@maka/ui';
+import { Alert, AlertAction, AlertDescription, Button, Input, Segmented, SettingsSelect, SettingsSwitch as Switch, useToast, useUiLocale } from '@maka/ui';
 import { getUsageSettingsCopy, type UsageSettingsCopy } from '../locales/settings-usage-copy';
 import { RefreshCcw } from '@maka/ui/icons';
 import { MetricCard } from './settings-metric-card';
@@ -165,14 +165,14 @@ export function UsageSettingsPage(props: {
       )}
 
       {usageDraft.activeTab === 'requests' && !usageDraft.showDetails ? (
-        <div className="settingsNotice">
-          {copy.summaryOnly}
-          <div className="settingsActionRow settingsNoticeAction">
+        <Alert variant="info">
+          <AlertDescription>{copy.summaryOnly}</AlertDescription>
+          <AlertAction>
             <Button type="button" variant="secondary" size="sm" onClick={() => void updateUsage({ showDetails: true })}>
               {copy.showDetails}
             </Button>
-          </div>
-        </div>
+          </AlertAction>
+        </Alert>
       ) : (
         <UsageTable
           activeTab={usageDraft.activeTab}

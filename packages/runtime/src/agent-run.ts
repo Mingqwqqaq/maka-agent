@@ -4,8 +4,9 @@ import type {
   AgentRunStore,
   RuntimeEvent,
   RuntimeEventStore,
+  ToolBoundaryProtocol,
 } from '@maka/core';
-import { DurableStoreWriteError, isTerminalRuntimeEvent } from '@maka/core';
+import { DurableStoreWriteError, isSessionInlineRun, isTerminalRuntimeEvent } from '@maka/core';
 import { redactSecrets } from '@maka/core/redaction';
 import type {
   SessionBlockedReason,
@@ -39,6 +40,7 @@ import {
 import { AiSdkFlow } from './ai-sdk-flow.js';
 import type { InvocationContext } from './invocation-context.js';
 import { buildInitialUserRuntimeEvent } from './runtime-runner.js';
+import type { RuntimeContinuation } from './runtime-resume.js';
 
 export interface AgentRunActiveSession {
   sessionId: string;
@@ -95,9 +97,20 @@ export interface AgentRunInput {
   repairRunRuntimeLedger?: (sessionId: string, runId: string) => Promise<boolean>;
   newId: () => string;
   now: () => number;
+  workspaceIdentity?: string;
+  continuationFailpoint?: (point: RuntimeContinuationFailpoint) => Promise<void>;
   hooks: AgentRunHooks;
   recordSessionMessages?: boolean;
+  invocationId?: string;
+  /** Set only when this run's backend tool path is guarded by canonical T1. */
+  toolBoundaryProtocol?: ToolBoundaryProtocol;
 }
+
+export type RuntimeContinuationFailpoint =
+  | 'after_run_created'
+  | 'after_continuation_start_committed'
+  | 'after_terminal_event_committed'
+  | 'after_terminal_header_committed';
 
 export interface AgentRunBeginResult {
   backend: AgentBackend;
@@ -108,6 +121,11 @@ export interface AgentRunBeginResult {
 export interface AgentRunOperationBeginResult {
   backend: AgentBackend;
   runtimeContext: RuntimeEvent[];
+  startedAt: number;
+}
+
+export interface AgentRunContinuationBeginResult {
+  backend: AgentBackend;
   startedAt: number;
 }
 
@@ -123,8 +141,10 @@ interface PriorRunTerminalFactContext {
 
 export class AgentRun {
   readonly runId: string;
+  readonly invocationId: string;
   readonly sessionId: string;
   readonly turnId: string;
+  readonly toolBoundaryProtocol: ToolBoundaryProtocol | undefined;
   readonly lineage: AgentRunLineage;
 
   private header: SessionHeader;
@@ -135,6 +155,7 @@ export class AgentRun {
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private runStoreAvailable = true;
   private runtimeEventStoreAvailable = true;
+  private runtimeEventStoreFailure: unknown;
   private failureClass: string | undefined;
   private failureMessage: string | undefined;
   private lastTs = 0;
@@ -143,6 +164,7 @@ export class AgentRun {
   private turnFailed = false;
   private finalized = false;
   private terminalRunHeaderCommitted = false;
+  private continuationActive = false;
   private terminalClaim:
     | {
         owner: 'event' | 'stop';
@@ -160,8 +182,10 @@ export class AgentRun {
       throw new Error('Required AgentRun durability needs AgentRunStore and RuntimeEventStore');
     }
     this.runId = input.runId ?? input.newId();
+    this.invocationId = input.invocationId ?? this.runId;
     this.sessionId = input.sessionId;
     this.turnId = input.userInput.turnId;
+    this.toolBoundaryProtocol = input.toolBoundaryProtocol;
     this.header = input.header;
     this.lineage = {
       ...(input.userInput.parentRunId ? { parentRunId: input.userInput.parentRunId } : {}),
@@ -189,6 +213,13 @@ export class AgentRun {
 
   isStopped(): boolean {
     return this.stopped;
+  }
+
+  isSessionInline(): boolean {
+    return isSessionInlineRun({
+      ...(this.lineage.parentRunId ? { parentRunId: this.lineage.parentRunId } : {}),
+      ...(this.continuationActive ? { continuationSource: true } : {}),
+    });
   }
 
   hasPendingStop(): boolean {
@@ -484,10 +515,44 @@ export class AgentRun {
     };
   }
 
+  async beginContinuation(
+    continuation: RuntimeContinuation,
+  ): Promise<AgentRunContinuationBeginResult> {
+    if (
+      continuation.sessionId !== this.sessionId ||
+      continuation.runId !== this.runId ||
+      continuation.turnId !== this.turnId
+    ) {
+      throw new Error('Runtime continuation identity does not match the target AgentRun');
+    }
+
+    this.continuationActive = true;
+    await this.createRunRecord(continuation);
+    await this.input.continuationFailpoint?.('after_run_created');
+    const startedAt = this.input.now();
+    this.lastTs = startedAt;
+    if (this.recordsSessionMessages()) {
+      await this.input.hooks.appendTurnState(this.sessionId, this.turnId, 'running', this.lineage, {
+        ts: startedAt,
+      });
+    }
+
+    if (!this.header.connectionLocked) {
+      this.header = await this.input.hooks.updateHeader(this.sessionId, { connectionLocked: true });
+    }
+
+    this.active = await this.input.hooks.ensureActive(this.sessionId, this.header);
+    this.input.hooks.registerRun(this.active, this);
+    await this.markRunStarted(startedAt);
+    await this.input.hooks.updateStatus(this.sessionId, 'running', undefined, startedAt);
+
+    return { backend: this.active.backend, startedAt };
+  }
+
   private buildInitialRuntimeEvent(id: string, ts: number): RuntimeEvent {
     return buildInitialUserRuntimeEvent({
       id,
-      invocationId: this.runId,
+      invocationId: this.invocationId,
       runId: this.runId,
       sessionId: this.sessionId,
       turnId: this.turnId,
@@ -499,6 +564,7 @@ export class AgentRun {
       ...(this.input.userInput.attachments !== undefined
         ? { attachments: this.input.userInput.attachments }
         : {}),
+      ...(this.toolBoundaryProtocol ? { toolBoundaryProtocol: this.toolBoundaryProtocol } : {}),
     });
   }
 
@@ -604,6 +670,12 @@ export class AgentRun {
       const eventForStore = terminal ? this.reserveTerminalEvent(event) : event;
       if (!eventForStore) continue;
       if (!this.input.runtimeEventStore || !this.runtimeEventStoreAvailable) {
+        if (this.input.runtimeEventStore?.durability === 'canonical') {
+          throw (
+            this.runtimeEventStoreFailure ??
+            new Error('canonical RuntimeEvent store is unavailable')
+          );
+        }
         if (terminal && options.requireTerminalWrite) {
           throw new Error('terminal RuntimeEvent store is unavailable');
         }
@@ -624,7 +696,13 @@ export class AgentRun {
             { durable: terminal || options.requireDurableWrite === true },
           );
         },
-        { rethrow: terminal || options.requireTerminalWrite || options.requireDurableWrite },
+        {
+          rethrow:
+            terminal ||
+            options.requireTerminalWrite ||
+            options.requireDurableWrite ||
+            this.input.runtimeEventStore.durability === 'canonical',
+        },
       );
       if (terminal && this.terminalClaim) this.terminalClaim.write = write;
       if (options.requireDurableWrite && !terminal) {
@@ -748,12 +826,15 @@ export class AgentRun {
     return this.input.recordSessionMessages !== false;
   }
 
-  private async createRunRecord(): Promise<void> {
-    if (!this.input.runStore) return;
+  private async createRunRecord(continuation?: RuntimeContinuation): Promise<void> {
+    if (!this.input.runStore) {
+      if (continuation) throw new Error('Runtime continuation requires a durable run store');
+      return;
+    }
     const createdAt = this.input.now();
     const header: AgentRunHeader = {
       runId: this.runId,
-      invocationId: this.runId,
+      invocationId: this.invocationId,
       sessionId: this.sessionId,
       turnId: this.turnId,
       status: 'created',
@@ -761,10 +842,21 @@ export class AgentRun {
       llmConnectionSlug: this.header.llmConnectionSlug,
       modelId: this.header.model,
       cwd: this.header.cwd,
+      ...(this.input.workspaceIdentity ? { workspaceIdentity: this.input.workspaceIdentity } : {}),
       permissionMode: this.header.permissionMode,
       createdAt,
       updatedAt: createdAt,
       ...this.lineage,
+      ...(continuation
+        ? {
+            continuationSource: {
+              sourceInvocationId: continuation.sourceInvocationId,
+              sourceRunId: continuation.sourceRunId,
+              sourceTurnId: continuation.sourceTurnId,
+              sourceRuntimeEventHighWater: continuation.sourceRuntimeEventHighWater,
+            },
+          }
+        : {}),
       ...(this.input.userInput.agentId ? { agentId: this.input.userInput.agentId } : {}),
       ...(this.input.userInput.agentName ? { agentName: this.input.userInput.agentName } : {}),
       ...(this.input.userInput.origin?.kind === 'automation'
@@ -795,6 +887,7 @@ export class AgentRun {
       this.runStoreAvailable = false;
       if (this.requiresDurablePersistence()) throw error;
       this.enqueueTraceWriteFailure(error);
+      if (continuation) throw error;
     }
   }
 
@@ -813,7 +906,7 @@ export class AgentRun {
       return undefined;
     const runs = await this.input.runStore.listSessionRuns(this.sessionId);
     const priorRuns = runs.filter(
-      (run) => run.runId !== this.runId && run.turnId !== this.turnId && !run.parentRunId,
+      (run) => run.runId !== this.runId && run.turnId !== this.turnId && isSessionInlineRun(run),
     );
     if (priorRuns.length === 0) return undefined;
 
@@ -1106,6 +1199,9 @@ export class AgentRun {
       const terminalEvent = terminalClaim?.event;
       if (!terminalEvent) throw new Error('terminal RuntimeEvent claim is missing');
       await terminalClaim.write;
+      if (this.continuationActive) {
+        await this.input.continuationFailpoint?.('after_terminal_event_committed');
+      }
       const commit = commitOrCreateTerminalRunFact({
         runStore,
         runtimeEventStore,
@@ -1130,6 +1226,9 @@ export class AgentRun {
       if (!terminalClaim.write) terminalClaim.write = commit.then(() => undefined);
       const result = await commit;
       this.terminalRunHeaderCommitted = result.headerCommitted;
+      if (result.headerCommitted && this.continuationActive) {
+        await this.input.continuationFailpoint?.('after_terminal_header_committed');
+      }
       if (result.headerCommitError !== undefined) {
         await this.enqueueTraceWriteFailure(result.headerCommitError, 'commit terminal run header');
       }
@@ -1161,7 +1260,7 @@ export class AgentRun {
     this.reserveTerminalEvent(
       buildSyntheticTerminalRuntimeEvent({
         id: this.input.newId(),
-        invocationId: this.runId,
+        invocationId: this.invocationId,
         run: { sessionId: this.sessionId, runId: this.runId, turnId: this.turnId },
         status,
         ts,
@@ -1211,6 +1310,7 @@ export class AgentRun {
     if (!this.input.runtimeEventStore || !this.runtimeEventStoreAvailable) return Promise.resolve();
     const next = this.runtimeEventQueue.then(operation, operation).catch(async (error) => {
       this.runtimeEventStoreAvailable = false;
+      this.runtimeEventStoreFailure = error;
       await this.enqueueTraceWriteFailure(error, label);
       if (options.rethrow) throw error;
     });

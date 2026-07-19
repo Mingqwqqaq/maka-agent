@@ -234,6 +234,27 @@ export interface RuntimeEventTokenUsage {
  */
 export type RuntimeEventPermissionDecision = PermissionResponse;
 
+export const TOOL_BOUNDARY_PROTOCOL_V1 = 't1_after_preflight_v1' as const;
+export type ToolBoundaryProtocol = typeof TOOL_BOUNDARY_PROTOCOL_V1;
+
+/**
+ * Canonical fact that the runtime crossed the durable tool-dispatch boundary.
+ * Its presence means the implementation may have started; it does not assert
+ * that the implementation or any external side effect actually completed.
+ */
+export interface RuntimeEventToolDispatch {
+  protocol: ToolBoundaryProtocol;
+  operationId: string;
+  providerToolCallId: string;
+  toolName: string;
+  canonicalArgsHash: string;
+  recoveryMode: ToolRecoveryMode;
+}
+
+export interface RuntimeEventProtocolMarker {
+  toolBoundary: ToolBoundaryProtocol;
+}
+
 /**
  * Control and side-effect intent carried alongside content. An event may
  * carry content, actions, both, or (rarely) neither — but a terminal
@@ -256,6 +277,10 @@ export interface RuntimeEventActions {
   endInvocation?: boolean;
   /** Token accounting for the model call this event summarizes. */
   tokenUsage?: RuntimeEventTokenUsage;
+  /** Durable, non-model-visible T1 tool-dispatch fact. */
+  toolDispatch?: RuntimeEventToolDispatch;
+  /** Protocols that were actually active from the first event of this run. */
+  runtimeProtocol?: RuntimeEventProtocolMarker;
 }
 
 // ============================================================================
@@ -274,6 +299,8 @@ export interface RuntimeEventRefs {
   toolCallId?: string;
   providerEventId?: string;
   artifactId?: string;
+  /** Runtime-owned durable identity for one tool side-effect boundary. */
+  operationId?: string;
   /**
    * Assistant step id for a function_call event: the id of the step's
    * text/thinking messages (their `providerEventId`). Model replay pairs a
@@ -282,7 +309,20 @@ export interface RuntimeEventRefs {
    * and is replayed with the older degraded semantics.
    */
   stepId?: string;
+  /** Source execution boundary for a safe-boundary continuation start fact. */
+  sourceInvocationId?: string;
+  sourceRunId?: string;
+  sourceTurnId?: string;
+  sourceRuntimeEventHighWater?: number;
 }
+
+/** Tool-owned contract for deciding what a later recovery phase may do. */
+export type ToolRecoveryMode =
+  | 'replay_safe'
+  | 'idempotent'
+  | 'reconcile'
+  | 'reattach'
+  | 'never_auto_retry';
 
 // ============================================================================
 // RuntimeEvent
@@ -291,9 +331,10 @@ export interface RuntimeEventRefs {
 /**
  * The canonical runtime fact.
  *
- * Identity hierarchy: `sessionId` ⊃ `invocationId` ⊃ `runId` ⊃ `turnId`.
- * `invocationId` is the durable spine id; `runId`/`turnId` name the
- * specific execution attempt and user turn within it. `ts` is Unix ms.
+ * Phase 0-3 identity contract: one `invocationId` maps to one `runId`.
+ * Invocation identifies provider/tool execution while Run identifies its
+ * durable operational ledger. A continuation creates fresh values for both;
+ * `turnId` names the user turn and `ts` is Unix ms.
  *
  * `partial: true` marks a transient chunk (streaming text, progress) that
  * is superseded by a later non-partial event. Projections decide whether
@@ -304,7 +345,7 @@ export interface RuntimeEvent {
   id: string;
   /** Durable invocation spine id; groups every run/turn of one request. */
   invocationId: string;
-  /** Specific run/attempt within the invocation (maps to AgentRunHeader.runId). */
+  /** Durable operational run identity (maps to AgentRunHeader.runId). */
   runId: string;
   sessionId: string;
   /** Groups all events from one agent turn (maps to StoredMessage.turnId). */
@@ -362,7 +403,24 @@ const RUNTIME_ACTIONS_SHAPE = defineObjectShape<RuntimeEventActions>()(
     'transferToAgent',
     'endInvocation',
     'tokenUsage',
+    'toolDispatch',
+    'runtimeProtocol',
   ],
+);
+const RUNTIME_TOOL_DISPATCH_SHAPE = defineObjectShape<RuntimeEventToolDispatch>()(
+  [
+    'protocol',
+    'operationId',
+    'providerToolCallId',
+    'toolName',
+    'canonicalArgsHash',
+    'recoveryMode',
+  ],
+  [],
+);
+const RUNTIME_PROTOCOL_MARKER_SHAPE = defineObjectShape<RuntimeEventProtocolMarker>()(
+  ['toolBoundary'],
+  [],
 );
 const RUNTIME_TOKEN_USAGE_SHAPE = defineObjectShape<RuntimeEventTokenUsage>()(
   ['input', 'output'],
@@ -390,7 +448,19 @@ const RUNTIME_TOKEN_USAGE_SHAPE = defineObjectShape<RuntimeEventTokenUsage>()(
 );
 const RUNTIME_REFS_SHAPE = defineObjectShape<RuntimeEventRefs>()(
   [],
-  ['storedMessageId', 'traceEventId', 'toolCallId', 'providerEventId', 'artifactId', 'stepId'],
+  [
+    'storedMessageId',
+    'traceEventId',
+    'toolCallId',
+    'providerEventId',
+    'artifactId',
+    'operationId',
+    'stepId',
+    'sourceInvocationId',
+    'sourceRunId',
+    'sourceTurnId',
+    'sourceRuntimeEventHighWater',
+  ],
 );
 
 export function decodeRuntimeEvent(value: unknown): RuntimeEvent {
@@ -478,7 +548,34 @@ function isRuntimeEventActions(value: unknown): value is RuntimeEventActions {
     (value.userQuestionRequest === undefined || isUserQuestionRequest(value.userQuestionRequest)) &&
     isOptionalString(value.transferToAgent) &&
     (value.endInvocation === undefined || typeof value.endInvocation === 'boolean') &&
-    (value.tokenUsage === undefined || isRuntimeTokenUsage(value.tokenUsage))
+    (value.tokenUsage === undefined || isRuntimeTokenUsage(value.tokenUsage)) &&
+    (value.toolDispatch === undefined || isRuntimeToolDispatch(value.toolDispatch)) &&
+    (value.runtimeProtocol === undefined || isRuntimeProtocolMarker(value.runtimeProtocol))
+  );
+}
+
+function isRuntimeToolDispatch(value: unknown): value is RuntimeEventToolDispatch {
+  return (
+    isRecord(value) &&
+    hasExactShape(value, RUNTIME_TOOL_DISPATCH_SHAPE) &&
+    value.protocol === TOOL_BOUNDARY_PROTOCOL_V1 &&
+    typeof value.operationId === 'string' &&
+    typeof value.providerToolCallId === 'string' &&
+    typeof value.toolName === 'string' &&
+    typeof value.canonicalArgsHash === 'string' &&
+    (value.recoveryMode === 'replay_safe' ||
+      value.recoveryMode === 'idempotent' ||
+      value.recoveryMode === 'reconcile' ||
+      value.recoveryMode === 'reattach' ||
+      value.recoveryMode === 'never_auto_retry')
+  );
+}
+
+function isRuntimeProtocolMarker(value: unknown): value is RuntimeEventProtocolMarker {
+  return (
+    isRecord(value) &&
+    hasExactShape(value, RUNTIME_PROTOCOL_MARKER_SHAPE) &&
+    value.toolBoundary === TOOL_BOUNDARY_PROTOCOL_V1
   );
 }
 
@@ -492,7 +589,22 @@ function isRuntimeEventRefs(value: unknown): value is RuntimeEventRefs {
   return (
     isRecord(value) &&
     hasExactShape(value, RUNTIME_REFS_SHAPE) &&
-    Object.values(value).every((item) => typeof item === 'string')
+    [
+      value.storedMessageId,
+      value.traceEventId,
+      value.toolCallId,
+      value.providerEventId,
+      value.artifactId,
+      value.operationId,
+      value.stepId,
+      value.sourceInvocationId,
+      value.sourceRunId,
+      value.sourceTurnId,
+    ].every(isOptionalString) &&
+    (value.sourceRuntimeEventHighWater === undefined ||
+      (typeof value.sourceRuntimeEventHighWater === 'number' &&
+        Number.isSafeInteger(value.sourceRuntimeEventHighWater) &&
+        value.sourceRuntimeEventHighWater >= 0))
   );
 }
 

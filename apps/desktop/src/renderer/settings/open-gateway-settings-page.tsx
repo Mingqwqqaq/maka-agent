@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, OpenGatewayRuntimeStatus, UpdateAppSettingsResult } from '@maka/core';
-import { Button, Input, NumberField, NumberFieldInput, SettingsSelect, SettingsSwitch as Switch, Textarea, useToast, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, Button, Input, NumberField, NumberFieldInput, SettingsSelect, SettingsSwitch as Switch, Textarea, useToast, useUiLocale } from '@maka/ui';
 import { getOpenGatewaySettingsCopy, type OpenGatewaySettingsCopy } from '../locales/settings-open-gateway-copy';
 import { PasswordInput } from './password-input';
 import { MetricCard } from './settings-metric-card';
@@ -163,9 +163,9 @@ export function OpenGatewaySettingsPage(props: {
         <MetricCard title={copy.summary.capability} value={copy.summary.endpointCount} detail={copy.summary.capabilityDetail} />
       </div>
       {statusLoadError && (
-        <div className="settingsNotice" role="alert">
-          {copy.status.loadFailed(statusLoadError)}
-        </div>
+        <Alert variant="info" role="alert">
+          <AlertDescription>{copy.status.loadFailed(statusLoadError)}</AlertDescription>
+        </Alert>
       )}
 
       <div className="settingsFormRow">
@@ -225,14 +225,14 @@ export function OpenGatewaySettingsPage(props: {
       </div>
 
       {gatewayDraft.enabled && !gatewayDraft.token && (
-        <div className="settingsNotice" data-tone="passive">
-          {copy.form.waitingNotice}
-        </div>
+        <Alert variant="passive">
+          <AlertDescription>{copy.form.waitingNotice}</AlertDescription>
+        </Alert>
       )}
       {status?.lastError && (
-        <div className="settingsNotice">
-          {copy.status.startStatus(gatewayErrorCopy(status.lastError, copy))}
-        </div>
+        <Alert variant="info">
+          <AlertDescription>{copy.status.startStatus(gatewayErrorCopy(status.lastError, copy))}</AlertDescription>
+        </Alert>
       )}
 
       <div className="settingsActionRow" role="group" aria-label={copy.actions.aria}>

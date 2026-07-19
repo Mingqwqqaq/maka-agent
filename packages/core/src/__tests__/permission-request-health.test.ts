@@ -55,4 +55,12 @@ describe('permission request health', () => {
     assert.equal(formatPermissionRequestWait(60 * 60_000), '1 小时');
     assert.equal(formatPermissionRequestWait(95 * 60_000), '1 小时 35 分钟');
   });
+
+  it('formats every wait-duration bucket in English when requested', () => {
+    assert.equal(formatPermissionRequestWait(0, 'en'), '< 1 minute');
+    assert.equal(formatPermissionRequestWait(60_000, 'en'), '1 minute');
+    assert.equal(formatPermissionRequestWait(5 * 60_000, 'en'), '5 minutes');
+    assert.equal(formatPermissionRequestWait(60 * 60_000, 'en'), '1 hour');
+    assert.equal(formatPermissionRequestWait(95 * 60_000, 'en'), '1 hour 35 minutes');
+  });
 });

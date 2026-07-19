@@ -10,7 +10,10 @@ export type McpCatalogEntry = {
   name: string;
   description: string;
   category: string;
-  mark: string;
+  /** Text fallback glyph for entries without a library brand mark (see
+      mcp-brand-marks.tsx). Branded entries render their real mark instead, so
+      they omit this. */
+  mark?: string;
   aliases?: string[];
   config: McpServerConfig;
   setupRequired?: boolean;
@@ -24,7 +27,6 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     name: '钉钉',
     description: '管理联系人、日历、待办与协作信息。',
     category: '沟通协作',
-    mark: '钉',
     aliases: ['DingTalk'],
     setupRequired: true,
     setupLabel: '需要 Client ID 与 Client Secret',
@@ -44,7 +46,6 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     name: '飞书',
     description: '访问飞书文档、日历、消息与 OpenAPI。',
     category: '沟通协作',
-    mark: '飞',
     aliases: ['Feishu', 'Lark'],
     setupRequired: true,
     setupLabel: '需要 App ID 与 App Secret',
@@ -100,7 +101,6 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     name: 'macOS 应用',
     description: '连接系统日历与提醒事项，并使用原生权限模型。',
     category: '系统与效率',
-    mark: '⌘',
     aliases: ['Apple', 'Calendar', 'Reminders'],
     platform: 'darwin',
     config: { enabled: true, command: 'npx', args: ['-y', 'mcp-server-apple-events@1.4.0'] },

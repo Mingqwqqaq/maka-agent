@@ -10,6 +10,10 @@ import {
 } from '@maka/core';
 import { providerAuthRequiresSecret, providerAuthSupportsApiKey } from '@maka/core/llm-connections';
 import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
   Button,
   FieldDescription,
   FieldRoot,
@@ -548,8 +552,8 @@ function ConnectionDetailInner(props: ConnectionDetailProps) {
             onRelogin={refreshAfterRelogin}
           />
         ) : (
-          <div className="providerUnavailableNotice" data-auth-kind="oauth">
-            <strong>
+          <Alert variant="info">
+            <AlertTitle>
               {hasSecret === true
                 ? copy.oauthLoggedIn
                 : hasSecret === 'loading'
@@ -557,8 +561,8 @@ function ConnectionDetailInner(props: ConnectionDetailProps) {
                   : hasSecret === 'error'
                     ? copy.oauthUnknown
                     : copy.oauthWaiting}
-            </strong>
-            <span>
+            </AlertTitle>
+            <AlertDescription>
               {hasSecret === true
                 ? copy.oauthLoggedInDetail
                 : hasSecret === 'loading'
@@ -566,8 +570,8 @@ function ConnectionDetailInner(props: ConnectionDetailProps) {
                   : hasSecret === 'error'
                     ? copy.oauthUnknownDetail
                     : copy.oauthWaitingDetail}
-            </span>
-          </div>
+            </AlertDescription>
+          </Alert>
         )
       )}
       {credentialProbePending && (
@@ -686,15 +690,17 @@ function GitHubCopilotReloginNotice(props: {
   }
 
   return (
-    <div className="providerUnavailableNotice" data-auth-kind="oauth">
-      <strong>{loggedIn ? copy.copilotLoggedIn : loading ? copy.oauthLoading : copy.copilotWaiting}</strong>
-      <span>{loggedIn ? copy.copilotLoggedInDetail : copy.copilotWaitingDetail}</span>
+    <Alert variant="info">
+      <AlertTitle>{loggedIn ? copy.copilotLoggedIn : loading ? copy.oauthLoading : copy.copilotWaiting}</AlertTitle>
+      <AlertDescription>{loggedIn ? copy.copilotLoggedInDetail : copy.copilotWaitingDetail}</AlertDescription>
       {!loading && (
-        <Button type="button" size="sm" disabled={busy} onClick={() => void connect()}>
-          {busy ? copy.importing : loggedIn ? copy.reimport : copy.importCredential}
-        </Button>
+        <AlertAction>
+          <Button type="button" size="sm" disabled={busy} onClick={() => void connect()}>
+            {busy ? copy.importing : loggedIn ? copy.reimport : copy.importCredential}
+          </Button>
+        </AlertAction>
       )}
-    </div>
+    </Alert>
   );
 }
 
@@ -734,20 +740,22 @@ function OAuthReloginNotice(props: {
         ? copy.oauthUnknownDetail
         : copy.oauthStartDetail;
   return (
-    <div className="providerUnavailableNotice" data-auth-kind="oauth">
-      <strong>{title}</strong>
-      <span>{detail}</span>
+    <Alert variant="info">
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{detail}</AlertDescription>
       {!loading && (
-        <Button
-          type="button"
-          size="sm"
-          disabled={flow.actionBusy}
-          onClick={() => void flow.startLogin()}
-        >
-          {flow.pendingAction === 'login' ? copy.loggingIn : loggedIn ? copy.relogin : copy.login}
-        </Button>
+        <AlertAction>
+          <Button
+            type="button"
+            size="sm"
+            disabled={flow.actionBusy}
+            onClick={() => void flow.startLogin()}
+          >
+            {flow.pendingAction === 'login' ? copy.loggingIn : loggedIn ? copy.relogin : copy.login}
+          </Button>
+        </AlertAction>
       )}
-    </div>
+    </Alert>
   );
 }
 

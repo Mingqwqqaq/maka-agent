@@ -96,8 +96,12 @@ export type {
   RuntimeEventContentKind,
   RuntimeEventTokenUsage,
   RuntimeEventPermissionDecision,
+  RuntimeEventProtocolMarker,
+  RuntimeEventToolDispatch,
   RuntimeEventActions,
   RuntimeEventRefs,
+  ToolBoundaryProtocol,
+  ToolRecoveryMode,
 } from './runtime-event.js';
 export {
   RUNTIME_EVENT_ROLES,
@@ -105,6 +109,7 @@ export {
   RUNTIME_EVENT_STATUSES,
   TERMINAL_RUNTIME_EVENT_STATUSES,
   RUNTIME_EVENT_CONTENT_KINDS,
+  TOOL_BOUNDARY_PROTOCOL_V1,
   isRuntimeEventRole,
   isRuntimeEventAuthor,
   isRuntimeEventStatus,
@@ -205,6 +210,7 @@ export {
   AGENT_RUN_STATUSES,
   decodeAgentRunEvent,
   decodeAgentRunHeader,
+  isSessionInlineRun,
 } from './agent-run.js';
 
 // shell-run.ts
@@ -980,6 +986,7 @@ export {
 // backend-types.ts
 export type {
   BackendSendInput,
+  RuntimeContinuationMetadata,
   PermissionDecision,
   AgentBackend,
   BackendCompactHistoryInput,
@@ -1411,6 +1418,24 @@ export {
   expertTeamLabel,
   isExpertTeamSession,
 } from './expert-team.js';
+
+// tool-catalog.ts — shared product tool vocabulary (#1099).
+export type {
+  CatalogSurfaceDef,
+  CatalogToolDef,
+  ToolEffect,
+  ToolHostId,
+  ToolHostSupport,
+} from './tool-catalog.js';
+export {
+  MAKA_CATALOG_SURFACES,
+  MAKA_CATALOG_TOOLS,
+  TOOL_HOST_IDS,
+  catalogSurfaceById,
+  catalogToolByName,
+  catalogToolNameSet,
+  unknownBoundToolNames,
+} from './tool-catalog.js';
 
 // attachments.ts
 export {

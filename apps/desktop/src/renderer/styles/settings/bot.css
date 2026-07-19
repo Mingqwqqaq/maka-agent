@@ -60,8 +60,7 @@
 }
 
 .settingsRemoteAccessChannelRow,
-.settingsRemoteAccessCatalogRow,
-.settingsRemoteAccessEmptyRow {
+.settingsRemoteAccessCatalogRow {
   min-height: 64px;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-2-5);
@@ -76,10 +75,11 @@
   color: var(--muted-foreground);
 }
 
-.settingsRemoteAccessEmptyRow {
-  min-height: 58px;
-  color: var(--foreground-secondary);
-  background: var(--foreground-3);
+/* The active-list empty slot rides the shared EmptyState card primitive;
+   trim its default page-scale padding so it sits compactly inside the
+   settings list instead of the full-height module-page treatment. */
+.settingsRemoteAccessEmpty {
+  padding: var(--space-5);
 }
 
 .settingsRemoteAccessCatalog {
@@ -309,53 +309,12 @@
    (packages/ui/src/primitives/chip.tsx, size="sm"). Generic settings labels
    stay squared (radius-control), not pill Badge. */
 
-/* Per-connection card on AccountSettingsPage. Status badge tone derives
- * from the closed-form ConnectionUiStatus enum:
- *   neutral / info / success / warning / destructive.
- */
-.settingsConnectionList {
-  /* PR-CONNECTION-LIST-A11Y-0 (round 17/30): switched from
-     `<div role="list">` to semantic `<ul>`. Reset the UA's
-     default bullet + 40px padding-left so the grid layout
-     stays the same. */
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2-5);
-}
-
-.settingsConnectionList > li {
-  margin: 0;
-  padding: 0;
-}
-
 .settingsBotActionStack {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.settingsBotInfoNotice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2-5) var(--space-3);
-  border-radius: var(--radius-surface);
-  background: oklch(from var(--info) l c h / 0.10);
-  border: var(--border-width-hairline) solid oklch(from var(--info) l c h / 0.18);
-  color: var(--info-text);
-  font-size: var(--font-size-ui);
-  line-height: var(--leading-normal);
-}
-
-.settingsBotInfoNoticeIcon {
-  font-style: normal;
-  font-weight: var(--font-weight-medium);
-  color: var(--info-text);
-  line-height: var(--leading-snug);
 }
 
 .settingsBotSetupModes,

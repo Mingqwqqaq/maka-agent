@@ -166,7 +166,7 @@ export function PermissionCenterPage() {
       />
 
       <section className="settingsPermissionSummary" aria-label={copy.summaryAria}>
-        <PermissionSummaryTile label={copy.granted} value={counts.granted} tone="success" />
+        <PermissionSummaryTile label={copy.granted} value={counts.granted} tone="neutral" />
         <PermissionSummaryTile label={copy.pending} value={counts.pending} tone="warning" />
         <PermissionSummaryTile label={copy.denied} value={counts.denied} tone="destructive" />
         <PermissionSummaryTile label={copy.other} value={counts.other} tone="neutral" />

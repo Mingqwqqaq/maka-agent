@@ -343,6 +343,7 @@ function mapBackendSessionEvent(
         },
         refs: {
           toolCallId: event.toolUseId,
+          ...(event.operationId !== undefined ? { operationId: event.operationId } : {}),
           ...(event.stepId !== undefined ? { stepId: event.stepId } : {}),
         },
       };
@@ -391,7 +392,10 @@ function mapBackendSessionEvent(
           result: event.content,
           ...(event.isError ? { isError: true } : {}),
         },
-        refs: { toolCallId: event.toolUseId },
+        refs: {
+          toolCallId: event.toolUseId,
+          ...(event.operationId !== undefined ? { operationId: event.operationId } : {}),
+        },
       };
       if (event.durationMs !== undefined) {
         ev.actions = { stateDelta: { durationMs: event.durationMs } };
@@ -696,6 +700,7 @@ export class AiSdkFlow implements AgentFlow, AgentFlowControl {
     let errorEmitted = false;
     try {
       for await (const sessionEvent of this.backend.send({
+        invocationId: ctx.invocationId,
         runId: ctx.runId,
         turnId: ctx.turnId,
         // The persisted head anchor: mid-turn capacity compaction keeps this
@@ -707,6 +712,7 @@ export class AiSdkFlow implements AgentFlow, AgentFlowControl {
         ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
         context: input.context,
         ...(input.runtimeContext !== undefined ? { runtimeContext: input.runtimeContext } : {}),
+        ...(input.continuation !== undefined ? { continuation: input.continuation } : {}),
         ...(input.pullSteering !== undefined ? { pullSteering: input.pullSteering } : {}),
         ...(input.ackSteering !== undefined ? { ackSteering: input.ackSteering } : {}),
         ...(input.nackSteering !== undefined ? { nackSteering: input.nackSteering } : {}),

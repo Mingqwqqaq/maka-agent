@@ -385,14 +385,13 @@ describe('radius token governance (#406 gap 4)', () => {
       '.settingsCapabilityRow': '--radius-surface',
       '.settingsOsPermissionList': '--radius-surface',
       '.settingsHealthIntro': '--radius-surface',
-      '.settingsHealthError': '--radius-surface',
       '.settingsBotRuntime': '--radius-surface',
-      '.settingsNotice': '--radius-surface',
+      // .settingsNotice retired: last consumer (account page) removed in the
+      // UI-quality campaign; notices now ride the Alert primitive.
       '.settingsAboutLogo': '--radius-surface',
       '.settingsAboutPrivacy': '--radius-surface',
       '.settingsWechatQrFrame': '--radius-surface',
       '.settingsWechatQrState': '--radius-surface',
-      '.providerUnavailableNotice': '--radius-surface',
       '.enabledEmptyChip': '--radius-control',
       '.maka-firstrun-list': '--radius-surface',
       '.maka-first-run-checklist': '--radius-surface',

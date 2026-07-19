@@ -5,7 +5,7 @@ import type {
   HealthSnapshot,
 } from '@maka/core';
 import { HEALTH_SIGNAL_LAYERS } from '@maka/core';
-import { Button, Badge, RelativeTime, PageHeader, StatTile, useUiLocale } from '@maka/ui';
+import { Alert, AlertAction, AlertDescription, AlertTitle, Button, Badge, RelativeTime, PageHeader, StatTile, useUiLocale } from '@maka/ui';
 import { getHealthCenterCopy, type HealthCenterCopy } from '../locales/settings-health-copy';
 import { settingsActionErrorMessage } from './settings-error-copy';
 import { statusBadgeVariant } from './settings-status-badge';
@@ -64,13 +64,15 @@ export function HealthCenterPage() {
   if (error || !snapshot) {
     return (
       <div className="settingsHealthPage">
-        <div className="settingsHealthError" role="alert">
-          <strong>{copy.readFailed}</strong>
-          <small>{error ?? copy.noData}</small>
-          <Button type="button" onClick={() => setRefreshTick((tick) => tick + 1)}>
-            {copy.readAgain}
-          </Button>
-        </div>
+        <Alert variant="error">
+          <AlertTitle>{copy.readFailed}</AlertTitle>
+          <AlertDescription>{error ?? copy.noData}</AlertDescription>
+          <AlertAction>
+            <Button type="button" onClick={() => setRefreshTick((tick) => tick + 1)}>
+              {copy.readAgain}
+            </Button>
+          </AlertAction>
+        </Alert>
       </div>
     );
   }
@@ -93,7 +95,7 @@ export function HealthCenterPage() {
         }
         meta={
           <div className="settingsHealthMeta">
-            <Badge variant="info">{copy.badge}</Badge>
+            <Badge variant="secondary">{copy.badge}</Badge>
             <small>
               {copy.lastRead}<RelativeTime ts={healthCheckedAtMs} className="settingsHelpInlineTime" />
             </small>

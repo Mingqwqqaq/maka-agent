@@ -13,7 +13,9 @@ export {
 } from './session-manager.js';
 export type {
   CompactSessionInput,
+  PlanSafeBoundaryContinuationInput,
   SessionManagerDeps,
+  RuntimeContinuationLifecycleEvent,
   SessionStore,
   StrictRecoveryAgentRunStore,
   StrictRecoverySessionStore,
@@ -453,7 +455,6 @@ export {
   buildParentAgentTools,
   buildSubagentProjectionTools,
   buildSubagentSpawnTool,
-  buildSubagentToolGroup,
 } from './subagent-tools.js';
 export {
   BUILTIN_EXPERT_TEAMS,
@@ -961,10 +962,67 @@ export type {
   RuntimeEventModelReplayItem,
 } from './model-history.js';
 
+// runtime-resume.ts - Phase 0 replay projection + Phase 1 safe continuation gates.
+export {
+  INDETERMINATE_TOOL_RESULT_DIRECTIVE,
+  RUNTIME_RESUME_FAILPOINTS,
+  RuntimeContinuationRevalidationError,
+  RuntimeContinuationPlanner,
+  buildSafeBoundaryContinuationPlan,
+  buildResumePlanFromRuntimeEvents,
+  buildResumeReplayRuntimeEvents,
+  projectToolOperationsFromRuntimeEvents,
+} from './runtime-resume.js';
+export type {
+  BuildResumePlanOptions,
+  ContinuationIdentity,
+  ResumePlan,
+  ResumePlanDiagnostic,
+  ResumePlanDiagnosticCode,
+  ResumePlanDisposition,
+  ResumeRejectionReason,
+  RuntimeResumeCommittedPrefix,
+  RuntimeResumeFailpointId,
+  RuntimeResumeFailpointSpec,
+  RuntimeContinuation,
+  RuntimeContinuationRevalidationCode,
+  RuntimeContinuationPlannerDeps,
+  RuntimeContinuationPlannerInput,
+  RuntimeContinuationSafetyObservation,
+  RuntimeContinuationSafetySnapshot,
+  SafeBoundaryContinuationFacts,
+  SafeBoundaryContinuationPlan,
+  ToolOperation,
+  ToolOperationStatus,
+} from './runtime-resume.js';
+
+export { resolveRuntimeRecovery } from './recovery-resolver.js';
+export type {
+  RuntimeRecoveryResolution,
+  ToolRecoveryDecision,
+  ToolRecoveryDecisionReason,
+  ToolRecoveryDecisionStatus,
+} from './recovery-resolver.js';
+
+export { createLocalContinuationSafetyInspector } from './continuation-safety.js';
+export type { LocalContinuationSafetyInspectorDeps } from './continuation-safety.js';
 // history-compact-summarizer.ts — replay-plan → ModelMessage[] projection
 // (issue #1055's session-recap generator reuses this authoritative slice
 // instead of re-deriving a lossy projection of its own).
 export { replayPlanItemsToModelMessages } from './history-compact-summarizer.js';
+
+export {
+  buildToolOperationId,
+  canonicalToolArgsHash,
+} from './runtime-commit-sink.js';
+export type {
+  RuntimeCommitResult,
+  RuntimeCommitSink,
+  ToolOperationIdInput,
+  ToolOutcomeCommit,
+  ToolPreparedCommit,
+  ToolRecoveryMode,
+} from './runtime-commit-sink.js';
 
 // agent-flow.ts — formal Flow seam.
 export type {
@@ -998,6 +1056,13 @@ export type {
   StepLike,
   RuntimeEventLike,
 } from './tool-availability.js';
+
+// tool-catalog-derive.ts — HostCapabilities + deferred groups from catalog ∩ binding (#1099).
+export {
+  assertProductBindingCatalogClean,
+  buildDeferredToolGroupsFromCatalog,
+  buildHostCapabilitiesFromBinding,
+} from './tool-catalog-derive.js';
 
 // ───────────────────────────────────────────────────────────────────────────
 // System-prompt fragments (shared by the desktop app and the CLI/TUI).
@@ -1133,6 +1198,7 @@ export {
   buildSkillsPromptFragment,
   loadSkillInstructions,
   buildSkillAgentTool,
+  SKILL_TOOL_NAME,
   gateSkillsByHostCapabilities,
   parseSkillFrontMatter,
   validateSkillMetadata,

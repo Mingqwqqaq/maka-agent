@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ConfigCategory } from '@maka/storage';
 import {
+  Alert,
+  AlertDescription,
   Button,
   SettingsSelect,
   SettingsSwitch as Switch,
@@ -229,13 +231,13 @@ export function DataSettingsPage() {
           {isDataActionPending('input-history:clear') ? copy.clearing : copy.clearHistory}
         </Button>
       </div>
-      <div className="settingsNotice">
-        {copy.backupNotice}
-      </div>
+      <Alert variant="info">
+        <AlertDescription>{copy.backupNotice}</AlertDescription>
+      </Alert>
       {infoError && (
-        <div className="settingsNotice" role="alert">
-          {copy.pathLoadFailed(infoError)}
-        </div>
+        <Alert variant="info" role="alert">
+          <AlertDescription>{copy.pathLoadFailed(infoError)}</AlertDescription>
+        </Alert>
       )}
 
       <section className="settingsAboutPrivacy" aria-label={copy.configAria}>

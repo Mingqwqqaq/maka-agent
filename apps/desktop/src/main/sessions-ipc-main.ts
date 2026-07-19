@@ -346,6 +346,26 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       goalBoundary: 'none',
     });
   });
+  ipcMain.handle('sessions:resumeLatest', async (_event, sessionId: string) => {
+    const plan = await runtime.planLatestAuthoritativeSafeBoundaryContinuation(sessionId);
+    if (!plan.continuation) {
+      return {
+        disposition: 'park' as const,
+        rejectionReasons: plan.rejectionReasons,
+        diagnostics: plan.diagnostics,
+      };
+    }
+    const iterator = runtime.resumeSafeBoundaryContinuation(plan.continuation);
+    void streamEvents(sessionId, iterator, {
+      turnId: plan.continuation.turnId,
+      goalBoundary: 'none',
+    });
+    return {
+      disposition: 'started' as const,
+      runId: plan.continuation.runId,
+      turnId: plan.continuation.turnId,
+    };
+  });
   ipcMain.handle('sessions:regenerateTurn', async (_event, sessionId: string, input: unknown) => {
     await ensureSessionCanSend(sessionId);
     const normalized = normalizeRegenerateTurnInput(input);

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { PROVIDER_DEFAULTS, validateSlug, type ProviderType } from '@maka/core';
 import { providerAuthRequiresSecret, providerAuthSupportsApiKey } from '@maka/core/llm-connections';
-import { Button, Chip, Input, useMountedRef, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, AlertTitle, Button, Chip, Input, useMountedRef, useUiLocale } from '@maka/ui';
 import { buildCatalogRecommendedDefaultModel } from '../model-catalog-choices';
 import { PasswordInput } from './password-input';
 import { providerDisplay } from './provider-display';
@@ -130,12 +130,12 @@ export function AddProviderForm(props: {
         <Chip variant="neutral" size="sm">{categoryLabel(defaults.category, locale)}</Chip>
       </div>
       {isExperimental && (
-        <div className="providerUnavailableNotice">
-          <strong>{isWiredOAuth ? copy.wiredTitle : copy.unwiredTitle}</strong>
-          <span>{isWiredOAuth
+        <Alert variant="info">
+          <AlertTitle>{isWiredOAuth ? copy.wiredTitle : copy.unwiredTitle}</AlertTitle>
+          <AlertDescription>{isWiredOAuth
             ? copy.wiredDetail
-            : copy.unwiredDetail}</span>
-        </div>
+            : copy.unwiredDetail}</AlertDescription>
+        </Alert>
       )}
       {supportsApiKey && (
         <label>

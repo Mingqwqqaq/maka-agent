@@ -1,5 +1,5 @@
 import type { AppSettings, UpdateAppSettingsResult } from '@maka/core';
-import { Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, Textarea, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, Textarea, useUiLocale } from '@maka/ui';
 import { getMemorySettingsCopy } from '../locales/settings-memory-copy';
 import { SettingsRows } from './settings-rows';
 import { MemoryEntryList } from './memory-entry-list';
@@ -379,9 +379,9 @@ export function MemorySettingsPage(props: {
       </label>
 
       {effective.reason && (
-        <div className="settingsNotice" data-tone="passive" role="status">
-          {effective.reason}
-        </div>
+        <Alert variant="passive" role="status">
+          <AlertDescription>{effective.reason}</AlertDescription>
+        </Alert>
       )}
 
       <div className="settingsActionRow" role="group" aria-label={copy.text.fileActionsAria}>

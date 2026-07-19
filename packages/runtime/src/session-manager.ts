@@ -50,6 +50,7 @@ import {
   DEEP_RESEARCH_SESSION_LABEL,
   failureClassFromCompleteStopReason,
   isDeepResearchSession,
+  isSessionInlineRun,
 } from '@maka/core';
 import type {
   AgentRunEvent,
@@ -58,6 +59,7 @@ import type {
   ArtifactRecord,
   RuntimeEvent,
   RuntimeEventStore,
+  ToolBoundaryProtocol,
 } from '@maka/core';
 import { type RuntimeEventTerminalFact } from './runtime-event-read-model.js';
 import {
@@ -82,7 +84,7 @@ import type { ShellRunProcessManager } from './shell-run-manager.js';
 import type { ActiveFullCompactBlock } from './active-full-compact.js';
 import type { SemanticCompactBlock } from './semantic-compact.js';
 import type { HistoryCompactCheckpoint } from './history-compact-checkpoint.js';
-import type { AgentRunLineage } from './agent-run.js';
+import type { AgentRunLineage, RuntimeContinuationFailpoint } from './agent-run.js';
 import { classifyAgentRunRecovery, type AgentRunRecoveryDecision } from './agent-run-recovery.js';
 import type { InvocationResult, InvocationSource } from './invocation-context.js';
 import { RuntimeKernel, type RuntimeKernelLike, type TurnStartOptions } from './runtime-kernel.js';
@@ -95,6 +97,13 @@ import {
 } from './session-projection-helpers.js';
 import { listBuiltinAgentDefinitions, type AgentDefinitionListItem } from './agent-catalog.js';
 import { requireResolvedAgentDefinition } from './expert-catalog.js';
+import {
+  RuntimeContinuationPlanner,
+  type RuntimeContinuation,
+  type RuntimeContinuationPlannerInput,
+  type RuntimeContinuationSafetyObservation,
+  type SafeBoundaryContinuationPlan,
+} from './runtime-resume.js';
 
 export interface StopSessionInput {
   source?: 'stop_button' | 'benchmark_deadline';
@@ -103,6 +112,13 @@ export interface StopSessionInput {
 
 export interface CompactSessionInput {
   turnId?: string;
+}
+
+export type PlanSafeBoundaryContinuationInput = Omit<RuntimeContinuationPlannerInput, 'sessionId'>;
+
+export interface PlanAuthoritativeSafeBoundaryContinuationInput {
+  sourceRunId: string;
+  expectedRuntimeEventHighWater?: number;
 }
 
 export interface SpawnChildAgentInput {
@@ -283,6 +299,8 @@ export interface SessionManagerDeps {
   store: SessionStore;
   runStore?: AgentRunStore;
   runtimeEventStore?: RuntimeEventStore;
+  /** Host capability; RuntimeKernel gates it by the selected backend. */
+  toolBoundaryProtocol?: ToolBoundaryProtocol;
   backends: BackendRegistry;
   newId: () => string;
   now: () => number;
@@ -293,6 +311,10 @@ export interface SessionManagerDeps {
   runtimeKernel?: RuntimeKernelLike;
   shellRuns?: ShellRunProcessManager;
   cleanupHistoryCompactArtifacts?: (input: HistoryCompactCleanupRequest) => Promise<void>;
+  inspectContinuationSafety?: (sessionId: string) => Promise<RuntimeContinuationSafetyObservation>;
+  continuationFailpoint?: (point: RuntimeContinuationFailpoint) => Promise<void>;
+  safeBoundaryResumeEnabled?: boolean;
+  onContinuationLifecycleEvent?: (event: RuntimeContinuationLifecycleEvent) => void | Promise<void>;
   generateSessionTitle?: (input: {
     sessionId: string;
     header: SessionHeader;
@@ -300,6 +322,33 @@ export interface SessionManagerDeps {
   }) => Promise<string | undefined>;
   onSessionTitleChanged?: (sessionId: string) => void;
 }
+
+export type RuntimeContinuationLifecycleEvent =
+  | {
+      type: 'plan_approved';
+      sessionId: string;
+      sourceRunId: string;
+      targetRunId: string;
+    }
+  | {
+      type: 'plan_parked';
+      sessionId: string;
+      sourceRunId: string;
+      rejectionReasons: readonly string[];
+    }
+  | {
+      type: 'execution_started' | 'execution_completed';
+      sessionId: string;
+      sourceRunId: string;
+      targetRunId: string;
+    }
+  | {
+      type: 'execution_failed';
+      sessionId: string;
+      sourceRunId: string;
+      targetRunId: string;
+      errorClass: string;
+    };
 
 export class SessionManager {
   private readonly runtimeKernel: RuntimeKernelLike;
@@ -685,6 +734,219 @@ export class SessionManager {
     } catch {}
   }
 
+  async planSafeBoundaryContinuation(
+    sessionId: string,
+    input: PlanSafeBoundaryContinuationInput,
+  ): Promise<SafeBoundaryContinuationPlan> {
+    const planner = new RuntimeContinuationPlanner({
+      readSourceRun: async (targetSessionId, runId) => {
+        if (!this.deps.runStore) throw new Error('AgentRunStore is not configured');
+        return this.deps.runStore.readRun(targetSessionId, runId);
+      },
+      readRuntimeEvents: async (targetSessionId, runId) => {
+        if (!this.deps.runtimeEventStore) throw new Error('RuntimeEventStore is not configured');
+        return this.deps.runtimeEventStore.readRuntimeEvents(targetSessionId, runId);
+      },
+      findExistingContinuation: async (
+        targetSessionId,
+        sourceRunId,
+        sourceRuntimeEventHighWater,
+      ) => {
+        if (!this.deps.runStore) throw new Error('AgentRunStore is not configured');
+        return (await this.deps.runStore.listSessionRuns(targetSessionId)).find(
+          (run) =>
+            run.continuationSource?.sourceRunId === sourceRunId &&
+            run.continuationSource.sourceRuntimeEventHighWater === sourceRuntimeEventHighWater,
+        );
+      },
+      newId: this.deps.newId,
+    });
+    const plan = await planner.plan({ sessionId, ...input });
+    this.recordContinuationPlan(sessionId, input.sourceRunId, plan);
+    return plan;
+  }
+
+  async planAuthoritativeSafeBoundaryContinuation(
+    sessionId: string,
+    input: PlanAuthoritativeSafeBoundaryContinuationInput,
+  ): Promise<SafeBoundaryContinuationPlan> {
+    if (this.deps.safeBoundaryResumeEnabled !== true) {
+      const plan = resumeFeatureDisabledPlan();
+      this.recordContinuationPlan(sessionId, input.sourceRunId, plan);
+      return plan;
+    }
+    if (!this.deps.runStore || !this.deps.inspectContinuationSafety) {
+      const plan: SafeBoundaryContinuationPlan = {
+        disposition: 'park',
+        rejectionReasons: ['safety_observation_unavailable'],
+        diagnostics: [
+          {
+            code: 'safety_observation_unavailable',
+            message: 'authoritative continuation safety inspection is not configured',
+          },
+        ],
+      };
+      this.recordContinuationPlan(sessionId, input.sourceRunId, plan);
+      return plan;
+    }
+    const sourceRun = await this.deps.runStore
+      .readRun(sessionId, input.sourceRunId)
+      .catch(() => undefined);
+    if (!sourceRun) {
+      const plan: SafeBoundaryContinuationPlan = {
+        disposition: 'park',
+        rejectionReasons: ['source_run_unreadable'],
+        diagnostics: [
+          { code: 'source_run_unreadable', message: 'source AgentRun could not be read' },
+        ],
+      };
+      this.recordContinuationPlan(sessionId, input.sourceRunId, plan);
+      return plan;
+    }
+    if (!sourceRun.workspaceIdentity) {
+      const plan: SafeBoundaryContinuationPlan = {
+        disposition: 'park',
+        rejectionReasons: ['workspace_identity_missing'],
+        diagnostics: [
+          {
+            code: 'workspace_identity_missing',
+            message: 'source AgentRun has no authoritative workspace identity',
+          },
+        ],
+      };
+      this.recordContinuationPlan(sessionId, input.sourceRunId, plan);
+      return plan;
+    }
+    const [header, observation] = await Promise.all([
+      this.deps.store.readHeader(sessionId),
+      this.deps.inspectContinuationSafety(sessionId),
+    ]);
+    return this.planSafeBoundaryContinuation(sessionId, {
+      sourceRunId: input.sourceRunId,
+      currentCwd: header.cwd,
+      sourceWorkspaceIdentity: sourceRun.workspaceIdentity,
+      currentWorkspaceIdentity: observation.workspaceIdentity,
+      backgroundOperationsSettled: observation.backgroundOperationsSettled,
+      availableToolNames: observation.availableToolNames,
+      ...(input.expectedRuntimeEventHighWater !== undefined
+        ? { expectedRuntimeEventHighWater: input.expectedRuntimeEventHighWater }
+        : {}),
+      ...(observation.workspaceCheckpoint
+        ? { workspaceCheckpoint: observation.workspaceCheckpoint }
+        : {}),
+    });
+  }
+
+  async planLatestAuthoritativeSafeBoundaryContinuation(
+    sessionId: string,
+  ): Promise<SafeBoundaryContinuationPlan> {
+    if (this.deps.safeBoundaryResumeEnabled !== true) {
+      const plan = resumeFeatureDisabledPlan();
+      this.recordContinuationPlan(sessionId, '', plan);
+      return plan;
+    }
+    if (!this.deps.runStore) {
+      const plan: SafeBoundaryContinuationPlan = {
+        disposition: 'park',
+        rejectionReasons: ['resume_candidate_missing'],
+        diagnostics: [
+          {
+            code: 'resume_candidate_missing',
+            message: 'no AgentRun store is configured for resume discovery',
+          },
+        ],
+      };
+      this.recordContinuationPlan(sessionId, '', plan);
+      return plan;
+    }
+    const candidate = (await this.deps.runStore.listSessionRuns(sessionId))
+      .filter(
+        (run) => (run.status === 'failed' || run.status === 'cancelled') && isSessionInlineRun(run),
+      )
+      .sort(
+        (left, right) => right.createdAt - left.createdAt || right.runId.localeCompare(left.runId),
+      )[0];
+    if (!candidate) {
+      const plan: SafeBoundaryContinuationPlan = {
+        disposition: 'park',
+        rejectionReasons: ['resume_candidate_missing'],
+        diagnostics: [
+          {
+            code: 'resume_candidate_missing',
+            message: 'no failed or cancelled top-level continuation candidate exists',
+          },
+        ],
+      };
+      this.recordContinuationPlan(sessionId, '', plan);
+      return plan;
+    }
+    return this.planAuthoritativeSafeBoundaryContinuation(sessionId, {
+      sourceRunId: candidate.runId,
+    });
+  }
+
+  async *resumeSafeBoundaryContinuation(
+    continuation: RuntimeContinuation,
+  ): AsyncIterable<SessionEvent> {
+    const resume = this.runtimeKernel.resumeContinuation;
+    if (!resume) throw new Error('RuntimeKernel does not support safe-boundary continuation');
+    this.recordContinuationLifecycleEvent({
+      type: 'execution_started',
+      sessionId: continuation.sessionId,
+      sourceRunId: continuation.sourceRunId,
+      targetRunId: continuation.runId,
+    });
+    try {
+      yield* resume.call(this.runtimeKernel, continuation);
+      this.recordContinuationLifecycleEvent({
+        type: 'execution_completed',
+        sessionId: continuation.sessionId,
+        sourceRunId: continuation.sourceRunId,
+        targetRunId: continuation.runId,
+      });
+    } catch (error) {
+      this.recordContinuationLifecycleEvent({
+        type: 'execution_failed',
+        sessionId: continuation.sessionId,
+        sourceRunId: continuation.sourceRunId,
+        targetRunId: continuation.runId,
+        errorClass: continuationExecutionErrorClass(error),
+      });
+      throw error;
+    }
+  }
+
+  private recordContinuationPlan(
+    sessionId: string,
+    sourceRunId: string,
+    plan: SafeBoundaryContinuationPlan,
+  ): void {
+    if (plan.disposition === 'continue' && plan.continuation) {
+      this.recordContinuationLifecycleEvent({
+        type: 'plan_approved',
+        sessionId,
+        sourceRunId,
+        targetRunId: plan.continuation.runId,
+      });
+      return;
+    }
+    this.recordContinuationLifecycleEvent({
+      type: 'plan_parked',
+      sessionId,
+      sourceRunId,
+      rejectionReasons: plan.rejectionReasons,
+    });
+  }
+
+  private recordContinuationLifecycleEvent(event: RuntimeContinuationLifecycleEvent): void {
+    try {
+      const result = this.deps.onContinuationLifecycleEvent?.(event);
+      if (result) void Promise.resolve(result).catch(() => {});
+    } catch {
+      // Operational telemetry must never alter resume correctness.
+    }
+  }
+
   async *compactSession(
     sessionId: string,
     input: CompactSessionInput = {},
@@ -771,7 +1033,10 @@ export class SessionManager {
     const runs = await this.deps.runStore.listSessionRuns(sessionId);
     const childRuns = await Promise.all(
       runs
-        .filter((run): run is AgentRunHeader & { parentRunId: string } => !!run.parentRunId)
+        .filter(
+          (run): run is AgentRunHeader & { parentRunId: string } =>
+            !!run.parentRunId && !isSessionInlineRun(run),
+        )
         .map(
           async (run): Promise<AgentRunHeader & { parentRunId: string }> => ({
             ...(await this.effectiveRunHeaderFromRuntimeLedger(run)),
@@ -1327,6 +1592,7 @@ export class SessionManager {
       () =>
         this.appendTerminalTurnStateIfNeeded(
           sessionId,
+          inspected.header,
           decision,
           terminalTurnStatus(status),
           {
@@ -1343,12 +1609,13 @@ export class SessionManager {
 
   private async appendTerminalTurnStateIfNeeded(
     sessionId: string,
+    run: AgentRunHeader,
     decision: AgentRunRecoveryDecision,
     status: TurnRecord['status'],
     options: { ts: number; errorClass?: string; abortSource?: string },
     policy: RecoveryPolicy = { kind: 'best_effort' },
   ): Promise<void> {
-    if (decision.lineage.parentRunId) return;
+    if (!isSessionInlineRun(run)) return;
     const messages = await recoverOr(
       policy,
       () => this.deps.store.readMessages(sessionId),
@@ -1358,6 +1625,30 @@ export class SessionManager {
     if (latest && isTerminalTurnStatus(latest.status) && latest.status === status) return;
     await this.appendTurnState(sessionId, decision.turnId, status, decision.lineage, options);
   }
+}
+
+function resumeFeatureDisabledPlan(): SafeBoundaryContinuationPlan {
+  return {
+    disposition: 'park',
+    rejectionReasons: ['resume_feature_disabled'],
+    diagnostics: [
+      {
+        code: 'resume_feature_disabled',
+        message: 'safe-boundary resume is disabled by the host feature flag',
+      },
+    ],
+  };
+}
+
+function continuationExecutionErrorClass(error: unknown): string {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    typeof (error as Error & { code?: unknown }).code === 'string'
+  ) {
+    return (error as Error & { code: string }).code;
+  }
+  return error instanceof Error ? error.name : 'unknown';
 }
 
 type RecoveryPolicy = { kind: 'best_effort' } | { kind: 'strict'; stores: StrictRecoveryStores };

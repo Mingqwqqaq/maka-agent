@@ -80,6 +80,12 @@ export interface ConversationCopy {
     switchDisabledStreaming: string;
     switchDisabledRunning: string;
     switchDisabledPermission: string;
+    /** Inline hint shown above the composer when no model connection exists yet. */
+    noModelHint: string;
+    /** Link-button on that hint that opens Settings · 模型. */
+    noModelAction: string;
+    /** Explanatory title on the disabled Send button in the no-model state. */
+    noModelSendTitle: string;
   };
   model: {
     thinkingLevel: string;
@@ -180,6 +186,8 @@ export interface ConversationCopy {
     assistant: string;
     processing: string;
     continuing: string;
+    safeResumePending: string;
+    safeResume: string;
     thinking: string;
     truncated: string;
     copied: string;
@@ -229,6 +237,7 @@ export interface ConversationCopy {
     emptyBody: string;
     showMore: string;
     showMoreAriaLabel: (count: number) => string;
+    groupCount: (count: number) => string;
     renameAriaLabel: string;
     respondingAriaLabel: string;
     respondingTitle: string;
@@ -278,12 +287,13 @@ const CONVERSATION_COPY = {
       startersAriaLabel: '深度研究起手式', starters: DEEP_RESEARCH_STARTER_PROMPTS,
     },
     composer: {
-      placeholder: '描述任务…', textareaAriaLabel: '消息输入框', awaitingPermission: '等待你确认权限…',
+      placeholder: '描述任务，@ 引用文件，/ 选择技能…', textareaAriaLabel: '消息输入框', awaitingPermission: '等待你确认权限…',
       sending: '正在发送…', importing: '正在导入…', sendLabel: '发送', stopLabel: '停止', stopping: '停止中…',
       streaming: 'Maka 正在回答…', processing: 'Maka 正在处理…', continuing: 'Maka 继续中…',
       interruptHint: '或点停止中断', addContext: '添加上下文', importText: '导入文本文件', attachFile: '附加文件', expertTeam: '专家团',
       selectModel: '选择模型', dropToImport: '松开以导入文件内容', addingAttachment: '正在添加附件', add: '添加', addTitle: '添加文件、专家团…', addFileOrDirectory: '添加文件或目录',
       switchDisabledStreaming: '当前对话正在流式输出，等结束后再切换模型。', switchDisabledRunning: '当前对话正在运行，等结束后再切换模型。', switchDisabledPermission: '当前有工具调用正在等待确认，处理后再切换模型。',
+      noModelHint: '还没有可用的模型连接，无法发送。', noModelAction: '前往模型设置', noModelSendTitle: '先添加一个模型连接才能发送。',
     },
     model: {
       thinkingLevel: '思考级别', thinkingUnsupported: '当前模型不支持思考级别切换', changeThinkingLevel: '切换当前模型的思考级别', defaultLevel: '默认',
@@ -323,7 +333,7 @@ const CONVERSATION_COPY = {
       branchTitle: (branch) => branch ? `分支：${branch}` : '选择分支', branchAriaLabel: (branch) => branch ? `切换分支：${branch}` : '选择分支',
     },
     messages: {
-      you: '你', assistant: 'Maka', processing: '正在处理…', continuing: '继续中…', thinking: '深度思考', truncated: '已截断', copied: '已复制', copying: '复制中', copyFailed: '复制失败', copy: '复制', copyMessage: '复制消息', copyThinking: '复制思考过程',
+      you: '你', assistant: 'Maka', processing: '正在处理…', continuing: '继续中…', safeResumePending: '正在验证…', safeResume: '安全恢复', thinking: '深度思考', truncated: '已截断', copied: '已复制', copying: '复制中', copyFailed: '复制失败', copy: '复制', copyMessage: '复制消息', copyThinking: '复制思考过程',
       imageAriaLabel: (name) => `查看图片 ${name}`, userAriaLabel: '你发送的消息', assistantAriaLabel: 'Maka 的回答', answerActionsAriaLabel: '本轮回答操作', sourceAriaLabel: '本轮回答的来源', derivativesAriaLabel: '本轮回答的衍生', automationTriggered: '定时任务触发', automationTitle: (id) => `由定时任务触发 · ${id}`,
       thinkingTruncatedTitle: '部分 reasoning 已截断；显示的是最近的内容', outputTruncatedTitle: '助手输出已超过单次回合上限，超出部分未渲染。如需完整内容请重新生成或查看持久化的会话日志。', removeAttachmentAriaLabel: (name) => `移除 ${name}`, aborted: '(已中断)', abortedByStop: '(已中断 · 由停止按钮触发)',
     },
@@ -336,7 +346,7 @@ const CONVERSATION_COPY = {
     sessions: {
       status: { active: '可继续', running: '进行中', waiting_for_user: '等你确认', blocked: '需要处理', review: '待审核', done: '已完成', archived: '已归档', aborted: '已中止' },
       blockedReason: { NO_REAL_CONNECTION: '等待配置可用模型连接', auth: '需要重新登录', permission_required: '等待权限确认', tool_failed: '工具调用失败', unknown: '运行中断，可重试' },
-      listAriaLabel: '对话列表', title: '会话', emptyTitle: '等待开始对话', emptyBody: '和 Maka 的对话会出现在这里。', showMore: '显示更多', showMoreAriaLabel: (count) => `显示 ${count} 条更多对话`, renameAriaLabel: '重命名对话', respondingAriaLabel: '正在响应', respondingTitle: '对话正在流式响应中', staleTitle: '此会话使用的模型连接已不可用，发送时会切换到默认连接', staleAriaLabel: '会话已过期', stale: '已过期', unreadAriaLabel: '未读消息', actionsAriaLabel: '对话操作', pin: '置顶', unpin: '取消置顶', rename: '重命名', archive: '归档', unarchive: '取消归档', delete: '删除', pinned: '已置顶', today: '今天', yesterday: '昨天', past7Days: '过去 7 天', past30Days: '过去 30 天', earlier: '更早', pending: '待发送', groupByStatus: '按状态', groupByProject: '按项目', groupingAriaLabel: '会话分组方式', promptRailAriaLabel: '按提问跳转', emptyPrompt: '（空提问）', jumpToPrompt: (preview) => `跳到提问：${preview}`,
+      listAriaLabel: '对话列表', title: '会话', emptyTitle: '等待开始对话', emptyBody: '和 Maka 的对话会出现在这里。', showMore: '显示更多', showMoreAriaLabel: (count) => `显示 ${count} 条更多对话`, groupCount: (count) => `（${count}）`, renameAriaLabel: '重命名对话', respondingAriaLabel: '正在响应', respondingTitle: '对话正在流式响应中', staleTitle: '此会话使用的模型连接已不可用，发送时会切换到默认连接', staleAriaLabel: '会话已过期', stale: '已过期', unreadAriaLabel: '未读消息', actionsAriaLabel: '对话操作', pin: '置顶', unpin: '取消置顶', rename: '重命名', archive: '归档', unarchive: '取消归档', delete: '删除', pinned: '已置顶', today: '今天', yesterday: '昨天', past7Days: '过去 7 天', past30Days: '过去 30 天', earlier: '更早', pending: '待发送', groupByStatus: '按状态', groupByProject: '按项目', groupingAriaLabel: '会话分组方式', promptRailAriaLabel: '按提问跳转', emptyPrompt: '（空提问）', jumpToPrompt: (preview) => `跳到提问：${preview}`,
     },
   },
   en: {
@@ -386,12 +396,13 @@ const CONVERSATION_COPY = {
       ],
     },
     composer: {
-      placeholder: 'Describe a task, / for commands, @ for context…', textareaAriaLabel: 'Message input', awaitingPermission: 'Waiting for your permission decision…',
+      placeholder: 'Describe a task, @ to reference files, / for skills…', textareaAriaLabel: 'Message input', awaitingPermission: 'Waiting for your permission decision…',
       sending: 'Sending…', importing: 'Importing…', sendLabel: 'Send', stopLabel: 'Stop', stopping: 'Stopping…',
       streaming: 'Maka is responding…', processing: 'Maka is working…', continuing: 'Maka is continuing…',
       interruptHint: 'or click Stop to interrupt', addContext: 'Add context', importText: 'Import text file', attachFile: 'Attach file', expertTeam: 'Expert team',
       selectModel: 'Choose model', dropToImport: 'Drop to import file contents', addingAttachment: 'Adding attachment', add: 'Add', addTitle: 'Add files or an expert team…', addFileOrDirectory: 'Add file or directory',
       switchDisabledStreaming: 'Wait for the current response to finish before switching models.', switchDisabledRunning: 'Wait for the current run to finish before switching models.', switchDisabledPermission: 'Resolve the pending tool permission before switching models.',
+      noModelHint: 'No model connection yet, so sending is unavailable.', noModelAction: 'Go to model settings', noModelSendTitle: 'Add a model connection before sending.',
     },
     model: {
       thinkingLevel: 'Thinking level', thinkingUnsupported: 'This model does not support thinking-level changes', changeThinkingLevel: 'Change the current model thinking level', defaultLevel: 'Default',
@@ -431,7 +442,7 @@ const CONVERSATION_COPY = {
       branchTitle: (branch) => branch ? `Branch: ${branch}` : 'Choose branch', branchAriaLabel: (branch) => branch ? `Switch branch: ${branch}` : 'Choose branch',
     },
     messages: {
-      you: 'You', assistant: 'Maka', processing: 'Working…', continuing: 'Continuing…', thinking: 'Thinking', truncated: 'Truncated', copied: 'Copied', copying: 'Copying', copyFailed: 'Copy failed', copy: 'Copy', copyMessage: 'Copy message', copyThinking: 'Copy reasoning',
+      you: 'You', assistant: 'Maka', processing: 'Working…', continuing: 'Continuing…', safeResumePending: 'Checking…', safeResume: 'Safe recovery', thinking: 'Thinking', truncated: 'Truncated', copied: 'Copied', copying: 'Copying', copyFailed: 'Copy failed', copy: 'Copy', copyMessage: 'Copy message', copyThinking: 'Copy reasoning',
       imageAriaLabel: (name) => `View image ${name}`, userAriaLabel: 'Your message', assistantAriaLabel: "Maka's response", answerActionsAriaLabel: 'Response actions', sourceAriaLabel: 'Source of this response', derivativesAriaLabel: 'Responses derived from this one', automationTriggered: 'Triggered by automation', automationTitle: (id) => `Triggered by automation · ${id}`,
       thinkingTruncatedTitle: 'Some reasoning was truncated; showing the most recent content', outputTruncatedTitle: 'The assistant output exceeded the per-turn limit. Regenerate it or inspect the persisted session log for the complete content.', removeAttachmentAriaLabel: (name) => `Remove ${name}`, aborted: '(Interrupted)', abortedByStop: '(Interrupted · Stop button)',
     },
@@ -444,7 +455,7 @@ const CONVERSATION_COPY = {
     sessions: {
       status: { active: 'Ready', running: 'Running', waiting_for_user: 'Waiting for you', blocked: 'Needs attention', review: 'Review', done: 'Done', archived: 'Archived', aborted: 'Stopped' },
       blockedReason: { NO_REAL_CONNECTION: 'Waiting for an available model connection', auth: 'Sign in again', permission_required: 'Waiting for permission', tool_failed: 'Tool call failed', unknown: 'Run interrupted; retry available' },
-      listAriaLabel: 'Conversation list', title: 'Conversations', emptyTitle: 'Start a conversation', emptyBody: 'Your conversations with Maka will appear here.', showMore: 'Show more', showMoreAriaLabel: (count) => `Show ${count} more conversations`, renameAriaLabel: 'Rename conversation', respondingAriaLabel: 'Responding', respondingTitle: 'This conversation is streaming a response', staleTitle: 'This conversation\'s model connection is unavailable; sending will switch to the default connection', staleAriaLabel: 'Stale conversation', stale: 'Stale', unreadAriaLabel: 'Unread messages', actionsAriaLabel: 'Conversation actions', pin: 'Pin', unpin: 'Unpin', rename: 'Rename', archive: 'Archive', unarchive: 'Unarchive', delete: 'Delete', pinned: 'Pinned', today: 'Today', yesterday: 'Yesterday', past7Days: 'Past 7 days', past30Days: 'Past 30 days', earlier: 'Earlier', pending: 'Pending', groupByStatus: 'By status', groupByProject: 'By project', groupingAriaLabel: 'Conversation grouping', promptRailAriaLabel: 'Jump by prompt', emptyPrompt: '(empty prompt)', jumpToPrompt: (preview) => `Jump to prompt: ${preview}`,
+      listAriaLabel: 'Conversation list', title: 'Conversations', emptyTitle: 'Start a conversation', emptyBody: 'Your conversations with Maka will appear here.', showMore: 'Show more', showMoreAriaLabel: (count) => `Show ${count} more conversations`, groupCount: (count) => `(${count})`, renameAriaLabel: 'Rename conversation', respondingAriaLabel: 'Responding', respondingTitle: 'This conversation is streaming a response', staleTitle: 'This conversation\'s model connection is unavailable; sending will switch to the default connection', staleAriaLabel: 'Stale conversation', stale: 'Stale', unreadAriaLabel: 'Unread messages', actionsAriaLabel: 'Conversation actions', pin: 'Pin', unpin: 'Unpin', rename: 'Rename', archive: 'Archive', unarchive: 'Unarchive', delete: 'Delete', pinned: 'Pinned', today: 'Today', yesterday: 'Yesterday', past7Days: 'Past 7 days', past30Days: 'Past 30 days', earlier: 'Earlier', pending: 'Pending', groupByStatus: 'By status', groupByProject: 'By project', groupingAriaLabel: 'Conversation grouping', promptRailAriaLabel: 'Jump by prompt', emptyPrompt: '(empty prompt)', jumpToPrompt: (preview) => `Jump to prompt: ${preview}`,
     },
   },
 } satisfies UiCatalog<ConversationCopy>;

@@ -16,6 +16,7 @@ import type { AttachmentRef } from '@maka/core/events';
 import type { SteeringLease } from '@maka/core/backend-types';
 import type { RuntimeEvent, RuntimeEventStatus } from '@maka/core/runtime-event';
 import type { StoredMessage } from '@maka/core/session';
+import type { RuntimeContinuationMetadata } from '@maka/core/backend-types';
 
 // ============================================================================
 // InvocationSource
@@ -51,6 +52,15 @@ export interface InvocationLineage {
   parentSessionId?: string;
 }
 
+/**
+ * Runtime-owned continuation metadata carried through Runner revalidation.
+ * `sourceRuntimeContext` is deliberately not part of the provider contract:
+ * it identifies the immediate source segment inside assembled replay history.
+ */
+export interface InvocationContinuationMetadata extends RuntimeContinuationMetadata {
+  sourceRuntimeContext?: RuntimeEvent[];
+}
+
 // ============================================================================
 // InvocationRequest — input to RuntimeRunner.run()
 // ============================================================================
@@ -80,6 +90,8 @@ export interface InvocationRequest {
    * passes this through without adding the current turn's RuntimeEvents.
    */
   runtimeContext?: RuntimeEvent[];
+  /** Safe-boundary continuation metadata. No synthetic user RuntimeEvent is emitted when present. */
+  continuation?: InvocationContinuationMetadata;
   /** Optional initial user RuntimeEvent already minted by an outer run owner. */
   initialRuntimeEvent?: RuntimeEvent;
   source: InvocationSource;
@@ -185,7 +197,7 @@ export interface InvocationResult {
   status: InvocationResultStatus;
   /** Last non-partial model text from a successfully completed invocation. */
   finalOutput?: string;
-  /** Every RuntimeEvent collected, in emission order (user event first). */
+  /** Every newly collected RuntimeEvent in emission order (normal invocations start with user). */
   events: RuntimeEvent[];
   /** Present when status === 'failed'. */
   failure?: InvocationFailure;

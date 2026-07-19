@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Volume2 } from '@maka/ui/icons';
 import type { VoicePermissionStatus } from '@maka/core';
 import { defaultVoiceCaptureCaps, validateVoiceCaptureRequest } from '@maka/core';
-import { Button, PageHeader, formatBytes, useMountedRef, useToast, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, Badge, Button, PageHeader, formatBytes, useMountedRef, useToast, useUiLocale } from '@maka/ui';
 import { getVoiceSettingsCopy, type VoiceSettingsCopy } from '../locales/settings-voice-copy';
 import { useActionGuard } from './use-action-guard';
 
@@ -141,7 +141,7 @@ export function VoiceModelsSettingsPage() {
         iconClassName="settingsFeatureStatusIcon"
         headingRowClassName="settingsFeatureStatusHeroHeading"
         title={copy.title}
-        badge={<span className="settingsFeatureStatusBadge">{copy.badge}</span>}
+        badge={<Badge variant="secondary">{copy.badge}</Badge>}
         subtitle={copy.subtitle}
       />
 
@@ -177,9 +177,9 @@ export function VoiceModelsSettingsPage() {
         </Button>
       </div>
 
-      <div id={smokeStatusId} className="settingsNotice" data-tone={smoke.status === 'error' ? undefined : 'passive'} role="status">
-        {voiceSmokeMessage(smoke, copy)}
-      </div>
+      <Alert id={smokeStatusId} variant={smoke.status === 'error' ? 'info' : 'passive'} role="status">
+        <AlertDescription>{voiceSmokeMessage(smoke, copy)}</AlertDescription>
+      </Alert>
 
       <div className="settingsFeatureStatusHeroHeading">
         <h3>{copy.boundary}</h3>

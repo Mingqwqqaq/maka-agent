@@ -52,6 +52,7 @@ export function AppShellOverlays(props: {
   setUserLabel(userLabel: string): void;
   settingsRequestedSection: SettingsSection | undefined;
   settingsProviderCatalogOpen: boolean;
+  settingsConnectionDetailSlug: string | undefined;
   onOpenDailyReview(): void;
   onOpenSettingsSession(sessionId: string): void;
   helpOpen: boolean;
@@ -87,6 +88,7 @@ export function AppShellOverlays(props: {
     settingsOpen,
     settingsRequestedSection,
     settingsProviderCatalogOpen,
+    settingsConnectionDetailSlug,
     setThemePalette,
     setThemePref,
     setUiLocalePreference,
@@ -125,6 +127,7 @@ export function AppShellOverlays(props: {
             onUserLabelChange={setUserLabel}
             requestedSection={settingsRequestedSection}
             openProviderCatalog={settingsProviderCatalogOpen}
+            initialConnectionSlug={settingsConnectionDetailSlug}
             onOpenDailyReview={props.onOpenDailyReview}
             onOpenSession={props.onOpenSettingsSession}
           />

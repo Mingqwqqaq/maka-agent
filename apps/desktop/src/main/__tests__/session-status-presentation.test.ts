@@ -326,6 +326,11 @@ describe('describeTurnErrorClass (PR109e-d @kenji gate #3)', () => {
     }
   });
 
+  it('returns specific labels for context overflow and provider billing', () => {
+    assert.equal(describeTurnErrorClass('context_overflow'), '上下文窗口已超出限制');
+    assert.equal(describeTurnErrorClass('provider_billing'), '模型服务计费受限');
+  });
+
   it('returns Chinese label for tool_failed', () => {
     assert.match(describeTurnErrorClass('tool_failed'), /工具/);
   });
@@ -369,6 +374,18 @@ describe('describeTurnErrorClass (PR109e-d @kenji gate #3)', () => {
 });
 
 describe('deriveFailedTurnRecovery (PawWork run-incident lite)', () => {
+  it('routes app restart failures to safe resume instead of blind retry', () => {
+    const result = deriveFailedTurnRecovery({
+      errorClass: 'app_restarted',
+      partialOutputRetained: false,
+      toolActivityCount: 0,
+      erroredToolCount: 0,
+    });
+
+    assert.equal(result.action, 'continue');
+    assert.match(result.label, /安全恢复/);
+  });
+
   it('asks the user to inspect tool output when a tool failed', () => {
     const result = deriveFailedTurnRecovery({
       errorClass: 'tool_failed',
@@ -391,6 +408,17 @@ describe('deriveFailedTurnRecovery (PawWork run-incident lite)', () => {
       assert.equal(result.action, 'check_connection');
       assert.match(result.label, /模型|连接|登录/);
     }
+  });
+
+  it('routes provider billing failures to connection/account checks before retrying', () => {
+    const result = deriveFailedTurnRecovery({
+      errorClass: 'provider_billing',
+      partialOutputRetained: false,
+      toolActivityCount: 0,
+      erroredToolCount: 0,
+    });
+    assert.equal(result.action, 'check_connection');
+    assert.match(result.label, /模型|连接|登录/);
   });
 
   it('offers continue when partial output was retained and no tool failed', () => {

@@ -13,6 +13,7 @@ import {
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from './primitives/collapsible.js';
 import { useUiLocale } from './locale-context.js';
 import { getSharedUiCopy, type SharedUiCopy } from './shared-ui-copy.js';
+import { EmptyState } from './empty-state.js';
 
 const STATUS_ICONS = {
   pending: Clock,
@@ -77,7 +78,7 @@ export function TaskLedgerPanel(props: TaskLedgerPanelProps) {
               {model.activeTree.map((task) => <TaskLedgerRow key={task.id} task={task} copy={copy} />)}
             </div>
           ) : (
-            <div className="maka-task-ledger-message">{copy.empty}</div>
+            <EmptyState variant="inline" title={copy.empty} body="" />
           )}
           {model.recentTerminalCount > 0 && (
             <Collapsible className="maka-task-ledger-terminal" open={terminalOpen} onOpenChange={setTerminalOpen}>

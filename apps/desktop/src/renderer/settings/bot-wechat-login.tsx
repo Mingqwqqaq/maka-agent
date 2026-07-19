@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button as BaseButton } from '@base-ui/react/button';
 import type { BotChannelSettings } from '@maka/core';
 import type { WechatBridgeQrCodeResult } from '@maka/runtime';
-import { Button, DialogContent, DialogHeader, DialogRoot, Input, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, Button, DialogContent, DialogHeader, DialogRoot, Input, useUiLocale } from '@maka/ui';
 import { PasswordInput } from './password-input';
 import { settingsActionErrorMessage } from './settings-error-copy';
 import { getBotSettingsCopy } from '../locales/settings-bot-copy';
@@ -76,9 +76,9 @@ export function BotWeChatFields(props: {
                 ariaLabel={copy.appSecretAria}
               />
             </label>
-            <div className="settingsNotice">
-              {copy.advancedNotice}
-            </div>
+            <Alert variant="info">
+              <AlertDescription>{copy.advancedNotice}</AlertDescription>
+            </Alert>
           </div>
         )}
       </div>

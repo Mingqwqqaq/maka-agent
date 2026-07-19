@@ -1586,6 +1586,24 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     });
   };
 
+  const resumeSession = async () => {
+    if (!input.driver.resumeLatest) {
+      throw new Error('Safe-boundary resume is unavailable on this runtime.');
+    }
+    state.entries.push({
+      kind: 'notice',
+      level: 'info',
+      text: 'Resuming from the latest safe boundary…',
+    });
+    requestRender();
+    for await (const event of input.driver.resumeLatest()) {
+      applyMakaSessionEventToTranscript(state, event);
+      shellRunElapsedTicker.sync();
+      syncUserQuestionOverlay();
+      requestRender();
+    }
+  };
+
   const showSessionList = async () => {
     const sessions = await input.driver.listSessions();
     // Maka-session availability and the foreign scan are independent I/O; run
@@ -2170,6 +2188,22 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       },
     },
     {
+      name: 'resume',
+      description: 'Resume latest interrupted run at a safe boundary',
+      run: (parts: string[]) => {
+        if (parts.length !== 1) {
+          state.entries.push({
+            kind: 'notice',
+            level: 'error',
+            text: 'Usage: /resume',
+          });
+          requestRender();
+          return;
+        }
+        void runControl(resumeSession);
+      },
+    },
+    {
       name: 'rewind',
       description: 'Rewind to an earlier turn',
       run: () => {
@@ -2433,7 +2467,7 @@ const BOTTOM_PICKER_MARGIN_ROWS = 4;
 // The editor's autocomplete window height. Keep it at least as large as the
 // full slash-command menu, so a bare `/` shows every command rather than
 // silently clipping the last command.
-const EDITOR_AUTOCOMPLETE_MAX_VISIBLE = 14;
+const EDITOR_AUTOCOMPLETE_MAX_VISIBLE = 16;
 
 // A short, stable slice of a session id — enough to tell two same-named
 // sessions apart in the picker without showing the full unreadable uuid.

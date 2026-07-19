@@ -27,6 +27,7 @@ import {
   type TurnFooterActionMeta,
   useToast,
   activeInteractionFor,
+  resumeParkToastCopy,
 } from '@maka/ui';
 import { useKeyboardHelp } from './keyboard-help';
 import { useCommandPalette } from './command-palette';
@@ -235,11 +236,13 @@ function AppShellContent({
     settingsOpen,
     settingsRequestedSection,
     settingsProviderCatalogOpen,
+    settingsConnectionDetailSlug,
     setSettingsOpen,
     setSettingsProviderCatalogOpen,
     openSettings,
     openSettingsSection,
     openProviderCatalog,
+    openConnectionDetail,
   } = useSettingsModal();
   const {
     themePref,
@@ -267,6 +270,8 @@ function AppShellContent({
   const [paletteOpen, openPalette, closePalette] = useCommandPalette();
   const [viewMode, setViewMode] = useState<SessionViewMode>('status');
   const composerRef = useRef<ComposerHandle>(null);
+  const [resumePendingSessionId, setResumePendingSessionId] = useState<string | null>(null);
+  const [resumeParkDescriptionBySession, setResumeParkDescriptionBySession] = useState<Record<string, string>>({});
   const rendererMountedRef = useRef(true);
   // Active autonomous goal for the current session drives the header
   // kill-switch pill (visible indicator + one-click clear).
@@ -480,18 +485,22 @@ function AppShellContent({
     toastApi,
   });
 
-  const { turnFooterActionsByTurn, turnFailedReasonLabels, turnFailedRecoveryLabels, turnLineageBadgesByTurn } =
-    useMemo(
-      () =>
-        deriveAppShellTurnViewModel({
-          uiLocale,
-          activeId,
-          messages,
-          pendingTurnActions,
-          pendingKeyOf,
-        }),
-      [activeId, messages, pendingTurnActions, uiLocale],
-    );
+  const {
+    turnFooterActionsByTurn,
+    turnFailedReasonLabels,
+    turnFailedRecoveryLabels,
+    turnLineageBadgesByTurn,
+    resumeCandidateTurnId,
+  } = useMemo(
+    () => deriveAppShellTurnViewModel({
+      activeId,
+      messages,
+      pendingTurnActions,
+      pendingKeyOf,
+      uiLocale,
+    }),
+    [activeId, messages, pendingTurnActions, uiLocale],
+  );
 
   // PR109e-e: click handler for lineage badge → scroll target turn into
   // view. Avoids pulling a separate ref-tracker: relies on the
@@ -561,12 +570,15 @@ function AppShellContent({
   }, []);
   /** 技能页 使用: jump to the chat view and seed the composer with a skill
    *  invocation. Same human-in-the-loop rule as maka://compose — we never
-   *  auto-send; the user finishes the sentence and presses Enter. */
+   *  auto-send; the user finishes the sentence and presses Enter.
+   *  U4: append (not replace) so an in-progress draft survives — appendText
+   *  falls back to a plain set when the draft is empty, so the empty-composer
+   *  path is unchanged while a half-written message is no longer clobbered. */
   const useSkillInChat = useCallback(
     (_skillId: string, skillName: string) => {
     setNavSelection({ section: 'sessions', filter: 'chats' });
     const seed = () => {
-        composerRef.current?.setText(shellCopy.useSkillPrompt(skillName));
+        composerRef.current?.appendText(shellCopy.useSkillPrompt(skillName));
       composerRef.current?.focus();
     };
     if (activeIdRef.current) {
@@ -824,6 +836,7 @@ function AppShellContent({
   const { applyVisualSmokeFixture } = useStableActions(createAppShellVisualSmokeActions, {
     openPalette,
     openSettingsSection,
+    openConnectionDetail,
     refreshSessions,
     setActiveId,
     setLiveBrowserSessionIds,
@@ -882,6 +895,41 @@ function AppShellContent({
     toastApi,
     upsertSessionSummary,
   });
+
+  async function resumeInterruptedSession(): Promise<void> {
+    const sessionId = activeId;
+    if (!sessionId || resumePendingSessionId !== null) return;
+    setResumePendingSessionId(sessionId);
+    try {
+      const result = await window.maka.sessions.resumeLatest(sessionId);
+      if (result.disposition === 'park') {
+        const parkCopy = resumeParkToastCopy(result.rejectionReasons);
+        setResumeParkDescriptionBySession((current) => ({
+          ...current,
+          [sessionId]: parkCopy.description,
+        }));
+        toastApi.error(parkCopy.title, parkCopy.description);
+      } else {
+        setResumeParkDescriptionBySession((current) => {
+          const { [sessionId]: _removed, ...remaining } = current;
+          void _removed;
+          return remaining;
+        });
+        toastApi.info(shellCopy.resumeStartedTitle, shellCopy.resumeStartedDescription);
+      }
+    } catch (error) {
+      toastApi.error(
+        shellCopy.resumeFailedTitle,
+        localizedShellErrorMessage(
+          error,
+          shellCopy.resumeFailedFallback,
+          uiLocale,
+        ),
+      );
+    } finally {
+      setResumePendingSessionId((current) => current === sessionId ? null : current);
+    }
+  }
 
   async function sendWithAttachments(text: string): Promise<boolean | void> {
     if (text.trim() === '/compact') {
@@ -1422,6 +1470,12 @@ function AppShellContent({
                 onTurnFooterAction={handleTurnFooterAction}
                 turnFailedReasonLabels={turnFailedReasonLabels}
                 turnFailedRecoveryLabels={turnFailedRecoveryLabels}
+                safeResumeAction={activeId && resumeCandidateTurnId ? {
+                  turnId: resumeCandidateTurnId,
+                  pending: resumePendingSessionId === activeId,
+                  detail: resumeParkDescriptionBySession[activeId],
+                  onResume: () => { void resumeInterruptedSession(); },
+                } : undefined}
                 turnLineageBadgesByTurn={turnLineageBadgesByTurn}
                 onLineageBadgeClick={handleLineageBadgeClick}
                 onReadAttachmentBytes={window.maka.attachments.readBytes}
@@ -1534,6 +1588,7 @@ function AppShellContent({
                 newChatThinkingLevel={newChatThinkingLevel}
                 onNewChatThinkingLevelChange={(level) => setPendingNewChatThinkingLevel(level ?? null)}
                 onOpenModelSettings={() => openSettingsSection('models')}
+                noModelConnection={connections.length === 0}
                 workspacePicker={{
                     label: projectInfo ? basenameFromPath(projectInfo.projectPath, uiLocale) : undefined,
                   branch: projectInfo?.projectGit.branch,
@@ -1609,6 +1664,7 @@ function AppShellContent({
         setUserLabel={setUserLabel}
         settingsRequestedSection={settingsRequestedSection}
         settingsProviderCatalogOpen={settingsProviderCatalogOpen}
+        settingsConnectionDetailSlug={settingsConnectionDetailSlug}
         onOpenDailyReview={() => {
           closeSettings();
           setNavSelection({ section: 'daily-review' });

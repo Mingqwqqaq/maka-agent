@@ -13,6 +13,8 @@ export class DurableStoreWriteError extends Error {
 }
 
 export interface RuntimeEventStore {
+  /** Canonical stores fail the active run closed on every durable write error. */
+  readonly durability?: 'best_effort' | 'canonical';
   appendRuntimeEvent(
     sessionId: string,
     runId: string,

@@ -377,6 +377,10 @@ type ShellCopy = {
     newConversation: string;
     compactErrorTitle: string;
     compactErrorFallback: string;
+    resumeStartedTitle: string;
+    resumeStartedDescription: string;
+    resumeFailedTitle: string;
+    resumeFailedFallback: string;
     appearanceLoadErrorTitle: string;
     appearanceLoadErrorFallback: string;
     memoryRefreshErrorTitle: string;
@@ -388,7 +392,6 @@ type ShellCopy = {
     skipErrorTitle: string;
     tryAgainLater: string;
     loading: string;
-    goToAccount: string;
     goToModels: string;
     permissionModeChanging: string;
     permissionModeStreaming: string;
@@ -580,7 +583,6 @@ const EN_STATIC_COMMANDS: Record<StaticCommandId, CommandCopy> = {
 
 const ZH_SETTINGS_SECTIONS: Record<SettingsSection, string> = {
   general: '通用',
-  account: '账号',
   appearance: '外观',
   models: '模型',
   usage: '使用统计',
@@ -598,7 +600,6 @@ const ZH_SETTINGS_SECTIONS: Record<SettingsSection, string> = {
 
 const EN_SETTINGS_SECTIONS: Record<SettingsSection, string> = {
   general: 'General',
-  account: 'Account',
   appearance: 'Appearance',
   models: 'Models',
   usage: 'Usage',
@@ -1012,6 +1013,10 @@ const SHELL_COPY_BY_LOCALE = {
       newConversation: '新建对话',
       compactErrorTitle: '压缩失败',
       compactErrorFallback: '对话暂时无法压缩，请稍后重试。',
+      resumeStartedTitle: '已开始安全恢复',
+      resumeStartedDescription: '正在从最后一个完整执行边界继续',
+      resumeFailedTitle: '恢复失败',
+      resumeFailedFallback: '无法启动安全恢复，请检查会话状态后重试。',
       appearanceLoadErrorTitle: '载入外观设置失败',
       appearanceLoadErrorFallback: '外观设置暂时无法载入，请稍后重试。',
       memoryRefreshErrorTitle: '刷新本地记忆状态失败',
@@ -1023,7 +1028,6 @@ const SHELL_COPY_BY_LOCALE = {
       skipErrorTitle: '跳过失败',
       tryAgainLater: '请稍后重试。',
       loading: '加载中',
-      goToAccount: '去账号',
       goToModels: '去模型',
       permissionModeChanging: '权限模式正在切换，完成后再继续操作。',
       permissionModeStreaming: '当前对话正在流式输出，等结束后再切换权限模式。',
@@ -1472,6 +1476,10 @@ const SHELL_COPY_BY_LOCALE = {
       newConversation: 'New conversation',
       compactErrorTitle: 'Compaction failed',
       compactErrorFallback: 'The conversation could not be compacted. Try again later.',
+      resumeStartedTitle: 'Safe recovery started',
+      resumeStartedDescription: 'Continuing from the last complete execution boundary',
+      resumeFailedTitle: 'Recovery failed',
+      resumeFailedFallback: 'Safe recovery could not start. Check the conversation state and try again.',
       appearanceLoadErrorTitle: 'Could not load appearance settings',
       appearanceLoadErrorFallback: 'Appearance settings are temporarily unavailable. Try again later.',
       memoryRefreshErrorTitle: 'Could not refresh local memory status',
@@ -1483,7 +1491,6 @@ const SHELL_COPY_BY_LOCALE = {
       skipErrorTitle: 'Could not skip onboarding',
       tryAgainLater: 'Try again later.',
       loading: 'Loading',
-      goToAccount: 'Go to Account',
       goToModels: 'Go to Models',
       permissionModeChanging: 'The permission mode is changing. Wait for it to finish before continuing.',
       permissionModeStreaming:

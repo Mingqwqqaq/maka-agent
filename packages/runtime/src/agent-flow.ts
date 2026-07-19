@@ -34,6 +34,7 @@ import type { AttachmentRef } from '@maka/core/events';
 import type { SteeringLease } from '@maka/core/backend-types';
 import type { StoredMessage } from '@maka/core/session';
 import type { RuntimeEvent } from '@maka/core/runtime-event';
+import type { RuntimeContinuationMetadata } from '@maka/core/backend-types';
 import type { InvocationContext } from './invocation-context.js';
 
 export type { InvocationContext } from './invocation-context.js';
@@ -71,6 +72,8 @@ export interface FlowInput {
    * compatibility projection.
    */
   runtimeContext?: RuntimeEvent[];
+  /** Continue the committed history directly instead of appending a new user message. */
+  continuation?: RuntimeContinuationMetadata;
   /**
    * Steering lease/ack/nack forwarded to a steppable backend. Leases queued
    * mid-turn user messages at each step boundary; see

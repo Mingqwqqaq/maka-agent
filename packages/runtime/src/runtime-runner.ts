@@ -11,9 +11,10 @@
  * Responsibilities (per the node spec):
  *   1. Run an injectable preflight gate.
  *   2. Create the InvocationContext through injected id/time providers.
- *   3. Emit (collect) the initial user RuntimeEvent.
+ *   3. Emit (collect) the initial user RuntimeEvent for normal invocations;
+ *      safe-boundary continuations reuse committed history without one.
  *   4. Dispatch to an injected AgentFlow and collect canonical RuntimeEvents.
- *   5. Return a structured result with the collected events and a terminal
+ *   5. Return a structured result with the newly collected events and a terminal
  *      status.
  *
  * Out-of-scope (deliberately): direct SessionStore writes, projection
@@ -22,10 +23,13 @@
  * SessionManager delegates invocation execution through this shell.
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   isTerminalRuntimeEvent,
   type RuntimeEvent,
   type RuntimeEventStatus,
+  type ToolBoundaryProtocol,
 } from '@maka/core/runtime-event';
 import type {
   InvocationContext,
@@ -37,6 +41,7 @@ import type {
 } from './invocation-context.js';
 import { createDefaultInvocationProviders } from './invocation-context.js';
 import type { FlowInput, RunnableAgentFlow } from './agent-flow.js';
+import type { RuntimeContinuation } from './runtime-resume.js';
 
 // ============================================================================
 // RuntimeGate — narrow preflight seam
@@ -88,6 +93,10 @@ export type AgentFlowLike = RunnableAgentFlow;
 
 export interface RuntimeRunnerDeps {
   flow: RunnableAgentFlow;
+  /** Durable sink for the Runner-owned continuation-start fact. */
+  commitContinuationStart?: (event: RuntimeEvent) => Promise<void>;
+  /** Set only when the tool implementation path is guarded by canonical T1. */
+  toolBoundaryProtocol?: ToolBoundaryProtocol;
   /** Optional preflight gate; omitted means "always allow". */
   gate?: RuntimeGate;
   /** Injectable id/time providers. Defaults to crypto.randomUUID / Date.now. */
@@ -112,6 +121,7 @@ export interface InitialUserRuntimeEventInput {
   /** Human-facing view when it differs from `text`; see RuntimeEventTextContent. */
   displayText?: string;
   attachments?: InvocationRequest['attachments'];
+  toolBoundaryProtocol?: ToolBoundaryProtocol;
 }
 
 // ============================================================================
@@ -120,22 +130,50 @@ export interface InitialUserRuntimeEventInput {
 
 export class RuntimeRunner {
   private readonly flow: RunnableAgentFlow;
+  private readonly commitContinuationStart: RuntimeRunnerDeps['commitContinuationStart'];
+  private readonly toolBoundaryProtocol: RuntimeRunnerDeps['toolBoundaryProtocol'];
   private readonly gate: RuntimeGate | undefined;
   private readonly providers: InvocationProviders;
   private readonly stopOnTerminal: boolean;
 
   constructor(deps: RuntimeRunnerDeps) {
     this.flow = deps.flow;
+    this.commitContinuationStart = deps.commitContinuationStart;
+    this.toolBoundaryProtocol = deps.toolBoundaryProtocol;
     this.gate = deps.gate;
     this.providers = deps.providers ?? createDefaultInvocationProviders();
     this.stopOnTerminal = deps.stopOnTerminal ?? true;
   }
 
+  async resume(
+    continuation: RuntimeContinuation,
+    options: {
+      source: InvocationRequest['source'];
+      context?: InvocationRequest['context'];
+      abortSignal?: AbortSignal;
+    },
+  ): Promise<InvocationResult> {
+    assertRuntimeContinuationEnvelope(continuation);
+    return this.run({
+      sessionId: continuation.sessionId,
+      invocationId: continuation.invocationId,
+      runId: continuation.runId,
+      turnId: continuation.turnId,
+      text: '',
+      context: options.context ?? [],
+      runtimeContext: continuation.runtimeContext,
+      continuation: invocationContinuationMetadata(continuation),
+      source: options.source,
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    });
+  }
+
   /**
    * Run one invocation end-to-end and return a structured result.
    *
-   * Event order is guaranteed: the initial user RuntimeEvent is always
-   * collected before any flow event. By default collection stops at the first
+   * Event order is guaranteed: normal invocations collect the initial user
+   * RuntimeEvent before any flow event; continuations collect only new events.
+   * By default collection stops at the first
    * terminal RuntimeEvent; callers that wrap streams with cleanup/trailing
    * events can opt into full draining through RuntimeRunnerDeps.
    */
@@ -144,6 +182,22 @@ export class RuntimeRunner {
     const invocationId =
       request.invocationId ?? request.initialRuntimeEvent?.invocationId ?? this.providers.newId();
     const runId = request.runId ?? request.initialRuntimeEvent?.runId ?? this.providers.newId();
+    if (request.continuation) {
+      if (!request.runtimeContext) {
+        throw new Error('Runtime continuation requires replay context');
+      }
+      if (request.text.length > 0 || request.attachments !== undefined) {
+        throw new Error('Runtime continuation cannot carry a new user message or attachments');
+      }
+      assertRuntimeContinuationEnvelope({
+        sessionId: request.sessionId,
+        invocationId,
+        runId,
+        turnId: request.turnId,
+        ...request.continuation,
+        runtimeContext: request.runtimeContext,
+      });
+    }
 
     // 1. Preflight (injectable gate). On failure we admit no invocation: no
     //    context, no user event, no flow dispatch.
@@ -209,10 +263,30 @@ export class RuntimeRunner {
 
     const events: RuntimeEvent[] = [];
 
-    // 4. Emit the initial user RuntimeEvent before any flow event.
-    const userEvent =
-      request.initialRuntimeEvent ??
-      buildInitialUserRuntimeEvent({
+    // 4. A normal invocation starts with a new user fact. A continuation
+    // resumes committed provider history directly and must not invent a
+    // duplicate user message.
+    if (!request.continuation) {
+      const userEvent =
+        request.initialRuntimeEvent ??
+        buildInitialUserRuntimeEvent({
+          id: ctx.newId(),
+          invocationId: ctx.invocationId,
+          runId: ctx.runId,
+          sessionId: ctx.sessionId,
+          turnId: ctx.turnId,
+          ts: ctx.startedAt,
+          ...(ctx.branch ? { branch: ctx.branch } : {}),
+          text: request.text,
+          ...(request.attachments !== undefined ? { attachments: request.attachments } : {}),
+          ...(this.toolBoundaryProtocol ? { toolBoundaryProtocol: this.toolBoundaryProtocol } : {}),
+        });
+      events.push(userEvent);
+    } else {
+      if (!this.commitContinuationStart) {
+        throw new Error('Runtime continuation requires a durable continuation-start sink');
+      }
+      const continuationStart: RuntimeEvent = {
         id: ctx.newId(),
         invocationId: ctx.invocationId,
         runId: ctx.runId,
@@ -220,10 +294,25 @@ export class RuntimeRunner {
         turnId: ctx.turnId,
         ts: ctx.startedAt,
         ...(ctx.branch ? { branch: ctx.branch } : {}),
-        text: request.text,
-        ...(request.attachments !== undefined ? { attachments: request.attachments } : {}),
-      });
-    events.push(userEvent);
+        partial: false,
+        role: 'system',
+        author: 'system',
+        actions: {
+          stateDelta: { continuationStart: true },
+          ...(this.toolBoundaryProtocol
+            ? { runtimeProtocol: { toolBoundary: this.toolBoundaryProtocol } }
+            : {}),
+        },
+        refs: {
+          sourceInvocationId: request.continuation.sourceInvocationId,
+          sourceRunId: request.continuation.sourceRunId,
+          sourceTurnId: request.continuation.sourceTurnId,
+          sourceRuntimeEventHighWater: request.continuation.sourceRuntimeEventHighWater,
+        },
+      };
+      await this.commitContinuationStart(continuationStart);
+      events.push(continuationStart);
+    }
     const flowInput = buildFlowInput(request);
 
     // 5. Dispatch to the flow and collect canonical events. By default the
@@ -305,6 +394,58 @@ export class RuntimeRunner {
   }
 }
 
+function invocationContinuationMetadata(
+  continuation: RuntimeContinuation,
+): NonNullable<InvocationRequest['continuation']> {
+  const {
+    sessionId: _sessionId,
+    invocationId: _invocationId,
+    runId: _runId,
+    turnId: _turnId,
+    runtimeContext: _runtimeContext,
+    safetySnapshot: _safetySnapshot,
+    ...metadata
+  } = continuation;
+  return metadata;
+}
+
+function assertRuntimeContinuationEnvelope(
+  continuation: Omit<RuntimeContinuation, 'safetySnapshot'>,
+): void {
+  const sourceRuntimeContext = continuation.sourceRuntimeContext ?? continuation.runtimeContext;
+  if (continuation.sourceRuntimeEventHighWater < sourceRuntimeContext.length) {
+    throw new Error('Runtime continuation high-water is behind its replay context');
+  }
+  if (continuation.runtimeContext.length === 0) {
+    throw new Error('Runtime continuation replay context must not be empty');
+  }
+  const mismatched = sourceRuntimeContext.find(
+    (event) =>
+      event.sessionId !== continuation.sessionId ||
+      event.invocationId !== continuation.sourceInvocationId ||
+      event.runId !== continuation.sourceRunId ||
+      event.turnId !== continuation.sourceTurnId,
+  );
+  if (mismatched) {
+    throw new Error(`Runtime continuation replay identity mismatch at event ${mismatched.id}`);
+  }
+  if (
+    !isDeepStrictEqual(
+      continuation.runtimeContext.slice(-sourceRuntimeContext.length),
+      sourceRuntimeContext,
+    )
+  ) {
+    throw new Error('Runtime continuation source replay is not the tail of provider history');
+  }
+  if (
+    continuation.invocationId === continuation.sourceInvocationId ||
+    continuation.runId === continuation.sourceRunId ||
+    continuation.turnId === continuation.sourceTurnId
+  ) {
+    throw new Error('Runtime continuation must use fresh invocation, run, and turn identities');
+  }
+}
+
 function finalOutputFromEvents(events: readonly RuntimeEvent[]): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
@@ -344,6 +485,9 @@ export function buildInitialUserRuntimeEvent(input: InitialUserRuntimeEventInput
         ? { attachments: input.attachments }
         : {}),
     },
+    ...(input.toolBoundaryProtocol
+      ? { actions: { runtimeProtocol: { toolBoundary: input.toolBoundaryProtocol } } }
+      : {}),
   };
 }
 
@@ -368,17 +512,28 @@ function assertInitialRuntimeEventMatchesRequest(
 }
 
 function buildFlowInput(request: InvocationRequest): FlowInput {
+  const continuation = request.continuation
+    ? providerContinuationMetadata(request.continuation)
+    : undefined;
   return {
     ...(request.lineage?.parentRunId ? { parentRunId: request.lineage.parentRunId } : {}),
     text: request.text,
     context: request.context ?? [],
     ...(request.runtimeContext !== undefined ? { runtimeContext: request.runtimeContext } : {}),
+    ...(continuation !== undefined ? { continuation } : {}),
     ...(request.attachments !== undefined ? { attachments: request.attachments } : {}),
     ...(request.pullSteering !== undefined ? { pullSteering: request.pullSteering } : {}),
     ...(request.ackSteering !== undefined ? { ackSteering: request.ackSteering } : {}),
     ...(request.nackSteering !== undefined ? { nackSteering: request.nackSteering } : {}),
     ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
   };
+}
+
+function providerContinuationMetadata(
+  continuation: NonNullable<InvocationRequest['continuation']>,
+): FlowInput['continuation'] {
+  const { sourceRuntimeContext: _sourceRuntimeContext, ...metadata } = continuation;
+  return metadata;
 }
 
 /**

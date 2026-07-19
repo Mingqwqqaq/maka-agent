@@ -56,7 +56,11 @@ import {
   buildAgentTeamLeadTools,
   buildExpertDispatchToolForTeamId,
   buildParentAgentTools,
-  buildSubagentToolGroup,
+  assertProductBindingCatalogClean,
+  buildDeferredToolGroupsFromCatalog,
+  buildHostCapabilitiesFromBinding,
+  SKILL_TOOL_NAME,
+  createLocalContinuationSafetyInspector,
   getAIModel,
   generateSessionTitle as generateRuntimeSessionTitle,
   buildProviderOptions,
@@ -89,7 +93,7 @@ import {
   createReadImageSnapshotter,
   createConnectionStore,
   createPlanReminderStore,
-  createRuntimeEventStore,
+  openRuntimeEventPersistence,
   createSessionStore,
   createSettingsStore,
   createMcpConfigStore,
@@ -266,7 +270,11 @@ let configWatcher: ConfigFileWatcher | undefined;
 const keepSystemAwake = createKeepSystemAwakeController(powerSaveBlocker);
 const store = createSessionStore(workspaceRoot);
 const runStore = createAgentRunStore(workspaceRoot);
-const runtimeEventStore = createRuntimeEventStore(workspaceRoot);
+const runtimePersistence = await openRuntimeEventPersistence({
+  workspaceRoot,
+  sqliteCanonical: process.env.MAKA_RUNTIME_SQLITE_CANONICAL === '1',
+});
+const runtimeEventStore = runtimePersistence.runtimeEventStore;
 const shellRunStore = createShellRunStore(workspaceRoot);
 const connectionStore = createConnectionStore(workspaceRoot);
 const settingsStore = createSettingsStore(workspaceRoot);
@@ -553,13 +561,6 @@ const localMemory = new LocalMemoryService({
   updateSettings: (patch) => settingsStore.update(patch),
   getPrivacyContext: getWorkspacePrivacyContext,
 });
-const systemPromptService = createSystemPromptMainService({
-  settingsStore,
-  workspaceRoot,
-  localMemory,
-  taskLedger: taskLedgerStore,
-  goalManager: goalWiring.manager,
-});
 // Window is created hidden for E2E and visual-smoke runs so it never steals
 // focus. Derived from the same isE2e gate as userData/fake-backend so the
 // hidden-window switch stays in lockstep with the rest of the E2E isolation.
@@ -715,28 +716,13 @@ const deferredTools: MakaTool[] = [
   ...computerUseTools,
   ...agentTools,
 ];
-const toolAvailability: ToolAvailabilityConfig = {
-  economy: economyEnabled,
-  groups: [
-    { id: 'rive', label: 'Rive', description: 'Durable multi-agent Rive workflows: validate/import/run/status, scheduler, retries.', toolNames: riveTools.map((tool) => tool.name) },
-    { id: 'office', label: 'Office', description: 'Read and edit Office documents (Word, Excel, PowerPoint, PDF).', toolNames: officeTools.map((tool) => tool.name) },
-    { id: 'browser', label: 'Browser', description: 'Drive the embedded browser: navigate, snapshot, click, type, wait, extract.', toolNames: browserTools.map((tool) => tool.name) },
-    ...(computerUseTools.length > 0
-      ? [{
-          id: 'computer_use',
-          label: 'Computer',
-          description: 'Observe and operate an explicitly approved local application.',
-          toolNames: computerUseTools.map((tool) => tool.name),
-        }]
-      : []),
-    buildSubagentToolGroup(),
-  ],
-};
 const webSearchTool = buildWebSearchAgentTool({
   settingsStore,
   getPrivacyContext: getWorkspacePrivacyContext,
 });
-const builtinTools: MakaTool[] = [
+// Assemble product tools first, then derive skill host + deferred groups from
+// the shared catalog ∩ this binding (#1099 S2). Skill listing uses the same host.
+const toolsBeforeSkill: MakaTool[] = [
   buildAskUserQuestionTool(),
   ...buildBuiltinTools({
     shellRuns,
@@ -751,12 +737,8 @@ const builtinTools: MakaTool[] = [
       enableFileToolAdditionalPermissions: true,
     } : {}),
   }).filter((tool: MakaTool) => tool.name !== 'Edit'),
-  // External reference lazy-skill pattern: the prompt lists available skills,
-  // and this read-only tool loads the full SKILL.md only when the task matches.
-  // Resolve per-call from the session cwd so skills at all 5 standard paths
-  // (cwd/.maka, cwd/.agents, workspaceRoot/skills, ~/.maka, ~/.agents) are
-  // discovered — matching the CLI and the Agent Skills spec (#1068).
-  buildSkillAgentTool(({ cwd }) => resolveSkillDiscoveryPaths(cwd, workspaceRoot)),
+];
+const toolsAfterSkill: MakaTool[] = [
   // External reference plan-mode borrow: a bounded read-only local worker for
   // self-contained code/repo investigations. The tool advertises the
   // `subagent` category; explore mode allows it, but the implementation
@@ -778,6 +760,37 @@ const builtinTools: MakaTool[] = [
   // group tools just need to be present so they are dispatchable once loaded.
   ...deferredTools,
 ];
+// Always-on Skill name is part of the host surface even before the tool instance
+// is built (so requiredTools gates and capability tags stay complete).
+const desktopBoundToolNames = [
+  ...toolsBeforeSkill.map((tool) => tool.name),
+  SKILL_TOOL_NAME,
+  ...toolsAfterSkill.map((tool) => tool.name),
+];
+assertProductBindingCatalogClean('desktop', desktopBoundToolNames);
+const desktopHostCapabilities = buildHostCapabilitiesFromBinding(desktopBoundToolNames);
+// External reference lazy-skill pattern: the prompt lists available skills,
+// and this read-only tool loads the full SKILL.md only when the task matches.
+// Resolve per-call from the session cwd so skills at all 5 standard paths
+// (cwd/.maka, cwd/.agents, workspaceRoot/skills, ~/.maka, ~/.agents) are
+// discovered — matching the CLI and the Agent Skills spec (#1068).
+const skillTool = buildSkillAgentTool(
+  ({ cwd }) => resolveSkillDiscoveryPaths(cwd, workspaceRoot),
+  desktopHostCapabilities,
+);
+const builtinTools: MakaTool[] = [...toolsBeforeSkill, skillTool, ...toolsAfterSkill];
+const toolAvailability: ToolAvailabilityConfig = {
+  economy: economyEnabled,
+  groups: buildDeferredToolGroupsFromCatalog('desktop', desktopBoundToolNames),
+};
+const systemPromptService = createSystemPromptMainService({
+  settingsStore,
+  workspaceRoot,
+  localMemory,
+  taskLedger: taskLedgerStore,
+  goalManager: goalWiring.manager,
+  hostCapabilities: desktopHostCapabilities,
+});
 // Child agents stay file-only for local reads; parent runtime refs such as
 // maka://runtime/background-tasks/<id> are not part of their tool surface.
 const childAgentTools = buildChildAgentTools([
@@ -1035,6 +1048,9 @@ backends.register('ai-sdk', async (ctx) => {
     archiveToolResult: (event: ToolResultArchiveRecorderInput) => persistArchivedToolResult(event),
     readToolResultArchive: (event: ToolResultArchiveReaderInput) => readArchivedToolResult(event),
     readAttachmentBytes: createAttachmentByteReader({ artifactStore, sessionId: ctx.sessionId }),
+    ...(runtimePersistence.runtimeCommitStore
+      ? { runtimeCommitSink: runtimePersistence.runtimeCommitStore }
+      : {}),
     supportsVision,
     loadHistoryCompact: (event) => loadHistoryCompactBlocksFromArtifacts(artifactStore, event),
     loadHistoryCompactCheckpoint: ctx.loadHistoryCompactCheckpoint,
@@ -1085,9 +1101,37 @@ const runtime = new SessionManager({
   store,
   runStore,
   runtimeEventStore,
+  ...(runtimePersistence.runtimeCommitStore
+    ? { toolBoundaryProtocol: runtimePersistence.runtimeCommitStore.toolBoundaryProtocol }
+    : {}),
   shellRuns,
   backends,
   childTools: childAgentTools,
+  safeBoundaryResumeEnabled: process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '1',
+  onContinuationLifecycleEvent: (event) => {
+    console.info('[runtime-resume]', JSON.stringify(event));
+  },
+  inspectContinuationSafety: createLocalContinuationSafetyInspector({
+    readSessionCwd: async (sessionId) => (await store.readHeader(sessionId)).cwd,
+    listAvailableToolNames: async () => [
+      ...builtinTools.map((tool) => tool.name),
+      'expert_dispatch',
+    ],
+    hasPendingBackgroundOperations: async (sessionId) => {
+      const [shellUpdates, runs] = await Promise.all([
+        shellRuns.listSessionUpdates(sessionId),
+        runStore.listSessionRuns(sessionId),
+      ]);
+      return (
+        shellUpdates.some((update) => update.result.status === 'running') ||
+        runs.some(
+          (run) =>
+            run.parentRunId !== undefined &&
+            ['created', 'running', 'waiting_permission'].includes(run.status),
+        )
+      );
+    },
+  }),
   listArtifactsForTurn: async (sessionId, turnId) =>
     (await artifactStore.list(sessionId)).filter((artifact) =>
       artifact.turnId === turnId && artifact.status !== 'deleted'
@@ -1598,6 +1642,16 @@ function emitSessionsChanged(
 async function recoverInterruptedSessionsOnStartup(): Promise<void> {
   try {
     await runtime.recoverInterruptedSessions();
+    if (process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME !== '1') return;
+    for (const session of await runtime.listSessions()) {
+      const plan = await runtime.planLatestAuthoritativeSafeBoundaryContinuation(session.id);
+      if (!plan.continuation) continue;
+      const iterator = runtime.resumeSafeBoundaryContinuation(plan.continuation);
+      void streamEvents(session.id, iterator, {
+        turnId: plan.continuation.turnId,
+        goalBoundary: 'none',
+      });
+    }
   } catch {
     // Best-effort: startup should still reach the renderer so users can inspect
     // and repair any remaining local session state.
@@ -1805,6 +1859,7 @@ async function runBeforeQuitCleanup(): Promise<void> {
   for (const result of results) {
     if (result.status === 'rejected') console.error('[shutdown] cleanup failed:', result.reason);
   }
+  runtimePersistence.close();
 }
 
 function computerUseCapabilityInput() {

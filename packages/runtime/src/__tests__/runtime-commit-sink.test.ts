@@ -1,0 +1,39 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { buildToolOperationId, canonicalToolArgsHash } from '../runtime-commit-sink.js';
+
+describe('RuntimeCommitSink identities', () => {
+  it('builds operation identity from the invocation and provider call, never argument text', () => {
+    const first = buildToolOperationId({
+      invocationId: 'invocation-1',
+      providerToolCallId: 'provider-call-1',
+    });
+    const repeated = buildToolOperationId({
+      invocationId: 'invocation-1',
+      providerToolCallId: 'provider-call-1',
+    });
+    const nextCall = buildToolOperationId({
+      invocationId: 'invocation-1',
+      providerToolCallId: 'provider-call-2',
+    });
+
+    assert.equal(first, repeated);
+    assert.notEqual(first, nextCall);
+    assert.match(first, /^toolop_[a-f0-9]{32}$/);
+  });
+
+  it('hashes stable-json tool identity while preserving semantic argument differences', () => {
+    assert.equal(
+      canonicalToolArgsHash('Read', { path: '/workspace/a', offset: 1 }),
+      canonicalToolArgsHash('Read', { offset: 1, path: '/workspace/a' }),
+    );
+    assert.notEqual(
+      canonicalToolArgsHash('Read', { path: '/workspace/a' }),
+      canonicalToolArgsHash('Read', { path: '/workspace/b' }),
+    );
+    assert.notEqual(
+      canonicalToolArgsHash('Read', { path: '/workspace/a' }),
+      canonicalToolArgsHash('Write', { path: '/workspace/a' }),
+    );
+  });
+});

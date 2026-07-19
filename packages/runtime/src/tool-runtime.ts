@@ -31,6 +31,7 @@ import { computerUseApprovalSummary } from '@maka/core';
 import type { SessionHeader } from '@maka/core/session';
 import type { ToolInvocationRecord } from '@maka/core/usage-stats/types';
 import { redactSecrets } from '@maka/core/redaction';
+import { TOOL_BOUNDARY_PROTOCOL_V1, type RuntimeEvent } from '@maka/core';
 
 import type { PermissionEngine } from './permission-engine.js';
 import type { AsyncEventQueue } from './async-queue.js';
@@ -54,6 +55,12 @@ import {
   type SandboxEscalationPlanResult,
   type SandboxEscalationPlannerContext,
 } from './sandbox-escalation.js';
+import {
+  buildToolOperationId,
+  canonicalToolArgsHash,
+  type RuntimeCommitSink,
+  type ToolRecoveryMode,
+} from './runtime-commit-sink.js';
 import { ChildAgentRunLimiter } from './child-agent-run-limiter.js';
 
 export type ToolModelOutputPart =
@@ -90,6 +97,8 @@ export interface MakaTool<P = any, R = unknown> {
   categoryHint?: ToolCategory;
   /** Optional trusted facts about the executor that runs this tool. */
   executionFacts?: ToolExecutionFacts;
+  /** Crash-recovery contract used by the durable tool boundary. */
+  recoveryMode?: ToolRecoveryMode;
   /** Optional permission/persistence projection derived from isolated execution args. */
   permissionArgs?: (
     args: P,
@@ -217,6 +226,7 @@ export interface ToolRuntimeInput {
   newId: () => string;
   now: () => number;
   getPermissionPauseTarget: () => { pause(): void; resume(): void } | null;
+  getCurrentInvocationId?: () => string | undefined;
   getCurrentRunId?: () => string | undefined;
   agentTeam?: AgentTeamExecutionContext;
   /**
@@ -249,11 +259,34 @@ export interface ToolRuntimeInput {
   permissionRules?: readonly ToolPermissionRule[];
   recordToolInvocation?: ToolTelemetryRecorder;
   recordToolArtifacts?: ToolArtifactRecorder;
+  /** Optional Phase 2 T1/T2 commit boundary. Omitted on legacy JSONL hosts. */
+  runtimeCommitSink?: RuntimeCommitSink;
   approvalCoordinator?: ApprovalCoordinator;
   getAutoApprovalReviewContext?: () => Omit<
     AutoApprovalReviewContext,
     'sessionId' | 'turnId' | 'cwd' | 'permissionMode'
   >;
+}
+
+interface DurableToolAttempt {
+  operationId: string;
+  responseEventId: string;
+  commitOutcome(
+    result: unknown,
+    isError: boolean,
+    durationMs?: number,
+  ): Promise<{ id: string; operationId: string; ts: number }>;
+}
+
+class RuntimeCommitBoundaryError extends Error {
+  constructor(
+    readonly phase: 'T1' | 'T2',
+    cause: unknown,
+  ) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`${phase} runtime commit failed: ${detail}`, { cause });
+    this.name = 'RuntimeCommitBoundaryError';
+  }
 }
 
 export class ToolRuntime {
@@ -281,6 +314,7 @@ export class ToolRuntime {
   private lastAmbiguousComputerSignature: string | undefined;
   private readonly recentSandboxDenials = new Set<string>();
   private readonly autoReviewEscalationAttempts = new Map<string, 'pending' | 'denied'>();
+  private readonly durableToolAttempts = new Map<string, DurableToolAttempt>();
   private readonly approvalCoordinator: ApprovalCoordinator;
 
   constructor(private readonly input: ToolRuntimeInput) {
@@ -358,6 +392,7 @@ export class ToolRuntime {
     this.lastAmbiguousComputerSignature = undefined;
     this.recentSandboxDenials.clear();
     this.autoReviewEscalationAttempts.clear();
+    this.durableToolAttempts.clear();
   }
 
   /**
@@ -390,6 +425,8 @@ export class ToolRuntime {
     queue: AsyncEventQueue<SessionEvent> | { push(event: SessionEvent): void },
   ): Promise<void> {
     const content: ToolResultContent = { kind: 'text', text: formatSyntheticToolErrorText(text) };
+    const durableAttempt = this.durableToolAttempts.get(durableAttemptKey(turnId, toolUseId));
+    const durableOutcome = await durableAttempt?.commitOutcome(content, true);
     const msg: ToolResultMessage = {
       type: 'tool_result',
       id: this.input.newId(),
@@ -402,10 +439,11 @@ export class ToolRuntime {
     await this.input.appendMessage(msg);
     queue.push({
       type: 'tool_result',
-      id: this.input.newId(),
+      id: durableOutcome?.id ?? this.input.newId(),
       turnId,
-      ts: this.input.now(),
+      ts: durableOutcome?.ts ?? this.input.now(),
       toolUseId,
+      ...(durableOutcome ? { operationId: durableOutcome.operationId } : {}),
       isError: true,
       content,
     } satisfies ToolResultEvent);
@@ -444,6 +482,32 @@ export class ToolRuntime {
     const trace = this.input.getRunTrace?.() ?? null;
 
     const stepId = this.input.getCurrentStepId?.();
+    const runId = this.input.getCurrentRunId?.();
+    const invocationId = this.input.getCurrentInvocationId?.() ?? runId;
+    if (this.input.runtimeCommitSink && !runId) {
+      throw new RuntimeCommitBoundaryError(
+        'T1',
+        new Error('Durable tool execution requires a run id'),
+      );
+    }
+    const operationId =
+      this.input.runtimeCommitSink && invocationId
+        ? buildToolOperationId({ invocationId, providerToolCallId: toolUseId })
+        : undefined;
+    const startEv: ToolStartEvent = {
+      type: 'tool_start',
+      id: operationId ? `${operationId}_call` : this.input.newId(),
+      turnId,
+      ts: now,
+      toolUseId,
+      toolName: tool.name,
+      ...(operationId ? { operationId } : {}),
+      ...(tool.activityKind ? { activityKind: tool.activityKind } : {}),
+      args: structuredClone(persistedArgs),
+      ...(tool.displayName ? { displayName: tool.displayName } : {}),
+      ...(toolIntent ? { intent: toolIntent } : {}),
+      ...(stepId !== undefined ? { stepId } : {}),
+    };
     const callMsg: ToolCallMessage = {
       type: 'tool_call',
       id: toolUseId,
@@ -459,19 +523,6 @@ export class ToolRuntime {
       ...(stepId !== undefined ? { stepId } : {}),
     };
     await this.input.appendMessage(callMsg);
-    const startEv: ToolStartEvent = {
-      type: 'tool_start',
-      id: this.input.newId(),
-      turnId,
-      ts: now,
-      toolUseId,
-      toolName: tool.name,
-      ...(tool.activityKind ? { activityKind: tool.activityKind } : {}),
-      args: structuredClone(persistedArgs),
-      ...(tool.displayName ? { displayName: tool.displayName } : {}),
-      ...(toolIntent ? { intent: toolIntent } : {}),
-      ...(stepId !== undefined ? { stepId } : {}),
-    };
     queue.push(startEv);
     trace?.emit('tool', 'tool_started', 'Tool execution started', {
       toolUseId,
@@ -1084,6 +1135,16 @@ export class ToolRuntime {
         return this.errorReturn(reason);
       }
     }
+    const durableAttempt = await this.prepareDurableToolAttempt({
+      tool,
+      startEvent: startEv,
+      persistedArgs,
+      ...(invocationId ? { invocationId } : {}),
+      ...(runId ? { runId } : {}),
+    });
+    if (durableAttempt) {
+      this.durableToolAttempts.set(durableAttemptKey(turnId, toolUseId), durableAttempt);
+    }
     const startedAt = this.input.now();
     const output = createToolOutputDeltaEmitter({
       sessionId: this.input.sessionId,
@@ -1153,6 +1214,11 @@ export class ToolRuntime {
 
         const content = coerceResultContent(result);
         const toolResultStatus = deriveToolResultStatus(content, result);
+        const durableOutcome = await durableAttempt?.commitOutcome(
+          content,
+          toolResultStatus !== 'success',
+          durationMs,
+        );
         if (hasSandboxDenial(content)) {
           const denialKey = sandboxDenialKey(tool.name, this.input.header.cwd, executionArgs);
           this.recentSandboxDenials.add(denialKey);
@@ -1185,10 +1251,11 @@ export class ToolRuntime {
         await this.input.appendMessage(resultMsg);
         queue.push({
           type: 'tool_result',
-          id: this.input.newId(),
+          id: durableOutcome?.id ?? this.input.newId(),
           turnId,
-          ts: this.input.now(),
+          ts: durableOutcome?.ts ?? this.input.now(),
           toolUseId,
+          ...(durableOutcome ? { operationId: durableOutcome.operationId } : {}),
           isError: toolResultStatus !== 'success',
           content,
           durationMs,
@@ -1254,6 +1321,7 @@ export class ToolRuntime {
         pauseTarget?.resume();
       }
     } catch (err) {
+      if (err instanceof RuntimeCommitBoundaryError) throw err;
       output.flush();
       const terminalFailure = coerceTerminalFailure(
         tool,
@@ -1277,6 +1345,11 @@ export class ToolRuntime {
           );
         }
         const durationMs = Math.max(0, this.input.now() - startedAt);
+        const durableOutcome = await durableAttempt?.commitOutcome(
+          terminalFailure.content,
+          true,
+          durationMs,
+        );
         const resultMsg: ToolResultMessage = {
           type: 'tool_result',
           id: this.input.newId(),
@@ -1290,10 +1363,11 @@ export class ToolRuntime {
         await this.input.appendMessage(resultMsg);
         queue.push({
           type: 'tool_result',
-          id: this.input.newId(),
+          id: durableOutcome?.id ?? this.input.newId(),
           turnId,
-          ts: this.input.now(),
+          ts: durableOutcome?.ts ?? this.input.now(),
           toolUseId,
+          ...(durableOutcome ? { operationId: durableOutcome.operationId } : {}),
           isError: true,
           content: terminalFailure.content,
           durationMs,
@@ -1361,6 +1435,151 @@ export class ToolRuntime {
       this.recordLoopGateOutcome(callSignature, attemptFailed);
       if (reservedSubagentSlot) this.releaseSubagentSlot(tool);
     }
+  }
+
+  private async prepareDurableToolAttempt(input: {
+    tool: MakaTool;
+    startEvent: ToolStartEvent;
+    persistedArgs: unknown;
+    invocationId?: string;
+    runId?: string;
+  }): Promise<DurableToolAttempt | undefined> {
+    const sink = this.input.runtimeCommitSink;
+    if (!sink) return undefined;
+    const runId = input.runId;
+    const invocationId = input.invocationId;
+    if (!runId) {
+      throw new RuntimeCommitBoundaryError(
+        'T1',
+        new Error('Durable tool execution requires a run id'),
+      );
+    }
+    if (!invocationId) {
+      throw new RuntimeCommitBoundaryError(
+        'T1',
+        new Error('Durable tool execution requires an invocation id'),
+      );
+    }
+    const operationId = input.startEvent.operationId;
+    if (!operationId)
+      throw new RuntimeCommitBoundaryError('T1', new Error('Tool start has no operation id'));
+    const stateDelta: Record<string, unknown> = {};
+    if (input.startEvent.activityKind !== undefined)
+      stateDelta.activityKind = input.startEvent.activityKind;
+    if (input.startEvent.displayName !== undefined)
+      stateDelta.displayName = input.startEvent.displayName;
+    if (input.startEvent.intent !== undefined) stateDelta.intent = input.startEvent.intent;
+    const callEvent: RuntimeEvent = {
+      id: input.startEvent.id,
+      invocationId,
+      runId,
+      sessionId: this.input.sessionId,
+      turnId: input.startEvent.turnId,
+      ts: input.startEvent.ts,
+      partial: false,
+      role: 'model',
+      author: 'agent',
+      content: {
+        kind: 'function_call',
+        id: input.startEvent.toolUseId,
+        name: input.tool.name,
+        args: structuredClone(input.persistedArgs),
+      },
+      refs: {
+        operationId,
+        toolCallId: input.startEvent.toolUseId,
+        ...(input.startEvent.stepId ? { stepId: input.startEvent.stepId } : {}),
+      },
+      ...(Object.keys(stateDelta).length > 0 ? { actions: { stateDelta } } : {}),
+    };
+    const canonicalArgsHash = canonicalToolArgsHash(input.tool.name, input.persistedArgs);
+    const recoveryMode = input.tool.recoveryMode ?? 'never_auto_retry';
+    const dispatchEvent: RuntimeEvent = {
+      id: `${operationId}_dispatch`,
+      invocationId,
+      runId,
+      sessionId: this.input.sessionId,
+      turnId: input.startEvent.turnId,
+      ts: input.startEvent.ts,
+      partial: false,
+      role: 'system',
+      author: 'system',
+      actions: {
+        toolDispatch: {
+          protocol: TOOL_BOUNDARY_PROTOCOL_V1,
+          operationId,
+          providerToolCallId: input.startEvent.toolUseId,
+          toolName: input.tool.name,
+          canonicalArgsHash,
+          recoveryMode,
+        },
+      },
+      refs: { operationId, toolCallId: input.startEvent.toolUseId },
+    };
+    try {
+      const prepared = await sink.commitToolPrepared({
+        operationId,
+        journalEventId: `${operationId}_prepared`,
+        runtimeEvent: callEvent,
+        dispatchRuntimeEvent: dispatchEvent,
+        providerToolCallId: input.startEvent.toolUseId,
+        toolName: input.tool.name,
+        canonicalArgsHash,
+        recoveryMode,
+        committedAt: this.input.now(),
+      });
+      if (!prepared.created) {
+        throw new Error(`Tool operation ${operationId} is already claimed`);
+      }
+    } catch (error) {
+      throw new RuntimeCommitBoundaryError('T1', error);
+    }
+    let committedOutcome: { id: string; operationId: string; ts: number } | undefined;
+    return {
+      operationId,
+      responseEventId: `${operationId}_response`,
+      commitOutcome: async (result, isError, durationMs) => {
+        if (committedOutcome) return committedOutcome;
+        const responseEvent: RuntimeEvent = {
+          id: `${operationId}_response`,
+          invocationId,
+          runId,
+          sessionId: this.input.sessionId,
+          turnId: input.startEvent.turnId,
+          ts: this.input.now(),
+          partial: false,
+          role: 'tool',
+          author: 'tool',
+          content: {
+            kind: 'function_response',
+            id: input.startEvent.toolUseId,
+            name: input.tool.name,
+            result,
+            ...(isError ? { isError: true } : {}),
+          },
+          refs: {
+            operationId,
+            toolCallId: input.startEvent.toolUseId,
+          },
+          ...(durationMs !== undefined ? { actions: { stateDelta: { durationMs } } } : {}),
+        };
+        try {
+          await sink.commitToolOutcome({
+            operationId,
+            journalEventId: `${operationId}_outcome`,
+            runtimeEvent: responseEvent,
+            committedAt: responseEvent.ts,
+          });
+        } catch (error) {
+          throw new RuntimeCommitBoundaryError('T2', error);
+        }
+        committedOutcome = { id: responseEvent.id, operationId, ts: responseEvent.ts };
+        this.durableToolAttempts.delete(
+          durableAttemptKey(input.startEvent.turnId, input.startEvent.toolUseId),
+        );
+        return committedOutcome;
+      },
+    };
   }
 
   private async awaitPermissionDecision(
@@ -1826,6 +2045,10 @@ function isAmbiguousComputerFailure(raw: unknown): boolean {
       (raw as { error?: unknown }).error === 'stale_frame' &&
       (raw as { failureClass?: unknown }).failureClass === 'ambiguous_target',
   );
+}
+
+function durableAttemptKey(turnId: string, toolUseId: string): string {
+  return `${turnId}\0${toolUseId}`;
 }
 
 function summarizeArgs(toolName: string, args: unknown): string {

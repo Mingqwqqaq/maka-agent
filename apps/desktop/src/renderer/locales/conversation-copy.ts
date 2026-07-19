@@ -55,8 +55,10 @@ export interface DesktopConversationCopy {
   };
   turnError: {
     unknown: string;
+    contextOverflow: string;
     timeout: string;
     auth: string;
+    providerBilling: string;
     rateLimit: string;
     network: string;
     provider: string;
@@ -64,7 +66,7 @@ export interface DesktopConversationCopy {
     tool: string;
     permission: string;
     restarted: string;
-    recovery: Record<'stepCap' | 'toolError' | 'connection' | 'partial' | 'toolRecord' | 'retry', string>;
+    recovery: Record<'safeResume' | 'stepCap' | 'toolError' | 'connection' | 'partial' | 'toolRecord' | 'retry', string>;
   };
 }
 
@@ -107,10 +109,10 @@ const COPY = {
         model_not_chat_capable: { label: '会话模型不支持聊天', tooltip: (name, model) => `模型 "${model}" 不能用于聊天，发送会失败。请到 设置 · 模型 选择支持聊天的模型。` },
         oauth_subscription_not_wired: { label: '订阅连接不能用于聊天', tooltip: (name) => `订阅连接 "${name}" 只用于账号状态查看，发送会失败。请先选择 API key 模型连接。` },
       },
-      reauth: { label: '上次连接测试鉴权失败', tooltip: '最近一次连接测试返回鉴权失败（401 / 403），密钥可能已过期或被吊销。这不会拦截发送，但若发送失败请到 设置 · 账号 重新登录。' },
-      testError: { label: '上次连接测试失败', tooltip: '最近一次连接测试因网络 / 超时 / 5xx 失败。这不会拦截发送，但若问题持续请到 设置 · 账号 检查 Base URL / 代理。' },
+      reauth: { label: '上次连接测试鉴权失败', tooltip: '最近一次连接测试返回鉴权失败（401 / 403），密钥可能已过期或被吊销。这不会拦截发送，但若发送失败请到 设置 · 模型 重新登录。' },
+      testError: { label: '上次连接测试失败', tooltip: '最近一次连接测试因网络 / 超时 / 5xx 失败。这不会拦截发送，但若问题持续请到 设置 · 模型 检查 Base URL / 代理。' },
     },
-    turnError: { unknown: '未知错误', timeout: '请求超时', auth: '鉴权失败', rateLimit: '触发模型速率限制', network: '网络错误', provider: '模型服务返回错误', stepCap: '达到工具步骤上限', tool: '工具调用失败', permission: '等待权限确认', restarted: '本地应用重启，上一轮没有完成', recovery: { stepCap: '任务可能尚未完成，可以继续', toolError: '先检查工具结果，再决定是否重试', connection: '先检查模型连接或登录状态', partial: '已保留部分输出，可从这里继续', toolRecord: '工具记录已保留，重试前先看结果', retry: '没有执行工具，可直接重试' } },
+    turnError: { unknown: '未知错误', contextOverflow: '上下文窗口已超出限制', timeout: '请求超时', auth: '鉴权失败', providerBilling: '模型服务计费受限', rateLimit: '触发模型速率限制', network: '网络错误', provider: '模型服务返回错误', stepCap: '达到工具步骤上限', tool: '工具调用失败', permission: '等待权限确认', restarted: '本地应用重启，上一轮没有完成', recovery: { safeResume: '检查当前状态后，可尝试安全恢复', stepCap: '任务可能尚未完成，可以继续', toolError: '先检查工具结果，再决定是否重试', connection: '先检查模型连接或登录状态', partial: '已保留部分输出，可从这里继续', toolRecord: '工具记录已保留，重试前先看结果', retry: '没有执行工具，可直接重试' } },
   },
   en: {
     actions: { stopFailedTitle: 'Failed to stop', stopFailedFallback: 'The conversation action failed. Try again later.', refreshSessionsFailedTitle: 'Failed to refresh conversations', refreshSessionsFailedFallback: 'The conversation list could not be refreshed. Try again later.', conversationErrorTitle: 'Conversation error', conversationErrorFallback: 'The conversation run failed. Try again later.', regenerateStartedTitle: 'Regeneration started', regenerateStartedDescription: 'Generating a new response', branchCreatedTitle: 'Branch created', branchCreatedDescription: (name) => `New conversation: ${name}`, operationFailedTitle: 'Action failed', operationFailedFallback: 'The conversation action failed. Try again later.', attachmentFailedTitle: 'Failed to add attachment', tryAgain: 'Try again later.', modelReboundTitle: 'Switched to an available model', modelReboundDescription: (modelId) => `The previous connection is unavailable${modelId ? ` · ${modelId}` : ''}`, messageReadFailedTitle: 'Failed to load conversation' },
@@ -150,10 +152,10 @@ const COPY = {
         model_not_chat_capable: { label: 'Conversation model cannot chat', tooltip: (_name, model) => `Model "${model}" cannot be used for chat. Choose a chat-capable model in Settings · Models.` },
         oauth_subscription_not_wired: { label: 'Subscription connection cannot chat', tooltip: (name) => `Subscription connection "${name}" is available only for account status. Choose an API-key model connection.` },
       },
-      reauth: { label: 'Last connection test failed authentication', tooltip: 'The latest test returned 401 / 403. Sending is not blocked, but sign in again under Settings · Account if it fails.' },
+      reauth: { label: 'Last connection test failed authentication', tooltip: 'The latest test returned 401 / 403. Sending is not blocked, but sign in again under Settings · Models if it fails.' },
       testError: { label: 'Last connection test failed', tooltip: 'The latest test failed because of a network, timeout, or 5xx error. Sending is not blocked; check Base URL or proxy settings if it persists.' },
     },
-    turnError: { unknown: 'Unknown error', timeout: 'Request timed out', auth: 'Authentication failed', rateLimit: 'Model rate limit reached', network: 'Network error', provider: 'Model service error', stepCap: 'Tool-step limit reached', tool: 'Tool call failed', permission: 'Waiting for permission', restarted: 'The app restarted before the previous turn completed', recovery: { stepCap: 'The task may be incomplete; continue from here', toolError: 'Inspect the tool result before retrying', connection: 'Check the model connection or sign-in status', partial: 'Partial output was retained; continue from here', toolRecord: 'Tool history was retained; inspect it before retrying', retry: 'No tools ran; retry directly' } },
+    turnError: { unknown: 'Unknown error', contextOverflow: 'Context window exceeded', timeout: 'Request timed out', auth: 'Authentication failed', providerBilling: 'Provider billing required', rateLimit: 'Model rate limit reached', network: 'Network error', provider: 'Model service error', stepCap: 'Tool-step limit reached', tool: 'Tool call failed', permission: 'Waiting for permission', restarted: 'The app restarted before the previous turn completed', recovery: { safeResume: 'Inspect the current state, then try safe recovery', stepCap: 'The task may be incomplete; continue from here', toolError: 'Inspect the tool result before retrying', connection: 'Check the model connection or sign-in status', partial: 'Partial output was retained; continue from here', toolRecord: 'Tool history was retained; inspect it before retrying', retry: 'No tools ran; retry directly' } },
   },
 } satisfies UiCatalog<DesktopConversationCopy>;
 

@@ -1,3 +1,5 @@
+import type { UiLocale } from './ui-locale.js';
+
 export const PERMISSION_REQUEST_HEALTH_STATUSES = ['fresh', 'stale', 'expired'] as const;
 
 export type PermissionRequestHealthStatus = (typeof PERMISSION_REQUEST_HEALTH_STATUSES)[number];
@@ -33,10 +35,19 @@ export function derivePermissionRequestHealth(input: {
   return { status: 'fresh', ageMs };
 }
 
-export function formatPermissionRequestWait(ageMs: number): string {
+export function formatPermissionRequestWait(ageMs: number, locale: UiLocale = 'zh'): string {
   const clamped = Math.max(0, ageMs);
-  if (clamped < 60_000) return '< 1 分钟';
+  if (clamped < 60_000) return locale === 'en' ? '< 1 minute' : '< 1 分钟';
   const minutes = Math.floor(clamped / 60_000);
+  if (locale === 'en') {
+    if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    const hourLabel = `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    return remainder > 0
+      ? `${hourLabel} ${remainder} ${remainder === 1 ? 'minute' : 'minutes'}`
+      : hourLabel;
+  }
   if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
