@@ -3,7 +3,7 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createConnectionStore, createFileCredentialStore } from '@maka/storage';
+import { createConnectionStore, createFileCredentialStore, createSettingsStore } from '@maka/storage';
 import { closeElectronApplication } from './electron-lifecycle.js';
 
 const DESKTOP_ROOT = process.cwd();
@@ -26,6 +26,13 @@ async function seedE2eConnection(userDataDir: string): Promise<void> {
   });
   await credentials.setSecret('e2e', 'api_key', 'e2e-placeholder');
   await connections.setDefault('e2e');
+}
+
+async function seedE2eLocale(userDataDir: string, locale: 'zh' | 'en'): Promise<void> {
+  const workspaceRoot = path.join(userDataDir, 'workspaces', 'default');
+  await createSettingsStore(workspaceRoot).update({
+    personalization: { uiLocale: locale },
+  });
 }
 
 /**
@@ -89,6 +96,9 @@ async function withE2eWindow(
   const rendererLogs: string[] = [];
   try {
     if (seed) await seedE2eConnection(userDataDir);
+    // Legacy E2E specs assert Chinese labels and should not inherit the CI
+    // host locale. Visual-smoke workspaces use the explicit renderer override.
+    if (locale && !visualSmokeScenario) await seedE2eLocale(userDataDir, locale);
     app = await electron.launch({
       args: ['.'],
       cwd: DESKTOP_ROOT,
@@ -143,16 +153,17 @@ export const test = base.extend<{
   botSettingsWindow: Page;
   zhLocaleWindow: Page;
   enLocaleWindow: Page;
+  localeSwitchWindow: Page;
 }>({
   // Seeded: a pre-staged connection clears onboarding so the composer is ready.
   // Used by chat / session / settings / attachment specs.
   window: async ({}, use) => {
-    await withE2eWindow({ seed: true, readinessSelector: '.maka-onboarding-quickchat-input' }, use);
+    await withE2eWindow({ seed: true, readinessSelector: '.maka-onboarding-quickchat-input', locale: 'zh' }, use);
   },
   // Empty: no connection staged — exercises the true first-run boot path.
   // Used by first-run only.
   emptyWindow: async ({}, use) => {
-    await withE2eWindow({ seed: false, readinessSelector: '#root' }, use);
+    await withE2eWindow({ seed: false, readinessSelector: '#root', locale: 'zh' }, use);
   },
   // Long transcript: boots the visual-smoke `long-transcript` fixture, which
   // seeds a 24-turn (~1300px each) session and opens it as the active
@@ -162,7 +173,7 @@ export const test = base.extend<{
   // Used by the scroll-geometry spec.
   longTranscriptWindow: async ({}, use) => {
     await withE2eWindow(
-      { seed: false, readinessSelector: '.maka-turn', visualSmokeScenario: 'long-transcript' },
+      { seed: false, readinessSelector: '.maka-turn', visualSmokeScenario: 'long-transcript', locale: 'zh' },
       use,
     );
   },
@@ -171,7 +182,7 @@ export const test = base.extend<{
   // are covered without a provider or test-only renderer state path.
   permissionWindow: async ({}, use) => {
     await withE2eWindow(
-      { seed: false, readinessSelector: '.maka-permission-prompt', visualSmokeScenario: 'permission-destructive' },
+      { seed: false, readinessSelector: '.maka-permission-prompt', visualSmokeScenario: 'permission-destructive', locale: 'zh' },
       use,
     );
   },
@@ -183,7 +194,7 @@ export const test = base.extend<{
   // Readiness = turns on screen: the fake session is open.
   staleSessionsWindow: async ({}, use) => {
     await withE2eWindow(
-      { seed: false, readinessSelector: '.maka-turn', visualSmokeScenario: 'stale-sessions' },
+      { seed: false, readinessSelector: '.maka-turn', visualSmokeScenario: 'stale-sessions', locale: 'zh' },
       use,
     );
   },
@@ -191,7 +202,7 @@ export const test = base.extend<{
   // workspace so its shell controls and peer tabs run against real IPC data.
   sessionWorkbarWindow: async ({}, use) => {
     await withE2eWindow(
-      { seed: false, readinessSelector: 'aside[aria-label="会话工作栏"]', visualSmokeScenario: 'task-ledger' },
+      { seed: false, readinessSelector: 'aside[aria-label="会话工作栏"]', visualSmokeScenario: 'task-ledger', locale: 'zh' },
       use,
     );
   },
@@ -200,7 +211,7 @@ export const test = base.extend<{
   // The renderer still talks through the real preload/IPC/session authority.
   botSettingsWindow: async ({}, use) => {
     await withE2eWindow(
-      { seed: false, readinessSelector: '[aria-label="设置内容"]', visualSmokeScenario: 'settings-bots' },
+      { seed: false, readinessSelector: '[aria-label="设置内容"]', visualSmokeScenario: 'settings-bots', locale: 'zh' },
       use,
     );
   },
@@ -217,6 +228,11 @@ export const test = base.extend<{
       { seed: false, readinessSelector: '.appFrame', visualSmokeScenario: 'all', locale: 'en' },
       use,
     );
+  },
+  // Keep this fixture unpinned so the Follow system assertion observes the
+  // actual host language while the legacy fixtures remain deterministic.
+  localeSwitchWindow: async ({}, use) => {
+    await withE2eWindow({ seed: true, readinessSelector: '.maka-onboarding-quickchat-input' }, use);
   },
 });
 

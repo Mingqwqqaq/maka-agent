@@ -14,7 +14,7 @@ test('English visual-smoke renderer uses the resolved locale', async ({ enLocale
   expect(screenshot.byteLength).toBeGreaterThan(10_000);
 });
 
-test('locale switching, persistence, and Follow system need no reload', async ({ window: page }) => {
+test('locale switching, persistence, and Follow system need no reload', async ({ localeSwitchWindow: page }) => {
   await page.getByRole('button', { name: /展开侧边栏|Expand sidebar/ }).click();
   await page.getByRole('button', { name: /设置|Settings/ }).click();
   const settings = page.getByRole('main', { name: /设置内容|Settings content/ });
