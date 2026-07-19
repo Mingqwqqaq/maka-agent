@@ -402,7 +402,7 @@ function CapabilityRow(props: { capability: CapabilitySnapshot; copy: Permission
                 >
                   {copyingOfficeCliInstall ? copy.copying : copy.copyInstall}
                 </Button>
-                <a href={OFFICECLI_RELEASES_URL} target="_blank" rel="noreferrer noopener">
+                <a href={OFFICECLI_RELEASES_URL} target="_blank" rel="noreferrer noopener" aria-label={copy.openDownload}>
                   {copy.openDownload}
                 </a>
               </div>

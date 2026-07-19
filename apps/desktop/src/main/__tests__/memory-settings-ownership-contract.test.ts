@@ -22,7 +22,7 @@ describe('Memory Settings ownership', () => {
     assert.match(instructionOwner, /runWriteAction\(`instruction:\$\{file\}:create`/);
     assert.match(
       instructionOwner,
-      /const refreshed = await reload\(\);[\s\S]*if \(!refreshed \|\| !isActionCurrent\(\)\) return;[\s\S]*toast\.success\('已创建项目指令'/,
+      /const refreshed = await reload\(\);[\s\S]*if \(!refreshed \|\| !isActionCurrent\(\)\) return;[\s\S]*toast\.success\(copy\.text\.instructionCreated/,
       'a failed post-create refresh must not claim success or open a file that the visible state still reports missing',
     );
   });

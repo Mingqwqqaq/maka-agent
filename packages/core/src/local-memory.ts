@@ -204,6 +204,7 @@ export interface LocalMemoryEntryDraft {
 
 export const LOCAL_MEMORY_MAX_BYTES = 128 * 1024;
 export const LOCAL_MEMORY_PROMPT_MAX_CHARS = 12_000;
+export const LOCAL_MEMORY_PROMPT_TRUNCATION_MARKER = '[本地记忆已按长度截断]';
 
 const SHA256_K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -262,7 +263,7 @@ export function buildLocalMemoryPromptBody(input: string): string | undefined {
   const body = blocks.join('\n\n').trim();
   if (body.length === 0) return undefined;
   if (body.length <= LOCAL_MEMORY_PROMPT_MAX_CHARS) return body;
-  return `${body.slice(0, LOCAL_MEMORY_PROMPT_MAX_CHARS).trimEnd()}\n\n[本地记忆已按长度截断]`;
+  return `${body.slice(0, LOCAL_MEMORY_PROMPT_MAX_CHARS).trimEnd()}\n\n${LOCAL_MEMORY_PROMPT_TRUNCATION_MARKER}`;
 }
 
 export function appendManualLocalMemoryEntryDraft(

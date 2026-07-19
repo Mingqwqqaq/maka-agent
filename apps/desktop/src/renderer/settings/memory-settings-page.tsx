@@ -1,5 +1,6 @@
 import type { AppSettings, UpdateAppSettingsResult } from '@maka/core';
-import { Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, Textarea } from '@maka/ui';
+import { Button, Chip, Input, RelativeTime, SettingsSwitch as Switch, Textarea, useUiLocale } from '@maka/ui';
+import { getMemorySettingsCopy } from '../locales/settings-memory-copy';
 import { SettingsRows } from './settings-rows';
 import { MemoryEntryList } from './memory-entry-list';
 import { MemoryPromptPreviewSection, WorkspaceInstructionsSection } from './memory-settings-sections';
@@ -18,6 +19,8 @@ export function MemorySettingsPage(props: {
   onUpdate(patch: Parameters<typeof window.maka.settings.update>[0]): Promise<UpdateAppSettingsResult>;
   onReloadSettings(): Promise<void>;
 }) {
+  const locale = useUiLocale();
+  const copy = getMemorySettingsCopy(locale);
   const {
     draft,
     setDraft,
@@ -82,14 +85,14 @@ export function MemorySettingsPage(props: {
       <SettingsRows>
         <div className="settingsFormRow">
           <div>
-            <strong>本地 MEMORY.md</strong>
-            <small>透明 Markdown 文件，保存在当前本机工作区。这里的内容不会自动从聊天里抽取。</small>
+            <strong>{copy.text.localFile}</strong>
+            <small>{copy.text.localFileHelp}</small>
           </div>
           <Chip variant={memoryStatusTone(effective.status)}>
-            {memoryStatusLabel(effective.status)}
+            {memoryStatusLabel(effective.status, copy)}
           </Chip>
           <Switch
-            ariaLabel="启用本地 MEMORY.md"
+            ariaLabel={copy.text.enableLocalFile}
             checked={effective.enabled}
             disabled={memoryControlsDisabled}
             onChange={(enabled) => void setEnabled(enabled)}
@@ -98,11 +101,11 @@ export function MemorySettingsPage(props: {
 
         <div className="settingsFormRow">
           <div>
-            <strong>模型上下文可读取</strong>
-            <small>默认关闭。开启后才允许发送消息时把本地记忆加入 prompt；隐身模式下仍会禁用。</small>
+            <strong>{copy.text.agentReadable}</strong>
+            <small>{copy.text.agentReadableHelp}</small>
           </div>
           <Switch
-            ariaLabel="允许模型上下文读取本地记忆"
+            ariaLabel={copy.text.enableAgentRead}
             checked={effective.agentReadEnabled}
             disabled={memoryControlsDisabled || !effective.enabled}
             onChange={(enabled) => void setAgentReadEnabled(enabled)}
@@ -111,11 +114,11 @@ export function MemorySettingsPage(props: {
 
         <div className="settingsFormRow">
           <div>
-            <strong>项目指令文件</strong>
-            <small>读取当前工作区的 AGENTS.md / CLAUDE.md / GEMINI.md；按低优先级指令注入，可随时关闭。</small>
+            <strong>{copy.text.instructions}</strong>
+            <small>{copy.text.instructionsHelp}</small>
           </div>
           <Switch
-            ariaLabel="启用项目指令文件"
+            ariaLabel={copy.text.enableInstructions}
             checked={props.settings.workspaceInstructions.enabled}
             disabled={memoryControlsDisabled}
             onChange={(enabled) => void workspaceInstructions.setEnabled(enabled)}
@@ -124,6 +127,7 @@ export function MemorySettingsPage(props: {
       </SettingsRows>
 
       <WorkspaceInstructionsSection
+        copy={copy}
         state={workspaceInstructions.state}
         disabled={memoryControlsDisabled}
         isActionPending={workspaceInstructions.isActionPending}
@@ -133,33 +137,31 @@ export function MemorySettingsPage(props: {
 
       <div className="settingsConnectionMeta settingsMemoryMeta">
         <span className="settingsMemoryPath" title={effective.path || undefined}>
-          {effective.path ? displayMemoryPath(effective.path) : '等待创建 MEMORY.md'}
+          {effective.path ? displayMemoryPath(effective.path) : copy.text.waitingFile}
         </span>
         {effective.latestBackup ? (
           <span className="settingsMemoryBackupState">
-            上一版 {localMemoryBackupKindLabel(effective.latestBackup.kind)} · {localMemoryBackupSummary(effective.latestBackup)} · <RelativeTime ts={effective.latestBackup.updatedAt} />
+            {copy.text.openPrevious} · {localMemoryBackupKindLabel(effective.latestBackup.kind, copy)} · {localMemoryBackupSummary(effective.latestBackup, copy)} · <RelativeTime ts={effective.latestBackup.updatedAt} />
           </span>
         ) : (
-          <span className="settingsMemoryBackupState" data-empty="true">等待生成上一版备份</span>
+          <span className="settingsMemoryBackupState" data-empty="true">{copy.text.waitingBackup}</span>
         )}
         <span className="settingsMemoryDirtyState" data-dirty={memoryDraftDirty ? 'true' : 'false'}>
-          {memoryDraftDirty ? '有未保存修改' : '草稿已保存'}
+          {memoryDraftDirty ? copy.text.dirty : copy.text.savedDraft}
         </span>
         <span>
-          {memoryDraftDirty ? '草稿 ' : ''}
-          {visibleMemoryEntries.activeEntries.length} 条生效
+          {copy.countActive(visibleMemoryEntries.activeEntries.length, memoryDraftDirty)}
         </span>
         {visibleMemoryEntries.archivedEntries.length > 0 && (
           <span>
-            {memoryDraftDirty ? '草稿 ' : ''}
-            {visibleMemoryEntries.archivedEntries.length} 条已归档
+            {copy.countArchived(visibleMemoryEntries.archivedEntries.length, memoryDraftDirty)}
           </span>
         )}
       </div>
 
       {effective.backups && effective.backups.length > 1 && (
         <div className="settingsMemoryBackupList" role="status">
-          <strong>备份候选</strong>
+          <strong>{copy.text.backupCandidates}</strong>
           {/* PR-MEMORY-BACKUP-LIST-A11Y-0 (round 16/30): same
               fix as round-7 daily-review archive list. Was
               `<div role="list">` with `<span role="listitem">`
@@ -168,9 +170,9 @@ export function MemorySettingsPage(props: {
               attach to). Switched to semantic <ul>/<li> so
               screen readers get the relationship from the
               elements themselves. */}
-          <ul className="settingsMemoryBackupCandidates" aria-label="本地记忆备份候选列表">
+          <ul className="settingsMemoryBackupCandidates" aria-label={copy.text.backupCandidatesAria}>
             {effective.backups.map((backup) => {
-              const backupCandidateLabel = `${localMemoryBackupKindLabel(backup.kind)} · ${localMemoryBackupSummary(backup)}`;
+              const backupCandidateLabel = `${localMemoryBackupKindLabel(backup.kind, copy)} · ${localMemoryBackupSummary(backup, copy)}`;
               return (
                 <li key={`${backup.kind}:${backup.path}`} className="settingsMemoryBackupCandidate">
                   <span>{backupCandidateLabel} · <RelativeTime ts={backup.updatedAt} /></span>
@@ -179,39 +181,39 @@ export function MemorySettingsPage(props: {
                     variant="secondary"
                     size="sm"
                     className="min-w-[4rem]"
-                    aria-label={`打开备份候选 ${backupCandidateLabel}`}
+                    aria-label={copy.openBackupAria(backupCandidateLabel)}
                     disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending(`backup:${backup.kind}:open`)}
                     onClick={() => void openBackupCandidate(backup)}
                   >
-                    {isMemoryActionPending(`backup:${backup.kind}:open`) ? '打开中…' : '打开'}
+                    {isMemoryActionPending(`backup:${backup.kind}:open`) ? copy.text.opening : copy.text.open}
                   </Button>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
                     className="min-w-[4rem]"
-                    aria-label={`恢复备份候选 ${backupCandidateLabel}`}
+                    aria-label={copy.restoreBackupAria(backupCandidateLabel)}
                     disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending(`backup:${backup.kind}:restore`)}
                     onClick={() => void restoreBackupCandidate(backup)}
                   >
-                    {isMemoryActionPending(`backup:${backup.kind}:restore`) ? '恢复中…' : '恢复'}
+                    {isMemoryActionPending(`backup:${backup.kind}:restore`) ? copy.text.restoring : copy.text.restore}
                   </Button>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
                     className="min-w-[4rem]"
-                    aria-label={`复制备份候选引用 ${backupCandidateLabel}`}
+                    aria-label={copy.copyBackupAria(backupCandidateLabel)}
                     disabled={isMemoryActionPending(`backup:${backup.kind}:copy`)}
                     onClick={() => void copyBackupReference(backup)}
                   >
-                    {isMemoryActionPending(`backup:${backup.kind}:copy`) ? '复制中…' : '复制引用'}
+                    {isMemoryActionPending(`backup:${backup.kind}:copy`) ? copy.text.copying : copy.text.copyReference}
                   </Button>
                 </li>
               );
             })}
           </ul>
-          <small>上一版操作会使用最近的候选；这里只显示 metadata，不展示备份正文。</small>
+          <small>{copy.text.backupHelp}</small>
         </div>
       )}
 
@@ -219,7 +221,7 @@ export function MemorySettingsPage(props: {
         <div className="settingsMemorySaveSummary" role="status">
           <strong>{lastSaveSummary.title}</strong>
           <small className="settingsMemorySaveSummaryTime">
-            保存于 <RelativeTime ts={lastSaveSummary.savedAt} />
+            {copy.text.savedAt}<RelativeTime ts={lastSaveSummary.savedAt} />
           </small>
           <small>{lastSaveSummary.detail}</small>
         </div>
@@ -227,12 +229,13 @@ export function MemorySettingsPage(props: {
 
       {memoryEntryPreviewBlockedReason && (
         <div className="settingsMemoryEntryPreviewNotice" role="status">
-          <strong>草稿条目预览暂停</strong>
+          <strong>{copy.text.previewPaused}</strong>
           <small>{memoryEntryPreviewBlockedReason}</small>
         </div>
       )}
 
       <MemoryPromptPreviewSection
+        copy={copy}
         active={promptPreviewWillInject}
         preview={localMemoryPromptPreview}
         budgetLabel={localMemoryPromptPreviewBudgetLabel}
@@ -249,8 +252,8 @@ export function MemorySettingsPage(props: {
               type="search"
               value={memoryEntryQuery}
               onChange={(event) => setMemoryEntryQuery(event.currentTarget.value)}
-              aria-label="筛选本地记忆"
-              placeholder="筛选标题、内容、ID 或标签"
+              aria-label={copy.text.filterAria}
+              placeholder={copy.text.filterPlaceholder}
             />
             {normalizedMemoryEntryQuery ? (
               <Button
@@ -259,24 +262,25 @@ export function MemorySettingsPage(props: {
                 size="sm"
                 onClick={() => setMemoryEntryQuery('')}
               >
-                清除
+                {copy.text.clear}
               </Button>
             ) : null}
             <small>
               {normalizedMemoryEntryQuery
-                ? `${filteredEntryCount} / ${visibleMemoryEntries.entries.length} 条匹配`
-                : `${visibleMemoryEntries.entries.length} 条记忆`}
+                ? copy.countMatches(filteredEntryCount, visibleMemoryEntries.entries.length)
+                : copy.countEntries(visibleMemoryEntries.entries.length)}
             </small>
           </div>
           {normalizedMemoryEntryQuery && filteredEntryCount === 0 ? (
             <div className="settingsMemoryFilterEmpty" role="status">
-              <strong>没有匹配的记忆条目</strong>
-              <small>筛选不会修改 MEMORY.md；清除筛选后会恢复显示全部条目。</small>
+              <strong>{copy.text.filterEmpty}</strong>
+              <small>{copy.text.filterEmptyHelp}</small>
             </div>
           ) : (
             <div className="settingsMemoryEntryGroups">
               <MemoryEntryList
-                title="生效记忆"
+                title={copy.text.activeMemories}
+                copy={copy}
                 entries={filteredActiveEntries}
                 filtered={normalizedMemoryEntryQuery.length > 0}
                 draftDirty={memoryDraftDirty}
@@ -288,7 +292,8 @@ export function MemorySettingsPage(props: {
               />
               {visibleMemoryEntries.archivedEntries.length > 0 && (
                 <MemoryEntryList
-                  title="已归档记忆"
+                  title={copy.text.archivedMemories}
+                  copy={copy}
                   entries={filteredArchivedEntries}
                   filtered={normalizedMemoryEntryQuery.length > 0}
                   archived
@@ -307,38 +312,38 @@ export function MemorySettingsPage(props: {
 
       {visibleMemoryEntries.entries.length === 0 && !memoryEntryPreviewBlockedReason && (
         <div className="settingsMemoryListEmpty" role="status">
-          <strong>等待添加记忆条目</strong>
-          <small>手动添加会先进入下方草稿；保存后才会写入 MEMORY.md。</small>
+          <strong>{copy.text.waitingEntry}</strong>
+          <small>{copy.text.waitingEntryHelp}</small>
         </div>
       )}
 
-      <div className="settingsMemoryManualAdd" role="group" aria-label="手动添加本地记忆">
+      <div className="settingsMemoryManualAdd" role="group" aria-label={copy.text.manualAddAria}>
         <div className="settingsMemoryManualAddHeader">
-          <strong>手动添加记忆</strong>
-          <small>只追加到下方草稿；保存前仍可检查和修改 Markdown。</small>
+          <strong>{copy.text.manualAdd}</strong>
+          <small>{copy.text.manualAddHelp}</small>
         </div>
         <div className="settingsMemoryManualAddGrid">
           <Input
             type="text"
             value={newMemoryTitle}
             onChange={(event) => setNewMemoryTitle(event.currentTarget.value)}
-            aria-label="记忆标题"
-            placeholder="标题"
+            aria-label={copy.text.titleAria}
+            placeholder={copy.text.titlePlaceholder}
             disabled={memoryControlsDisabled || effective.status === 'incognito_blocked' || !effective.enabled}
           />
           <Input
             type="text"
             value={newMemoryTags}
             onChange={(event) => setNewMemoryTags(event.currentTarget.value)}
-            aria-label="记忆标签"
-            placeholder="标签（逗号分隔，可选）"
+            aria-label={copy.text.tagsAria}
+            placeholder={copy.text.tagsPlaceholder}
             disabled={memoryControlsDisabled || effective.status === 'incognito_blocked' || !effective.enabled}
           />
           <Textarea
             value={newMemoryContent}
             onChange={(event) => setNewMemoryContent(event.currentTarget.value)}
-            aria-label="记忆内容"
-            placeholder="内容"
+            aria-label={copy.text.contentAria}
+            placeholder={copy.text.contentPlaceholder}
             rows={3}
             disabled={memoryControlsDisabled || effective.status === 'incognito_blocked' || !effective.enabled}
           />
@@ -349,19 +354,19 @@ export function MemorySettingsPage(props: {
           disabled={memoryControlsDisabled || effective.status === 'incognito_blocked' || !effective.enabled}
           onClick={addManualMemoryDraftEntry}
         >
-          添加到草稿
+          {copy.text.addDraft}
         </Button>
       </div>
 
       {memoryDraftHasSensitiveFields && (
         <div className="settingsMemoryDraftWarning" role="status">
-          <strong>草稿含疑似敏感字段</strong>
-          <small>保存时会先遮蔽疑似 token、API key 或密码，再写入 MEMORY.md。</small>
+          <strong>{copy.text.sensitiveDraft}</strong>
+          <small>{copy.text.sensitiveDraftHelp}</small>
         </div>
       )}
 
       <label className="settingsMemoryEditor">
-        <span>文件内容</span>
+        <span>{copy.text.fileContent}</span>
         <Textarea
           ref={editorRef}
           value={draft}
@@ -369,7 +374,7 @@ export function MemorySettingsPage(props: {
           disabled={memoryControlsDisabled || effective.status === 'incognito_blocked' || !effective.enabled}
           rows={12}
           spellCheck={false}
-          aria-label="MEMORY.md 内容"
+          aria-label={copy.text.contentEditorAria}
         />
       </label>
 
@@ -379,33 +384,33 @@ export function MemorySettingsPage(props: {
         </div>
       )}
 
-      <div className="settingsActionRow" role="group" aria-label="MEMORY.md 文件操作">
+      <div className="settingsActionRow" role="group" aria-label={copy.text.fileActionsAria}>
         <Button type="button" className="min-w-[3.5rem]" disabled={memoryControlsDisabled || !effective.enabled || !memoryDraftDirty} onClick={() => void save()}>
-          {pendingMemoryWriteAction === 'save' ? '保存中…' : memoryDraftDirty ? '保存' : '已保存'}
+          {pendingMemoryWriteAction === 'save' ? copy.text.saving : memoryDraftDirty ? copy.text.save : copy.text.saved}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[7.5rem]" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:file:open')} onClick={() => void openFile()}>
-          {isMemoryActionPending('memory:file:open') ? '打开中…' : '打开 MEMORY.md'}
+          {isMemoryActionPending('memory:file:open') ? copy.text.opening : copy.text.openFile}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[6rem]" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:folder:open')} onClick={() => void openFolder()}>
-          {isMemoryActionPending('memory:folder:open') ? '打开中…' : '打开所在目录'}
+          {isMemoryActionPending('memory:folder:open') ? copy.text.opening : copy.text.openFolder}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[4rem]" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reloadDraftFromDisk()}>
-          {pendingMemoryWriteAction === 'reload' ? '载入中…' : '重新载入'}
+          {pendingMemoryWriteAction === 'reload' ? copy.text.loading : copy.text.reload}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:open')} onClick={() => void openLatestBackup()}>
-          {isMemoryActionPending('backup:latest:open') ? '打开中…' : '打开上一版'}
+          {isMemoryActionPending('backup:latest:open') ? copy.text.opening : copy.text.openPrevious}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[4rem]" disabled={!effective.path || isMemoryActionPending('memory:path:copy')} onClick={() => void copyPath()}>
-          {isMemoryActionPending('memory:path:copy') ? '复制中…' : '复制路径'}
+          {isMemoryActionPending('memory:path:copy') ? copy.text.copying : copy.text.copyPath}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[7rem]" disabled={!effective.latestBackup || (effective.latestBackup ? isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) : false)} onClick={() => void copyLatestBackupReference()}>
-          {effective.latestBackup && isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) ? '复制中…' : '复制上一版引用'}
+          {effective.latestBackup && isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) ? copy.text.copying : copy.text.copyPrevious}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reset()}>
-          {pendingMemoryWriteAction === 'reset' ? '重置中…' : '重置并备份'}
+          {pendingMemoryWriteAction === 'reset' ? copy.text.resetting : copy.text.resetBackup}
         </Button>
         <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:restore')} onClick={() => void restoreLatestBackup()}>
-          {isMemoryActionPending('backup:latest:restore') ? '恢复中…' : '恢复上一版'}
+          {isMemoryActionPending('backup:latest:restore') ? copy.text.restoring : copy.text.restorePrevious}
         </Button>
       </div>
     </div>

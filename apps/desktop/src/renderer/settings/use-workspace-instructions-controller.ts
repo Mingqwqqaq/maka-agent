@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { UpdateAppSettingsResult } from '@maka/core';
-import { useToast } from '@maka/ui';
+import type { UiLocale, UpdateAppSettingsResult } from '@maka/core';
+import { useToast, useUiLocale } from '@maka/ui';
+import { getMemorySettingsCopy } from '../locales/settings-memory-copy';
 import { settingsActionErrorMessage } from './settings-error-copy';
 import { useKeyedActionGuard } from './use-action-guard';
 
@@ -12,6 +13,8 @@ export interface WorkspaceInstructionsControllerProps {
 }
 
 export function useWorkspaceInstructionsController(props: WorkspaceInstructionsControllerProps) {
+  const locale = useUiLocale();
+  const copy = getMemorySettingsCopy(locale);
   const [state, setState] = useState<WorkspaceInstructionState | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
@@ -44,7 +47,7 @@ export function useWorkspaceInstructionsController(props: WorkspaceInstructionsC
       setState(next);
       return true;
     } catch (error) {
-      if (isCurrent(lifecycle)) toast.error('载入项目指令失败', settingsActionErrorMessage(error));
+      if (isCurrent(lifecycle)) toast.error(copy.text.instructionLoadFailed, settingsActionErrorMessage(error, locale));
       return false;
     } finally {
       if (isCurrent(lifecycle)) setLoading(false);
@@ -89,7 +92,7 @@ export function useWorkspaceInstructionsController(props: WorkspaceInstructionsC
         await props.onUpdate({ workspaceInstructions: { enabled } });
         await props.onReloadSettings();
       } catch (error) {
-        if (isActionCurrent()) toast.error('更新项目指令开关失败', settingsActionErrorMessage(error));
+        if (isActionCurrent()) toast.error(copy.text.instructionToggleFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -98,9 +101,9 @@ export function useWorkspaceInstructionsController(props: WorkspaceInstructionsC
     await runAction(`instruction:${file}:open`, async (isActionCurrent) => {
       try {
         const result = await window.maka.workspaceInstructions.openFile(file);
-        if (isActionCurrent() && !result.ok) toast.error('打开项目指令失败', result.message);
+        if (isActionCurrent() && !result.ok) toast.error(copy.text.instructionOpenFailed, localizedInstructionResult(result.message, locale, copy.text.instructionOpenFailed));
       } catch (error) {
-        if (isActionCurrent()) toast.error('打开项目指令失败', settingsActionErrorMessage(error));
+        if (isActionCurrent()) toast.error(copy.text.instructionOpenFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -111,15 +114,15 @@ export function useWorkspaceInstructionsController(props: WorkspaceInstructionsC
         const result = await window.maka.workspaceInstructions.createFile(file);
         if (!isActionCurrent()) return;
         if (!result.ok) {
-          toast.error('创建项目指令失败', result.message);
+          toast.error(copy.text.instructionCreateFailed, localizedInstructionResult(result.message, locale, copy.text.instructionCreateFailed));
           return;
         }
         const refreshed = await reload();
         if (!refreshed || !isActionCurrent()) return;
-        toast.success('已创建项目指令', file);
+        toast.success(copy.text.instructionCreated, file);
         await openFile(file);
       } catch (error) {
-        if (isActionCurrent()) toast.error('创建项目指令失败', settingsActionErrorMessage(error));
+        if (isActionCurrent()) toast.error(copy.text.instructionCreateFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -134,4 +137,8 @@ export function useWorkspaceInstructionsController(props: WorkspaceInstructionsC
     openFile,
     createFile,
   };
+}
+
+function localizedInstructionResult(message: string, locale: UiLocale, fallback: string): string {
+  return locale === 'zh' || !/[\u3400-\u9fff]/u.test(message) ? message : fallback;
 }

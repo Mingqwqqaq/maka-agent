@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppSettings, LocalMemoryState } from '@maka/core';
+import type { AppSettings, LocalMemoryState, UiLocale } from '@maka/core';
 import {
   appendManualLocalMemoryEntryDraft,
   findLocalMemoryEntryDraftRange,
@@ -17,6 +17,7 @@ import {
 } from './memory-settings-labels';
 import { deriveMemorySettingsViewModel } from './memory-settings-view-model';
 import { useKeyedActionGuard } from './use-action-guard';
+import { getMemorySettingsCopy } from '../locales/settings-memory-copy';
 
 export interface MemoryDocumentControllerProps {
   settings: AppSettings;
@@ -26,6 +27,7 @@ export interface MemoryDocumentControllerProps {
 /** Owns the MEMORY.md document lifecycle; workspace instructions have a separate authority. */
 export function useMemoryDocumentController(props: MemoryDocumentControllerProps) {
   const locale = useUiLocale();
+  const copy = getMemorySettingsCopy(locale);
   type MemoryWriteAction = 'reload' | 'enable' | 'agent-read' | 'save' | 'reset' | 'restore' | 'entry-status';
 
   const [state, setState] = useState<LocalMemoryState | null>(null);
@@ -128,7 +130,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       return true;
     } catch (error) {
       if (isMemoryPageCurrent(lifecycle) && ticket === memoryReloadTicketRef.current) {
-        toast.error('载入本地记忆失败', settingsActionErrorMessage(error));
+        toast.error(copy.text.loadFailed, settingsActionErrorMessage(error, locale));
       }
       return false;
     } finally {
@@ -141,7 +143,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
   async function reloadDraftFromDisk() {
     await runMemoryWriteAction('reload', async (isCurrent) => {
       const ok = await reload();
-      if (ok && isCurrent()) toast.success('已重新载入 MEMORY.md', '未保存的草稿修改已丢弃。');
+      if (ok && isCurrent()) toast.success(copy.text.reloaded, copy.text.reloadDiscarded);
     });
   }
 
@@ -159,7 +161,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         setDraft(next.content);
       });
     } catch (error) {
-      toast.error('更新本地记忆开关失败', settingsActionErrorMessage(error));
+      toast.error(copy.text.toggleFailed, settingsActionErrorMessage(error, locale));
     }
   }
 
@@ -173,7 +175,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         setDraft(next.content);
       });
     } catch (error) {
-      toast.error('更新模型读取权限失败', settingsActionErrorMessage(error));
+      toast.error(copy.text.agentReadFailed, settingsActionErrorMessage(error, locale));
     }
   }
 
@@ -187,27 +189,27 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         setDraft(next.content);
         if (next.status === 'safe_mode') {
           setLastSaveSummary(null);
-          toast.error('保存被拦截', 'MEMORY.md 内容过大，已进入安全模式。');
+          toast.error(copy.text.saveBlocked, copy.text.safeMode);
         } else if (redacted) {
-          const detail = `写入前已替换疑似 token、API key 或密码；${formatLocalMemorySaveSummary(next)}`;
+          const detail = copy.redactedDetail(formatLocalMemorySaveSummary(next, copy));
           setLastSaveSummary({
-            title: '已保存并遮蔽敏感字段',
+            title: copy.text.savedRedacted,
             detail,
             savedAt: Date.now(),
           });
-          toast.success('已保存并遮蔽敏感字段', detail);
+          toast.success(copy.text.savedRedacted, detail);
         } else {
-          const detail = formatLocalMemorySaveSummary(next);
+          const detail = formatLocalMemorySaveSummary(next, copy);
           setLastSaveSummary({
-            title: '已保存 MEMORY.md',
+            title: copy.text.savedFile,
             detail,
             savedAt: Date.now(),
           });
-          toast.success('已保存 MEMORY.md', detail);
+          toast.success(copy.text.savedFile, detail);
         }
       });
     } catch (error) {
-      toast.error('保存 MEMORY.md 失败', settingsActionErrorMessage(error));
+      toast.error(copy.text.saveFailed, settingsActionErrorMessage(error, locale));
     }
   }
 
@@ -219,10 +221,10 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         setState(next);
         setDraft(next.content);
         setLastSaveSummary(null);
-        toast.success('已重置 MEMORY.md', '上一版已保存为备份文件。');
+        toast.success(copy.text.resetDone, copy.text.resetDoneDetail);
       });
     } catch (error) {
-      toast.error('重置 MEMORY.md 失败', settingsActionErrorMessage(error));
+      toast.error(copy.text.resetFailed, settingsActionErrorMessage(error, locale));
     }
   }
 
@@ -232,15 +234,15 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         await runMemoryWriteAction('restore', async (isCurrent) => {
           const backup = state?.latestBackup;
           if (!backup) {
-            toast.error('没有可恢复备份', '保存或重置 MEMORY.md 后才会生成上一版备份。');
+            toast.error(copy.text.noBackup, copy.text.noBackupDetail);
             return;
           }
-          const backupLabel = `${localMemoryBackupKindLabel(backup.kind)} · ${localMemoryBackupSummary(backup)} · ${new Date(backup.updatedAt).toLocaleString()}`;
+          const backupLabel = `${localMemoryBackupKindLabel(backup.kind, copy)} · ${localMemoryBackupSummary(backup, copy)} · ${new Date(backup.updatedAt).toLocaleString(copy.intlLocale)}`;
           const ok = await toast.confirm({
-            title: '恢复上一版 MEMORY.md？',
-            description: `会先备份当前 MEMORY.md，再用最近一次备份覆盖当前文件。将恢复：${backupLabel}`,
-            confirmLabel: '恢复',
-            cancelLabel: '取消',
+            title: copy.text.restoreLatestTitle,
+            description: copy.restoreLatestDescription(backupLabel),
+            confirmLabel: copy.text.confirmRestore,
+            cancelLabel: copy.text.cancel,
             destructive: true,
           });
           if (!ok) return;
@@ -251,13 +253,13 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
           setDraft(result.state.content);
           setLastSaveSummary(null);
           if (result.ok) {
-            toast.success('已恢复上一版 MEMORY.md', `${backupLabel}；恢复前的当前文件已保存为 restore.bak。`);
+            toast.success(copy.text.restoredLatest, `${backupLabel} · ${copy.text.restoredDetail}`);
           } else {
-            toast.error('恢复失败', result.message);
+            toast.error(copy.text.restoreFailed, memoryResultMessage(result.message, locale, copy.text.restoreFailed));
           }
         });
       } catch (error) {
-        toast.error('恢复上一版失败', settingsActionErrorMessage(error));
+        toast.error(copy.text.restoreLatestFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -266,12 +268,12 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     await runMemoryAction(`backup:${backup.kind}:restore`, async () => {
       try {
         await runMemoryWriteAction('restore', async (isCurrent) => {
-          const backupLabel = `${localMemoryBackupKindLabel(backup.kind)} · ${localMemoryBackupSummary(backup)} · ${new Date(backup.updatedAt).toLocaleString()}`;
+          const backupLabel = `${localMemoryBackupKindLabel(backup.kind, copy)} · ${localMemoryBackupSummary(backup, copy)} · ${new Date(backup.updatedAt).toLocaleString(copy.intlLocale)}`;
           const ok = await toast.confirm({
-            title: '恢复这个 MEMORY.md 备份？',
-            description: `会先备份当前 MEMORY.md，再用选中的备份覆盖当前文件。将恢复：${backupLabel}`,
-            confirmLabel: '恢复',
-            cancelLabel: '取消',
+            title: copy.text.restoreCandidateTitle,
+            description: copy.restoreCandidateDescription(backupLabel),
+            confirmLabel: copy.text.confirmRestore,
+            cancelLabel: copy.text.cancel,
             destructive: true,
           });
           if (!ok) return;
@@ -282,13 +284,13 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
           setDraft(result.state.content);
           setLastSaveSummary(null);
           if (result.ok) {
-            toast.success('已恢复 MEMORY.md 备份候选', `${backupLabel}；恢复前的当前文件已保存为 restore.bak。`);
+            toast.success(copy.text.restoredCandidate, `${backupLabel} · ${copy.text.restoredDetail}`);
           } else {
-            toast.error('恢复失败', result.message);
+            toast.error(copy.text.restoreFailed, memoryResultMessage(result.message, locale, copy.text.restoreFailed));
           }
         });
       } catch (error) {
-        toast.error('恢复备份失败', settingsActionErrorMessage(error));
+        toast.error(copy.text.restoreCandidateFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -298,9 +300,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       try {
         const result = await window.maka.memory.openFile();
         if (!isCurrent()) return;
-        if (!result.ok) toast.error('打开失败', result.message);
+        if (!result.ok) toast.error(copy.text.openFailed, memoryResultMessage(result.message, locale, copy.text.openFailed));
       } catch (error) {
-        if (isCurrent()) toast.error('打开失败', settingsActionErrorMessage(error));
+        if (isCurrent()) toast.error(copy.text.openFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -310,9 +312,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       try {
         const result = await window.maka.memory.openLatestBackup();
         if (!isCurrent()) return;
-        if (!result.ok) toast.error('打开上一版失败', result.message);
+        if (!result.ok) toast.error(copy.text.openPreviousFailed, memoryResultMessage(result.message, locale, copy.text.openPreviousFailed));
       } catch (error) {
-        if (isCurrent()) toast.error('打开上一版失败', settingsActionErrorMessage(error));
+        if (isCurrent()) toast.error(copy.text.openPreviousFailed, settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -323,11 +325,11 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         const result = await window.maka.memory.openBackup(backup.kind);
         if (!isCurrent()) return;
         if (!result.ok) {
-          toast.error(`打开${localMemoryBackupKindLabel(backup.kind)}失败`, result.message);
+          toast.error(copy.openBackupFailed(localMemoryBackupKindLabel(backup.kind, copy)), memoryResultMessage(result.message, locale, copy.text.openFailed));
         }
       } catch (error) {
         if (isCurrent())
-          toast.error(`打开${localMemoryBackupKindLabel(backup.kind)}失败`, settingsActionErrorMessage(error));
+          toast.error(copy.openBackupFailed(localMemoryBackupKindLabel(backup.kind, copy)), settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -338,11 +340,11 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         const result = await window.maka.app.openPath('memory');
         if (!isCurrent()) return;
         if (!result.ok) {
-          toast.error(`打开${openPathActionLabel('memory', locale)}失败`, openPathFailureCopy(result.reason, locale));
+          toast.error(copy.openBackupFailed(openPathActionLabel('memory', locale)), openPathFailureCopy(result.reason, locale));
         }
       } catch (error) {
         if (isCurrent())
-          toast.error(`打开${openPathActionLabel('memory', locale)}失败`, settingsActionErrorMessage(error));
+          toast.error(copy.openBackupFailed(openPathActionLabel('memory', locale)), settingsActionErrorMessage(error, locale));
       }
     });
   }
@@ -352,9 +354,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       if (!state?.path) return;
       try {
         await navigator.clipboard.writeText(state.path);
-        if (isCurrent()) toast.success('已复制路径', state.path);
+        if (isCurrent()) toast.success(copy.text.pathCopied, state.path);
       } catch {
-        if (isCurrent()) toast.error('复制失败', '剪贴板不可用或被系统拒绝。');
+        if (isCurrent()) toast.error(copy.text.copyFailed, copy.text.copyFailedDetail);
       }
     });
   }
@@ -362,18 +364,18 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
   async function copyBackupReference(backup: NonNullable<LocalMemoryState['latestBackup']>) {
     await runMemoryAction(`backup:${backup.kind}:copy`, async (isCurrent) => {
       const reference = [
-        `Memory backup: ${localMemoryBackupKindLabel(backup.kind)}`,
+        `Memory backup: ${localMemoryBackupKindLabel(backup.kind, copy)}`,
         `Path: ${backup.path}`,
         `Updated: ${new Date(backup.updatedAt).toISOString()}`,
-        `Entries: ${localMemoryBackupSummary(backup)}`,
+        `Entries: ${localMemoryBackupSummary(backup, copy)}`,
         `Size: ${backup.sizeBytes} bytes`,
         backup.safeMode ? `Safe mode: ${backup.reason ?? 'oversize'}` : 'Safe mode: false',
       ].join('\n');
       try {
         await navigator.clipboard.writeText(reference);
-        if (isCurrent()) toast.success('已复制上一版引用', localMemoryBackupSummary(backup));
+        if (isCurrent()) toast.success(copy.text.backupReferenceCopied, localMemoryBackupSummary(backup, copy));
       } catch {
-        if (isCurrent()) toast.error('复制失败', '剪贴板不可用或被系统拒绝。');
+        if (isCurrent()) toast.error(copy.text.copyFailed, copy.text.copyFailedDetail);
       }
     });
   }
@@ -389,8 +391,8 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       const reference = [
         `Memory entry: ${entry.title}`,
         `ID: ${entry.id}`,
-        `Status: ${memoryEntryStatusLabel(entry.status)}`,
-        `Origin: ${memoryOriginLabel(entry.origin)}`,
+        `Status: ${memoryEntryStatusLabel(entry.status, copy)}`,
+        `Origin: ${memoryOriginLabel(entry.origin, copy)}`,
         entry.createdAt === undefined ? '' : `Created: ${new Date(entry.createdAt).toISOString()}`,
         entry.updatedAt === undefined ? '' : `Updated: ${new Date(entry.updatedAt).toISOString()}`,
         entry.tags.length > 0 ? `Tags: ${entry.tags.join(', ')}` : '',
@@ -399,9 +401,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         .join('\n');
       try {
         await navigator.clipboard.writeText(reference);
-        if (isCurrent()) toast.success('已复制记忆引用', entry.id);
+        if (isCurrent()) toast.success(copy.text.entryReferenceCopied, entry.id);
       } catch {
-        if (isCurrent()) toast.error('复制失败', '剪贴板不可用或被系统拒绝。');
+        if (isCurrent()) toast.error(copy.text.copyFailed, copy.text.copyFailedDetail);
       }
     });
   }
@@ -409,7 +411,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
   function focusMemoryEntryInDraft(entry: LocalMemoryState['entries'][number]) {
     const range = findLocalMemoryEntryDraftRange(draft, entry.id);
     if (!range) {
-      toast.error('无法定位记忆', '当前草稿里找不到这条记忆；请先保存或刷新后重试。');
+      toast.error(copy.text.locateFailed, copy.text.locateFailedDetail);
       return;
     }
     requestAnimationFrame(() => {
@@ -431,13 +433,13 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     if (!result.ok) {
       switch (result.reason) {
         case 'empty_title':
-          toast.error('标题不能为空', '给这条记忆起一个短标题。');
+          toast.error(copy.text.emptyTitle, copy.text.emptyTitleDetail);
           return;
         case 'empty_content':
-          toast.error('内容不能为空', '写下要保留的偏好或事实。');
+          toast.error(copy.text.emptyContent, copy.text.emptyContentDetail);
           return;
         case 'oversize':
-          toast.error('草稿过大', 'MEMORY.md 超出安全上限，请先删减旧内容。');
+          toast.error(copy.text.draftOversize, copy.text.oversizeDetail);
           return;
       }
     }
@@ -445,7 +447,7 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     setNewMemoryTitle('');
     setNewMemoryTags('');
     setNewMemoryContent('');
-    toast.success('已添加到草稿', '确认文件内容后点击保存。');
+    toast.success(copy.text.addedDraft, copy.text.addedDraftDetail);
     requestAnimationFrame(() => {
       editorRef.current?.focus();
       editorRef.current?.setSelectionRange(result.draft.length, result.draft.length);
@@ -463,20 +465,20 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     if (!result.ok) {
       switch (result.reason) {
         case 'invalid_id':
-          toast.error('无法更新记忆', '这条记忆没有可识别 ID，已停止更新。');
+          toast.error(copy.text.updateFailed, copy.text.invalidIdDetail);
           return;
         case 'not_found':
-          toast.error('无法更新记忆', '当前草稿里找不到这条记忆；请先保存或刷新后重试。');
+          toast.error(copy.text.updateFailed, copy.text.locateFailedDetail);
           return;
         case 'oversize':
-          toast.error('无法更新记忆', 'MEMORY.md 超出安全上限，请先删减旧内容。');
+          toast.error(copy.text.updateFailed, copy.text.oversizeDetail);
           return;
       }
     }
 
     if (memoryDraftDirty) {
       setDraft(result.draft);
-      toast.success(status === 'archived' ? '已在草稿中归档记忆' : '已在草稿中恢复记忆', '确认文件内容后点击保存。');
+      toast.success(status === 'archived' ? copy.text.archivedDraft : copy.text.restoredDraft, copy.text.addedDraftDetail);
       return;
     }
 
@@ -487,13 +489,13 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
         setState(next);
         setDraft(next.content);
         if (next.status === 'safe_mode') {
-          toast.error('更新被拦截', 'MEMORY.md 内容过大，已进入安全模式。');
+          toast.error(copy.text.updateBlocked, copy.text.safeMode);
         } else {
-          toast.success(status === 'archived' ? '已归档记忆' : '已恢复记忆', entry.title);
+          toast.success(status === 'archived' ? copy.text.archived : copy.text.restored, entry.title);
         }
       });
     } catch (error) {
-      toast.error(status === 'archived' ? '归档记忆失败' : '恢复记忆失败', settingsActionErrorMessage(error));
+      toast.error(status === 'archived' ? copy.text.archiveFailed : copy.text.entryRestoreFailed, settingsActionErrorMessage(error, locale));
     }
   }
 
@@ -504,8 +506,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
       localMemorySettings: props.settings.localMemory,
       draft,
       query: memoryEntryQuery,
+      copy,
     }),
-    [state, props.settings, draft, memoryEntryQuery],
+    [copy, state, props.settings, draft, memoryEntryQuery],
   );
   const {
     effective,
@@ -530,9 +533,9 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     await runMemoryAction('memory:prompt-preview:copy', async (isCurrent) => {
       try {
         await navigator.clipboard.writeText(localMemoryPromptPreview);
-        if (isCurrent()) toast.success('已复制模型上下文预览', '使用同一条 prompt 预览和遮蔽路径。');
+        if (isCurrent()) toast.success(copy.text.promptCopied, copy.text.promptCopiedDetail);
       } catch {
-        if (isCurrent()) toast.error('复制失败', '剪贴板不可用或被系统拒绝。');
+        if (isCurrent()) toast.error(copy.text.copyFailed, copy.text.copyFailedDetail);
       }
     });
   }
@@ -587,4 +590,8 @@ export function useMemoryDocumentController(props: MemoryDocumentControllerProps
     isMemoryActionPending,
     copyLocalMemoryPromptPreview,
   };
+}
+
+function memoryResultMessage(message: string, locale: UiLocale, fallback: string): string {
+  return locale === 'zh' || !/[\u3400-\u9fff]/u.test(message) ? message : fallback;
 }
