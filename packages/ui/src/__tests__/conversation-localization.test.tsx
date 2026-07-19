@@ -1,12 +1,18 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import type { AnyPermissionRequestEvent, UiLocale, UserQuestionRequestEvent } from '@maka/core';
+import type {
+  AnyPermissionRequestEvent,
+  SessionSummary,
+  UiLocale,
+  UserQuestionRequestEvent,
+} from '@maka/core';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { EmptyChatHero } from '../chat-empty-hero.js';
 import { Composer } from '../composer.js';
 import { LocaleProvider } from '../locale-context.js';
 import { PermissionPrompt } from '../permission-dialog.js';
+import { SessionHistoryList } from '../session-history-list.js';
 import { ToolTrow } from '../tool-activity.js';
 import { summarizeTrowTools } from '../tool-activity/trow-summary.js';
 import { UserQuestionPrompt } from '../user-question-prompt.js';
@@ -39,6 +45,21 @@ const questionRequest = {
   toolUseId: 'tool-question',
   questions: [{ question: 'RAW_QUESTION_中文', options: [{ label: 'RAW_OPTION_中文' }] }],
 } satisfies UserQuestionRequestEvent;
+
+const archivedSession = {
+  id: 'session-archived',
+  name: 'Archived conversation',
+  isFlagged: false,
+  isArchived: true,
+  labels: [],
+  hasUnread: false,
+  status: 'archived',
+  backend: 'ai-sdk',
+  llmConnectionSlug: 'test-connection',
+  connectionLocked: false,
+  model: 'test-model',
+  permissionMode: 'ask',
+} satisfies SessionSummary;
 
 describe('localized conversation journey', () => {
   it('renders coherent empty and composer states in Chinese and English', () => {
@@ -80,6 +101,55 @@ describe('localized conversation journey', () => {
       assert.match(zh, new RegExp(raw));
       assert.match(en, new RegExp(raw));
     }
+  });
+
+  it('localizes stale permission wait durations without mixing unit languages', () => {
+    const staleRequest = {
+      ...permissionRequest,
+      ts: Date.now() - 6 * 60_000,
+    } satisfies AnyPermissionRequestEvent;
+    const zh = render(
+      'zh',
+      <PermissionPrompt request={staleRequest} onRespond={() => {}} onStop={() => {}} />,
+    );
+    const en = render(
+      'en',
+      <PermissionPrompt request={staleRequest} onRespond={() => {}} onStop={() => {}} />,
+    );
+
+    assert.match(zh, /已等待 6 分钟/);
+    assert.match(en, /Waiting for 6 minutes/);
+    assert.doesNotMatch(en, /分钟|小时/);
+  });
+
+  it('formats collapsed session-group counts with locale-correct punctuation', () => {
+    const group = (label: string) => ({
+      id: 'archived',
+      label,
+      sessions: [archivedSession],
+      collapsible: true,
+      defaultExpanded: false,
+    });
+    const zh = render(
+      'zh',
+      <SessionHistoryList
+        sessions={[archivedSession]}
+        statusGroups={[group('已归档')]}
+        onSelectSession={() => {}}
+      />,
+    );
+    const en = render(
+      'en',
+      <SessionHistoryList
+        sessions={[archivedSession]}
+        statusGroups={[group('Archived')]}
+        onSelectSession={() => {}}
+      />,
+    );
+
+    assert.match(zh, /已归档[\s\S]*（1）/);
+    assert.match(en, /Archived[\s\S]*\(1\)/);
+    assert.doesNotMatch(en, /Archived[\s\S]*（1）/);
   });
 
   it('localizes live tool activity without rewriting tool-owned text', () => {

@@ -46,7 +46,8 @@ export function PermissionPrompt(props: {
   onStop(): void | Promise<void>;
   stopPending?: boolean;
 }) {
-  const copy = getConversationCopy(useUiLocale()).permissionPrompt;
+  const locale = useUiLocale();
+  const copy = getConversationCopy(locale).permissionPrompt;
   const [rememberForTurn, setRememberForTurn] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [responsePending, setResponsePending] = useState(false);
@@ -117,7 +118,7 @@ export function PermissionPrompt(props: {
     ? copy.destructiveContext
     : undefined);
   const health = derivePermissionRequestHealth({ requestedAt: props.request.ts, now });
-  const waitLabel = formatPermissionRequestWait(health.ageMs);
+  const waitLabel = formatPermissionRequestWait(health.ageMs, locale);
   const decisionsDisabled = props.stopPending || responsePending;
 
   return (
