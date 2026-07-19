@@ -21,11 +21,11 @@ describe('Settings usage dashboard contract', () => {
     assert.ok(usagePage, 'Usage settings page block must exist');
     assert.match(usagePage![0], /usageDraft\.activeTab === 'requests'/);
     assert.match(usagePage![0], /settingsUsageFilters/);
-    assert.match(usagePage![0], /清除筛选/);
+    assert.match(usagePage![0], /copy\.clearFilters/);
     assert.match(usagePage![0], /status: 'all', modelFilter: ''/);
     assert.match(
       usagePage![0],
-      /\{showRequestDetails && \([\s\S]*?<div className="settingsUsageFilters" role="group" aria-label="请求记录筛选">/,
+      /\{showRequestDetails && \([\s\S]*?<div className="settingsUsageFilters" role="group" aria-label=\{copy\.filtersAria\}>/,
       'Usage filters must render only when request details are visible',
     );
     assert.doesNotMatch(
@@ -34,7 +34,7 @@ describe('Settings usage dashboard contract', () => {
       'Usage request filters must not regress to an anonymous control cluster',
     );
     assert.match(usagePage![0], /<Input value=\{usageDraft\.modelFilter\}/);
-    assert.match(usagePage![0], /按模型或工具筛选/);
+    assert.match(usagePage![0], /placeholder=\{copy\.filterPlaceholder\} aria-label=\{copy\.filterAria\}/);
     assert.match(usagePage![0], /className="settingsUsageDetailToggle"/);
     assert.match(usagePage![0], /className="settingsUsageRecordCount"/);
     assert.match(usagePage![0], /className="settingsUsageClearFilter"/);
@@ -47,7 +47,7 @@ describe('Settings usage dashboard contract', () => {
   it('shows a distinct empty state when request filters hide all logs', async () => {
     const src = await readSettingsCombinedSource();
 
-    assert.match(src, /requestEmpty=\{hasRequestFilters \? '没有符合筛选条件的请求记录' : '暂无请求记录'\}/);
+    assert.match(src, /requestEmpty=\{hasRequestFilters \? copy\.filteredEmpty : copy\.requestEmpty\}/);
     assert.match(src, /empty=\{props\.requestEmpty\}/);
   });
 
@@ -58,8 +58,8 @@ describe('Settings usage dashboard contract', () => {
     assert.ok(usagePage, 'Usage settings page block must exist');
     assert.match(usagePage![0], /const showRequestDetails = usageDraft\.activeTab === 'requests' && usageDraft\.showDetails/);
     assert.match(usagePage![0], /usageDraft\.activeTab === 'requests' && !usageDraft\.showDetails/);
-    assert.match(usagePage![0], /当前仅显示汇总指标/);
-    assert.match(usagePage![0], /显示明细/);
+    assert.match(usagePage![0], /copy\.summaryOnly/);
+    assert.match(usagePage![0], /copy\.showDetails/);
     assert.match(usagePage![0], /showDetails: true/);
     assert.match(usagePage![0], /logs=\{showRequestDetails \? filteredLogs : \[\]\}/);
   });
@@ -71,7 +71,7 @@ describe('Settings usage dashboard contract', () => {
     assert.ok(usagePage, 'Usage settings page block must exist');
     assert.match(
       usagePage![0],
-      /<div className="settingsUsageToolbar" role="group" aria-label="使用统计范围与刷新">/,
+      /<div className="settingsUsageToolbar" role="group" aria-label=\{copy\.toolbarAria\}>/,
       'Usage range selector and refresh action must expose a named control group',
     );
     assert.doesNotMatch(
@@ -81,12 +81,12 @@ describe('Settings usage dashboard contract', () => {
     );
     assert.match(
       usagePage![0],
-      /<Segmented[\s\S]*value=\{usageDraft\.range\}[\s\S]*ariaLabel="使用统计时间范围"/,
+      /<Segmented[\s\S]*value=\{usageDraft\.range\}[\s\S]*ariaLabel=\{copy\.rangeAria\}/,
       'range segmented control must expose what the 24h/7天/30天/all group changes',
     );
     assert.match(
       usagePage![0],
-      /<Segmented[\s\S]*value=\{usageDraft\.activeTab\}[\s\S]*ariaLabel="使用统计视图"/,
+      /<Segmented[\s\S]*value=\{usageDraft\.activeTab\}[\s\S]*ariaLabel=\{copy\.viewAria\}/,
       'tab segmented control must expose what the request/provider/model/tools/pricing group changes',
     );
   });
@@ -98,7 +98,7 @@ describe('Settings usage dashboard contract', () => {
     assert.ok(usagePage, 'Usage settings page block must exist');
     assert.match(
       usagePage![0],
-      /<div className="settingsUsageSummary" role="group" aria-label="使用统计汇总指标">/,
+      /<div className="settingsUsageSummary" role="group" aria-label=\{copy\.summaryAria\}>/,
       'Usage summary metric cards must expose a named group before the tabbed detail tables',
     );
     assert.doesNotMatch(
@@ -113,18 +113,12 @@ describe('Settings usage dashboard contract', () => {
     const usageTable = src.match(/function UsageTable\([\s\S]*?function usageRequestKindLabel/)?.[0] ?? '';
     const simpleStatsTable = src.match(/function SimpleStatsTable\([\s\S]*?function MetricCard/)?.[0] ?? '';
 
-    for (const label of [
-      '使用统计请求日志表',
-      '使用统计供应商统计表',
-      '使用统计模型统计表',
-      '使用统计工具统计表',
-      '使用统计定价配置表',
-    ]) {
-      assert.match(usageTable, new RegExp(`ariaLabel="${label}"`), `UsageTable must name ${label}`);
+    for (const label of ['requestsAria', 'providersAria', 'modelsAria', 'toolsAria', 'pricingAria']) {
+      assert.match(usageTable, new RegExp(`ariaLabel=\\{props\\.copy\\.tables\\.${label}\\}`), `UsageTable must name ${label}`);
     }
     assert.match(
       simpleStatsTable,
-      /function SimpleStatsTable\(props: \{ ariaLabel: string; headers: string\[\]; rows: Array<Array<ReactNode>>; empty\?: string \}\)/,
+      /function SimpleStatsTable\(props: \{ ariaLabel: string; headers: readonly string\[\]; rows: Array<Array<ReactNode>>; empty: string \}\)/,
       'SimpleStatsTable callers must provide a table-specific accessible name',
     );
     assert.match(
@@ -177,11 +171,11 @@ describe('Settings usage dashboard contract', () => {
     );
     assert.match(
       usagePage![0],
-      /\{ onError: \(error\) => toast\.error\('保存使用统计设置失败', settingsActionErrorMessage\(error\)\) \},[\s\S]*function updateUsage\(patch: Partial<AppSettings\['usage'\]>\): Promise<boolean> \{[\s\S]*return update\(patch\);/,
+      /\{ onError: \(error\) => toast\.error\(copy\.saveFailed, settingsActionErrorMessage\(error, locale\)\) \},[\s\S]*function updateUsage\(patch: Partial<AppSettings\['usage'\]>\): Promise<boolean> \{[\s\S]*return update\(patch\);/,
       'Usage settings saves must route through the shared draft update (latest-response sync + rollback owned by the hook)',
     );
     assert.match(usagePage![0], /<Input value=\{usageDraft\.modelFilter\}/);
-    assert.match(usagePage![0], /<SettingsSelect[\s\S]*value=\{usageDraft\.status\}[\s\S]*ariaLabel="请求状态筛选"/);
+    assert.match(usagePage![0], /<SettingsSelect[\s\S]*value=\{usageDraft\.status\}[\s\S]*ariaLabel=\{copy\.statusAria\}/);
     assert.doesNotMatch(
       usagePage![0],
       /<(?:input|Input) value=\{usage\.modelFilter\}/,
@@ -197,7 +191,7 @@ describe('Settings usage dashboard contract', () => {
     assert.match(usagePage![0], /function updateUsage\(patch: Partial<AppSettings\['usage'\]>\): Promise<boolean>/);
     assert.match(
       usagePage![0],
-      /\{ onError: \(error\) => toast\.error\('保存使用统计设置失败', settingsActionErrorMessage\(error\)\) \},[\s\S]*function updateUsage\(patch: Partial<AppSettings\['usage'\]>\): Promise<boolean> \{[\s\S]*return update\(patch\);/,
+      /\{ onError: \(error\) => toast\.error\(copy\.saveFailed, settingsActionErrorMessage\(error, locale\)\) \},[\s\S]*function updateUsage\(patch: Partial<AppSettings\['usage'\]>\): Promise<boolean> \{[\s\S]*return update\(patch\);/,
       'Usage settings updates must surface the save failure through the shared hook (which gates on the latest mounted save) and report failure to callers',
     );
     assert.match(
@@ -298,10 +292,10 @@ describe('Settings usage dashboard contract', () => {
     const usageTable = src.match(/function UsageTable\([\s\S]*?function SimpleStatsTable/);
 
     assert.ok(usageTable, 'Usage table block must exist');
-    assert.match(usageTable![0], /usageRequestStatusLabel\(row\.status\)/);
+    assert.match(usageTable![0], /usageRequestStatusLabel\(row\.status, props\.copy\)/);
     assert.match(src, /function usageRequestStatusLabel/);
-    assert.match(src, /case 'success': return '成功'/);
-    assert.match(src, /case 'error': return '错误'/);
+    assert.match(src, /case 'success': return copy\.tables\.success/);
+    assert.match(src, /case 'error': return copy\.tables\.error/);
     assert.doesNotMatch(
       usageTable![0],
       /,\s*row\.status\]\)/,
@@ -314,17 +308,17 @@ describe('Settings usage dashboard contract', () => {
     const usageTable = src.match(/function UsageTable\([\s\S]*?function usageRequestStatusLabel/);
 
     assert.ok(usageTable, 'Usage table block must exist');
-    assert.match(usageTable![0], /headers=\{\['时间', '类型', '对象', '会话', 'Token', '费用', '延迟', '状态'\]\}/);
-    assert.match(usageTable![0], /usageRequestKindLabel\(row\.kind\)/);
+    assert.match(usageTable![0], /headers=\{props\.copy\.tables\.requestHeaders\}/);
+    assert.match(usageTable![0], /usageRequestKindLabel\(row\.kind, props\.copy\)/);
     assert.match(usageTable![0], /usageRequestTarget\(row\)/);
-    assert.match(usageTable![0], /usageRequestSessionCell\(row, props\.onOpenSession\)/);
+    assert.match(usageTable![0], /usageRequestSessionCell\(row, props\.copy, props\.onOpenSession\)/);
     assert.match(usageTable![0], /row\.kind === 'model' \? `\$\$\{\(row\.costUsd \?\? 0\)\.toFixed\(2\)\}` : '-'/);
-    assert.match(src, /case 'model': return '模型'/);
-    assert.match(src, /case 'tool': return '工具'/);
+    assert.match(src, /case 'model': return copy\.tables\.modelKind/);
+    assert.match(src, /case 'tool': return copy\.tables\.toolKind/);
     assert.match(src, /return row\.kind === 'tool' \? row\.toolName \?\? row\.model : row\.model/);
     assert.match(src, /function usageRequestSessionCell/);
     assert.match(src, /onClick=\{\(\) => onOpenSession\(row\.sessionId\)\}/);
-    assert.match(src, /打开 \{label\}/);
+    assert.match(src, /copy\.tables\.openSession\(label\)/);
     assert.match(src, /function shortUsageSessionId/);
     assert.doesNotMatch(
       usageTable![0],

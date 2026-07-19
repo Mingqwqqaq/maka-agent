@@ -13,49 +13,28 @@ import { openPathFailureCopy, openPathActionLabel } from '../open-path';
 import { SettingsRows, SettingRow } from './settings-rows';
 import { settingsActionErrorMessage } from './settings-error-copy';
 import { useActionGuard } from './use-action-guard';
+import { getDataSettingsCopy, type DataSettingsCopy } from '../locales/settings-data-copy';
 
-const CONFIG_CATEGORY_OPTIONS: ReadonlyArray<{
-  id: ConfigCategory;
-  label: string;
-  detail: string;
-  sensitive?: boolean;
-}> = [
-  {
-    id: 'connections',
-    label: '模型连接',
-    detail: '供应商连接与默认模型（不含密钥）',
-  },
-  {
-    id: 'settings',
-    label: '应用设置',
-    detail: '常规、搜索、机器人、代理等设置',
-  },
-  { id: 'memory', label: '本地记忆', detail: '本机 MEMORY.md 的内容' },
-  {
-    id: 'credentials',
-    label: '凭据（API 密钥、令牌）',
-    detail: '模型密钥与订阅令牌等敏感信息',
-    sensitive: true,
-  },
-];
+const CONFIG_CATEGORY_IDS: readonly ConfigCategory[] = ['connections', 'settings', 'memory', 'credentials'];
 
 type ConfigImportResult = Extract<Awaited<ReturnType<typeof window.maka.config.import>>, { ok: true }>['result'];
 
-function summarizeImportResult(result: ConfigImportResult): string {
+function summarizeImportResult(result: ConfigImportResult, copy: DataSettingsCopy): string {
   const parts: string[] = [];
   const conn = result.connections;
-  if (conn) parts.push(`连接 新增${conn.created}·覆盖${conn.overwritten}·跳过${conn.skipped}`);
-  if (result.settings?.applied) parts.push('设置已应用');
+  if (conn) parts.push(copy.importSummary.connections(conn.created, conn.overwritten, conn.skipped));
+  if (result.settings?.applied) parts.push(copy.importSummary.settings);
   if (result.credentials) {
     const cred = result.credentials;
-    parts.push(cred.skipped > 0 ? `凭据 ${cred.applied}（跳过 ${cred.skipped}）` : `凭据 ${cred.applied}`);
+    parts.push(copy.importSummary.credentials(cred.applied, cred.skipped));
   }
-  if (result.memory?.applied) parts.push('记忆已应用');
-  return parts.join(' · ') || '文件不含可导入的内容';
+  if (result.memory?.applied) parts.push(copy.importSummary.memory);
+  return parts.join(' · ') || copy.importSummary.empty;
 }
 
 export function DataSettingsPage() {
   const locale = useUiLocale();
+  const copy = getDataSettingsCopy(locale);
   const [info, setInfo] = useState<Awaited<ReturnType<typeof window.maka.app.info>> | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [pendingDataAction, setPendingDataAction] = useState<string | null>(null);
@@ -77,15 +56,15 @@ export function DataSettingsPage() {
       }
     }).catch((error) => {
       if (cancelled) return;
-      const message = settingsActionErrorMessage(error);
+      const message = settingsActionErrorMessage(error, locale);
       setInfo(null);
       setInfoError(message);
-      toast.error('载入数据目录失败', message);
+      toast.error(copy.loadFailed, message);
     });
     return () => {
       cancelled = true;
     };
-  }, [toast]);
+  }, [locale, toast]);
 
   async function runDataAction(action: string, run: () => Promise<void>) {
     if (!dataActionGuard.begin(action)) return;
@@ -111,13 +90,13 @@ export function DataSettingsPage() {
         if (!dataPageMountedRef.current) return;
         if (!result.ok) {
           toast.error(
-            `无法打开${openPathActionLabel('workspace', locale)}`,
+            copy.openFailed(openPathActionLabel('workspace', locale)),
             openPathFailureCopy(result.reason, locale),
           );
         }
       } catch (error) {
         if (dataPageMountedRef.current) {
-          toast.error(`无法打开${openPathActionLabel('workspace', locale)}`, settingsActionErrorMessage(error));
+          toast.error(copy.openFailed(openPathActionLabel('workspace', locale)), settingsActionErrorMessage(error, locale));
         }
       }
     });
@@ -129,11 +108,11 @@ export function DataSettingsPage() {
       try {
         await navigator.clipboard.writeText(info.workspacePath);
         if (dataPageMountedRef.current) {
-          toast.success('已复制工作区路径');
+          toast.success(copy.pathCopied);
         }
       } catch {
         if (dataPageMountedRef.current) {
-          toast.error('复制失败', '剪贴板不可用或被系统拒绝。');
+          toast.error(copy.copyFailed, copy.copyFailedDetail);
         }
       }
     });
@@ -143,7 +122,7 @@ export function DataSettingsPage() {
     await runDataAction('input-history:clear', async () => {
       clearGlobalInputHistory();
       if (dataPageMountedRef.current) {
-        toast.success('已清空输入历史', '已发送的提示词记录已从本机移除。');
+        toast.success(copy.historyCleared, copy.historyClearedDetail);
       }
     });
   }
@@ -161,19 +140,19 @@ export function DataSettingsPage() {
     if (configBusy) return;
     const categories = [...selectedCategories];
     if (categories.length === 0) {
-      toast.error('请至少选择一个类别');
+      toast.error(copy.selectCategory);
       return;
     }
     setConfigBusy('export');
     try {
       const res = await window.maka.config.export({ categories });
       if (res.ok) {
-        toast.success('已导出配置', `包含：${res.includedData.join('、')}`);
+        toast.success(copy.exported, copy.exportedDetail(res.includedData));
       } else if (res.reason !== 'canceled') {
-        toast.error('导出失败', res.reason === 'no_categories' ? '未选择任何类别' : '请稍后重试');
+        toast.error(copy.exportFailed, res.reason === 'no_categories' ? copy.noCategories : copy.tryAgain);
       }
     } catch (error) {
-      toast.error('导出失败', settingsActionErrorMessage(error));
+      toast.error(copy.exportFailed, settingsActionErrorMessage(error, locale));
     } finally {
       setConfigBusy(null);
     }
@@ -185,12 +164,15 @@ export function DataSettingsPage() {
     try {
       const res = await window.maka.config.import({ strategy: importStrategy });
       if (res.ok) {
-        toast.success('已导入配置', summarizeImportResult(res.result));
+        toast.success(copy.imported, summarizeImportResult(res.result, copy));
       } else if (res.reason !== 'canceled') {
-        toast.error('导入失败', res.message ?? '文件无效或版本不受支持。');
+        const detail = res.message && (locale === 'zh' || !/[\u3400-\u9fff]/u.test(res.message))
+          ? res.message
+          : copy.invalidFile;
+        toast.error(copy.importFailed, detail);
       }
     } catch (error) {
-      toast.error('导入失败', settingsActionErrorMessage(error));
+      toast.error(copy.importFailed, settingsActionErrorMessage(error, locale));
     } finally {
       setConfigBusy(null);
     }
@@ -200,20 +182,20 @@ export function DataSettingsPage() {
     <div className="settingsStructuredPage">
       <SettingsRows>
         <SettingRow
-          title="工作区路径"
-          detail="会话、设置、凭据和技能文件都存在这个目录下。"
-          value={info?.workspacePath ?? (infoError ? '载入失败' : '正在加载…')}
+          title={copy.rows.workspace}
+          detail={copy.rows.workspaceDetail}
+          value={info?.workspacePath ?? (infoError ? copy.rows.loadValueFailed : copy.rows.loading)}
           mono
         />
         <SettingRow
-          title="存储引擎"
-          detail="会话记录、外观与账号设置、本地使用统计，以及本机凭据文件。"
-          value="本地文件"
+          title={copy.rows.storage}
+          detail={copy.rows.storageDetail}
+          value={copy.rows.localFiles}
         />
         <SettingRow
-          title="输入历史"
-          detail="上箭头 / 下箭头调出的已发送提示词记录，保存在浏览器本地存储里，跨重启保留。清空后无法恢复。"
-          value="本机 localStorage"
+          title={copy.rows.history}
+          detail={copy.rows.historyDetail}
+          value={copy.rows.localStorage}
         />
       </SettingsRows>
       {/* Detail audit: was two wrapped rows with 打开文件夹 wearing primary
@@ -221,14 +203,14 @@ export function DataSettingsPage() {
           One row; utilities are secondary; the destructive action reads
           destructive (red outline family, same recipe as the permission
           dialog confirm). */}
-      <div className="settingsActionRow" role="group" aria-label="工作区数据操作">
+      <div className="settingsActionRow" role="group" aria-label={copy.actionsAria}>
         <Button
           type="button"
           variant="secondary"
           onClick={() => void openWorkspace()}
           disabled={!info || dataActionDisabled}
         >
-          {isDataActionPending('workspace:open') ? '打开中…' : '打开工作区文件夹'}
+          {isDataActionPending('workspace:open') ? copy.opening : copy.openWorkspace}
         </Button>
         <Button
           type="button"
@@ -236,7 +218,7 @@ export function DataSettingsPage() {
           onClick={() => void copyPath()}
           disabled={!info || dataActionDisabled}
         >
-          {isDataActionPending('workspace:path:copy') ? '复制中…' : '复制路径'}
+          {isDataActionPending('workspace:path:copy') ? copy.copying : copy.copyPath}
         </Button>
         <Button
           type="button"
@@ -244,40 +226,40 @@ export function DataSettingsPage() {
           onClick={() => void clearInputHistory()}
           disabled={dataActionDisabled}
         >
-          {isDataActionPending('input-history:clear') ? '清空中…' : '清空输入历史'}
+          {isDataActionPending('input-history:clear') ? copy.clearing : copy.clearHistory}
         </Button>
       </div>
       <div className="settingsNotice">
-        本机数据保存在工作区。需要备份时先退出 Maka，再复制整个目录；恢复时替换同一路径后重启。
-        模型连接凭据随工作区恢复后需要重新测试；订阅账号令牌通常需要重新登录。
+        {copy.backupNotice}
       </div>
       {infoError && (
         <div className="settingsNotice" role="alert">
-          无法载入工作区路径：{infoError}
+          {copy.pathLoadFailed(infoError)}
         </div>
       )}
 
-      <section className="settingsAboutPrivacy" aria-label="配置导入导出">
-        <h3>配置导入导出</h3>
+      <section className="settingsAboutPrivacy" aria-label={copy.configAria}>
+        <h3>{copy.configTitle}</h3>
         <p className="settingsHelpText">
-          勾选要导出的内容，生成一个 JSON 备份文件；换机或重装时可再导入。默认不含密钥。
+          {copy.configHelp}
         </p>
-        <div role="group" aria-label="选择导出内容" className="settingsConfigCategoryList">
-          {CONFIG_CATEGORY_OPTIONS.map((option) => {
-            const checked = selectedCategories.has(option.id);
+        <div role="group" aria-label={copy.categoryAria} className="settingsConfigCategoryList">
+          {CONFIG_CATEGORY_IDS.map((id) => {
+            const option = copy.categories[id];
+            const checked = selectedCategories.has(id);
             return (
-              <div key={option.id} className="settingsConfigCategoryItem">
+              <div key={id} className="settingsConfigCategoryItem">
                 <Switch
-                  ariaLabel={`导出${option.label}`}
+                  ariaLabel={copy.exportCategory(option.label)}
                   checked={checked}
-                  onChange={() => toggleCategory(option.id)}
+                  onChange={() => toggleCategory(id)}
                 />
                 <span>
                   <strong>{option.label}</strong>
                   <small>{option.detail}</small>
                   {option.sensitive && checked ? (
                     <small role="alert" data-tone="destructive">
-                      ⚠️ 密钥将以明文写入导出文件。任何拿到该文件的人都能使用这些密钥，请妥善保管、不要分享。
+                      {copy.sensitiveWarning}
                     </small>
                   ) : null}
                 </span>
@@ -286,14 +268,14 @@ export function DataSettingsPage() {
           })}
         </div>
         <div className="settingsConfigStrategy">
-          <span className="settingsHelpText">导入时同名连接：</span>
+          <span className="settingsHelpText">{copy.importConflict}</span>
           <SettingsSelect
             value={importStrategy}
-            ariaLabel="导入时同名连接的处理方式"
+            ariaLabel={copy.conflictAria}
             options={
               [
-              ['skip', '跳过'],
-              ['overwrite', '覆盖'],
+              ['skip', copy.skip],
+              ['overwrite', copy.overwrite],
               ] satisfies Array<readonly [typeof importStrategy, string]>
             }
             onChange={(strategy) => setImportStrategy(strategy)}
@@ -301,10 +283,10 @@ export function DataSettingsPage() {
         </div>
         <div className="settingsActionRow">
           <Button type="button" disabled={configBusy !== null} onClick={() => void exportConfig()}>
-            {configBusy === 'export' ? '导出中…' : '导出配置…'}
+            {configBusy === 'export' ? copy.exporting : copy.exportConfig}
           </Button>
           <Button type="button" disabled={configBusy !== null} onClick={() => void importConfig()}>
-            {configBusy === 'import' ? '导入中…' : '导入配置…'}
+            {configBusy === 'import' ? copy.importing : copy.importConfig}
           </Button>
         </div>
       </section>

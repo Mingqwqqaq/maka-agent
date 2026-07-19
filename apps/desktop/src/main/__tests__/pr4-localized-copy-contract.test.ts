@@ -9,6 +9,8 @@ import { getArtifactCopy } from '../../renderer/locales/artifact-copy.js';
 import { getMcpCopy } from '../../renderer/locales/mcp-copy.js';
 import { getMcpCatalog } from '../../renderer/mcp-catalog.js';
 import { getPermissionCenterCopy } from '../../renderer/locales/permission-center-copy.js';
+import { getDataSettingsCopy } from '../../renderer/locales/settings-data-copy.js';
+import { getUsageSettingsCopy } from '../../renderer/locales/settings-usage-copy.js';
 import {
   findInlineCjkLiterals,
   findSilentCatalogFallbacks,
@@ -56,6 +58,8 @@ const PR4_DESKTOP_PRESENTATION_FILES = [
   'apps/desktop/src/renderer/mcp-import.ts',
   'apps/desktop/src/renderer/mcp-page.tsx',
   'apps/desktop/src/renderer/settings/permission-center-page.tsx',
+  'apps/desktop/src/renderer/settings/data-settings-page.tsx',
+  'apps/desktop/src/renderer/settings/usage-settings-page.tsx',
   'apps/desktop/src/renderer/settings/open-gateway-settings-page.tsx',
 ] as const;
 
@@ -64,6 +68,8 @@ const PR4_DESKTOP_CATALOG_FILES = [
   'apps/desktop/src/renderer/locales/browser-copy.ts',
   'apps/desktop/src/renderer/locales/mcp-copy.ts',
   'apps/desktop/src/renderer/locales/permission-center-copy.ts',
+  'apps/desktop/src/renderer/locales/settings-data-copy.ts',
+  'apps/desktop/src/renderer/locales/settings-usage-copy.ts',
   'apps/desktop/src/renderer/mcp-catalog.ts',
   'apps/desktop/src/renderer/locales/settings-open-gateway-copy.ts',
 ] as const;
@@ -116,6 +122,8 @@ describe('PR4 remaining desktop copy contract', () => {
     assert.equal(getMcpCatalog('en').find((entry) => entry.id === 'filesystem')?.name, 'Local files');
     assert.equal(getPermissionCenterCopy('zh').title, '权限与能力');
     assert.equal(getPermissionCenterCopy('en').title, 'Permissions and capabilities');
+    assert.equal(getDataSettingsCopy('en').rows.workspace, 'Workspace path');
+    assert.equal(getUsageSettingsCopy('en').tabs[0], 'Request log');
   });
 
   it('contains no inline user-visible Chinese in migrated desktop owners', () => {
