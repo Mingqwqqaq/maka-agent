@@ -29,6 +29,8 @@ import {
 } from './maka-uri.js';
 import { useClipboardCopyFeedback } from './clipboard-feedback.js';
 import { MakaUriContext } from './markdown.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 const MARKDOWN_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
 type StreamdownRehypePlugin = (typeof defaultRehypePlugins)[string];
@@ -184,6 +186,7 @@ function MarkdownLink(props: {
 }) {
   const { href, children, ...rest } = props;
   const dispatch = useContext(MakaUriContext);
+  const copy = getSharedUiCopy(useUiLocale()).markdown;
 
   if (typeof href === 'string' && isMakaUriCandidate(href)) {
     const dest = parseMakaUri(href);
@@ -203,8 +206,8 @@ function MarkdownLink(props: {
       <span
         className="maka-markdown-link maka-markdown-link-broken"
         data-reason="internal-invalid"
-        title="内部链接无效"
-        aria-label="内部链接无效"
+        title={copy.invalidInternalLink}
+        aria-label={copy.invalidInternalLink}
       >
         {children}
       </span>
@@ -222,8 +225,8 @@ function MarkdownLink(props: {
     <span
       className="maka-markdown-link maka-markdown-link-broken"
       data-reason="unsafe-scheme"
-      title="链接不安全"
-      aria-label="链接不安全"
+      title={copy.unsafeLink}
+      aria-label={copy.unsafeLink}
     >
       {children}
     </span>
@@ -231,6 +234,7 @@ function MarkdownLink(props: {
 }
 
 function CodeBlock({ children, ...rest }: { children?: ReactNode }) {
+  const codeCopy = getSharedUiCopy(useUiLocale()).markdown;
   const code = isElementWithClassName(children) ? children : null;
   const lang = code?.props.className?.match(/language-([A-Za-z0-9_+-]+)/)?.[1]?.toLowerCase();
   const copyFeedback = useClipboardCopyFeedback(1400, { redact: false });
@@ -251,7 +255,7 @@ function CodeBlock({ children, ...rest }: { children?: ReactNode }) {
           type="button"
           className="maka-code-block-copy"
           onClick={() => void copy()}
-          aria-label={copyPhase === 'pending' ? '复制代码中' : copyPhase === 'copied' ? '已复制代码' : copyPhase === 'failed' ? '复制代码失败' : '复制代码'}
+          aria-label={copyPhase === 'pending' ? codeCopy.copyingCode : copyPhase === 'copied' ? codeCopy.copiedCode : copyPhase === 'failed' ? codeCopy.copyCodeFailed : codeCopy.copyCode}
           aria-busy={copyPending ? 'true' : undefined}
           disabled={copyPending}
           data-copied={copied}

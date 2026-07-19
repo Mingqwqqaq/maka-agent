@@ -3,6 +3,8 @@ import type { PlanReminder } from '@maka/core';
 import { deriveCapabilityAuditReport } from '@maka/core';
 import { CalendarDays } from './icons.js';
 import { EmptyState } from './empty-state.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 import type {
   BundledSkillCatalogEntry,
   DailyReviewBridge,
@@ -56,12 +58,13 @@ export function SkillsPage(props: {
   onSetSkillEnabled?(skillId: string, enabled: boolean): void | Promise<void>;
   onDeleteSkill?(skillId: string): void | Promise<void>;
 }) {
+  const copy = getSharedUiCopy(useUiLocale()).modules;
   const auditReport = deriveCapabilityAuditReport({
     skills: props.skills ?? [],
     planReminders: props.planReminders ?? [],
   });
   return (
-    <Suspense fallback={<ModulePageFallback label="技能" message="正在加载技能…" />}>
+    <Suspense fallback={<ModulePageFallback label={copy.skills} message={copy.loadingSkills} />}>
       <SkillsModuleMain {...props} auditReport={auditReport} />
     </Suspense>
   );
@@ -81,13 +84,14 @@ export function AutomationsPage(props: {
   onClearRunHistory?: (id: string) => void | Promise<void>;
   onDelete?: (id: string) => void | Promise<void>;
 }) {
+  const copy = getSharedUiCopy(useUiLocale()).modules;
   const auditReport = deriveCapabilityAuditReport({
     skills: props.skills ?? [],
     planReminders: props.reminders ?? [],
   });
   return (
-    <Suspense fallback={<ModulePageFallback label="定时任务" message="正在加载定时任务…" />}>
-      <main className="maka-main detailPane maka-module-main agents-chat-panel" aria-label="定时任务">
+    <Suspense fallback={<ModulePageFallback label={copy.automations} message={copy.loadingAutomations} />}>
+      <main className="maka-main detailPane maka-module-main agents-chat-panel" aria-label={copy.automations}>
         <PlanReminderPanel {...props} reminders={props.reminders ?? []} auditReport={auditReport} />
       </main>
     </Suspense>
@@ -101,25 +105,26 @@ export function DailyReviewPage(props: {
   onAppendMarkdown?: (input: DailyReviewMarkdownActionInput) => Promise<void> | void;
   onSaveMarkdown?: (input: DailyReviewMarkdownActionInput) => Promise<void> | void;
 }) {
+  const copy = getSharedUiCopy(useUiLocale()).modules;
   return (
-    <main className="maka-main detailPane maka-module-main agents-chat-panel" data-module="daily-review" aria-label="每日回顾">
+    <main className="maka-main detailPane maka-module-main agents-chat-panel" data-module="daily-review" aria-label={copy.dailyReview}>
       {props.bridge ? (
         // The PageHeader (title + subtitle + the 生成 actions) now lives INSIDE
         // the panel so the generation buttons can ride the header's actions slot
         // with the panel's run state. The bridge-less fallback keeps its own
         // static header below.
-        <Suspense fallback={<ModulePanelFallback message="正在加载每日回顾…" />}>
+        <Suspense fallback={<ModulePanelFallback message={copy.loadingDailyReview} />}>
           <DailyReviewPanel {...props} bridge={props.bridge} />
         </Suspense>
       ) : (
         <>
           <header className="maka-module-main-header">
             <div>
-              <h2>每日回顾</h2>
-              <p>自动汇总本机对话，生成摘要、遗漏提醒与深度分析；可在设置中开启定时执行。</p>
+              <h2>{copy.dailyReview}</h2>
+              <p>{copy.dailyReviewDescription}</p>
             </div>
           </header>
-          <EmptyState Icon={CalendarDays} title="等待连接每日回顾数据" body="桌面端数据桥当前未连接。" />
+          <EmptyState Icon={CalendarDays} title={copy.dailyReviewDisconnectedTitle} body={copy.dailyReviewDisconnectedBody} />
         </>
       )}
     </main>

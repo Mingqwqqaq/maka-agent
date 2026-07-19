@@ -16,6 +16,8 @@ import { Check, ChevronDown, X } from './icons.js';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from './utils.js';
 import { inputClasses } from './primitives/input.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 export { cn } from './utils.js';
 
@@ -234,6 +236,7 @@ function createModalContent(primitives: {
     { className, children, showClose = primitives.defaultShowClose, ...props },
     ref,
   ) {
+    const copy = getSharedUiCopy(useUiLocale()).primitives;
     const { Portal, Backdrop, Popup, Close, slotPrefix } = primitives;
     return (
       <Portal>
@@ -242,7 +245,7 @@ function createModalContent(primitives: {
           {showClose && (
             <Close
               className={cn(buttonVariants({ variant: 'quiet', size: 'icon-sm' }), 'absolute right-3 top-3')}
-              aria-label="关闭"
+              aria-label={copy.close}
               data-slot={`${slotPrefix}-close`}
             >
               <X aria-hidden="true" />

@@ -1,5 +1,7 @@
-import type { CapabilityAuditReport } from '@maka/core';
+import type { CapabilityAuditReport, UiLocale } from '@maka/core';
+import { useUiLocale } from './locale-context.js';
 import { Alert, AlertDescription } from './primitives/alert.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 /**
  * Designer audit P1-7: this used to be a full-width "能力审计" band on both
@@ -11,20 +13,23 @@ import { Alert, AlertDescription } from './primitives/alert.js';
  * last run), and render nothing at all when everything is fine.
  */
 export function CapabilityAuditStrip(props: { report: CapabilityAuditReport; focus?: 'skills' | 'automations' }) {
-  const issues = capabilityAuditIssues(props.report);
+  const locale = useUiLocale();
+  const copy = getSharedUiCopy(locale).capabilityAudit;
+  const issues = capabilityAuditIssues(props.report, locale);
   if (issues.length === 0) return null;
   return (
-    <Alert variant="warning" className="maka-capability-audit-strip" aria-label="能力风险提示">
+    <Alert variant="warning" className="maka-capability-audit-strip" aria-label={copy.ariaLabel}>
       <AlertDescription>{issues.join(' · ')}</AlertDescription>
     </Alert>
   );
 }
 
-export function capabilityAuditIssues(report: CapabilityAuditReport): string[] {
+export function capabilityAuditIssues(report: CapabilityAuditReport, locale: UiLocale): string[] {
+  const copy = getSharedUiCopy(locale).capabilityAudit;
   const issues: string[] = [];
-  if (report.summary.needsAuthSourceCount > 0) issues.push(`${report.summary.needsAuthSourceCount} 个来源等待授权`);
-  if (report.summary.errorSourceCount > 0) issues.push(`${report.summary.errorSourceCount} 个来源异常`);
-  if (report.summary.failedAutomationCount > 0) issues.push(`${report.summary.failedAutomationCount} 个自动化上次失败`);
-  if (report.summary.skippedAutomationCount > 0) issues.push(`${report.summary.skippedAutomationCount} 个自动化上次跳过`);
+  if (report.summary.needsAuthSourceCount > 0) issues.push(copy.needsAuthorization(report.summary.needsAuthSourceCount));
+  if (report.summary.errorSourceCount > 0) issues.push(copy.sourceErrors(report.summary.errorSourceCount));
+  if (report.summary.failedAutomationCount > 0) issues.push(copy.failedAutomations(report.summary.failedAutomationCount));
+  if (report.summary.skippedAutomationCount > 0) issues.push(copy.skippedAutomations(report.summary.skippedAutomationCount));
   return issues;
 }

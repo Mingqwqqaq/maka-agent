@@ -30,6 +30,8 @@ import {
 import { Toast as BaseToast } from '@base-ui/react/toast';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from './icons.js';
 import { AlertDialogContent, AlertDialogRoot, Button } from './ui.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
@@ -196,6 +198,7 @@ const VARIANT_ICON: Record<ToastVariant, ReactNode> = {
 };
 
 function ToastViewport() {
+  const copy = getSharedUiCopy(useUiLocale()).toast;
   const { toasts } = BaseToast.useToastManager();
   if (toasts.length === 0) return null;
   return (
@@ -206,7 +209,7 @@ function ToastViewport() {
           data-position={TOAST_POSITION}
           role="region"
           aria-live="polite"
-          aria-label="通知"
+          aria-label={copy.notifications}
         />
       }
     >
@@ -243,7 +246,7 @@ function ToastViewport() {
               />
             )}
             <BaseToast.Close
-              aria-label="关闭通知"
+              aria-label={copy.closeNotification}
               render={<Button type="button" variant="quiet" size="icon-sm" />}
             >
               <X size={14} aria-hidden="true" />
@@ -257,11 +260,12 @@ function ToastViewport() {
 
 function ConfirmDialog(props: { request: PendingConfirm; onResolve(result: boolean): void }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const copy = getSharedUiCopy(useUiLocale()).toast;
   const {
     title,
     description,
-    confirmLabel = '确定',
-    cancelLabel = '取消',
+    confirmLabel = copy.confirm,
+    cancelLabel = copy.cancel,
     destructive = false,
   } = props.request;
 

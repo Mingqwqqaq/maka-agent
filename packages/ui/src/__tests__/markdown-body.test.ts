@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { it } from 'node:test';
 import { MarkdownBody } from '../markdown-body.js';
 import { MakaUriContext } from '../markdown.js';
+import { LocaleProvider } from '../locale-context.js';
 
 it('keeps raw HTML inert instead of expanding the Markdown trust surface', () => {
   const markup = renderToStaticMarkup(createElement(MarkdownBody, {
@@ -25,11 +26,17 @@ it('exposes one stable Maka root around rendered Markdown blocks', () => {
 it('preserves allowlisted Maka navigation links through sanitization', () => {
   const markup = renderToStaticMarkup(
     createElement(
-      MakaUriContext.Provider,
-      { value: () => {} },
-      createElement(MarkdownBody, {
-        text: '[Account](maka://settings/account)',
-      }),
+      LocaleProvider,
+      {
+        locale: 'en',
+        children: createElement(
+          MakaUriContext.Provider,
+          { value: () => {} },
+          createElement(MarkdownBody, {
+            text: '[Account](maka://settings/account)',
+          }),
+        ),
+      },
     ),
   );
 

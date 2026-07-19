@@ -19,6 +19,8 @@ import {
 } from './model-picker-internals.js';
 import { cn } from './utils.js';
 import { pickerTriggerClasses, type PickerTriggerAppearance } from './ui.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 export interface ModelPickerProps {
   groups: ModelMenuGroup[];
@@ -116,6 +118,7 @@ function ModelPickerOptions(props: {
   emptyMessage?: string;
   renderProviderMark?(type: ProviderType): ReactNode;
 }) {
+  const copy = getSharedUiCopy(useUiLocale()).modelPicker;
   const filteredGroups = BaseCombobox.useFilteredItems<ModelPickerOptionGroup>();
   const filteredOptions = filteredGroups.flatMap((group) => group.items);
   const noMatches = !modelPickerHasCatalogMatches(filteredOptions) && (props.query.trim().length > 0 || !props.hasPinnedItem);
@@ -123,7 +126,7 @@ function ModelPickerOptions(props: {
   return (
     <>
       {noMatches && (
-        <div className="modelPickerEmpty">{props.emptyMessage ?? '没有匹配的模型'}</div>
+        <div className="modelPickerEmpty">{props.emptyMessage ?? copy.empty}</div>
       )}
       <BaseCombobox.List className="modelPickerList">
         {filteredGroups.map((group) => {
@@ -162,6 +165,7 @@ function ModelPickerOptions(props: {
 }
 
 export function ModelPicker(props: ModelPickerProps) {
+  const copy = getSharedUiCopy(useUiLocale()).modelPicker;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const groups = useMemo(() => buildModelPickerGroups(props.groups, props.pinnedItem), [props.groups, props.pinnedItem]);
@@ -217,8 +221,8 @@ export function ModelPicker(props: ModelPickerProps) {
           <ModelPickerPopup className={props.popupClassName ?? 'settingsSelectMenuPopup modelPickerPopup'}>
             <ModelPickerInput
               className="modelPickerSearchInput"
-              placeholder={props.searchPlaceholder ?? '搜索模型…'}
-              aria-label={props.searchPlaceholder ?? '搜索模型'}
+              placeholder={props.searchPlaceholder ?? copy.searchPlaceholder}
+              aria-label={props.searchPlaceholder ?? copy.searchAriaLabel}
             />
             <ModelPickerOptions
               query={query}
