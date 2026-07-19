@@ -1,14 +1,17 @@
+import type { UiLocale } from '@maka/core';
 import type { McpConfigFile, McpServerConfig } from '@maka/core/mcp';
+import { getMcpCopy } from './locales/mcp-copy.js';
 
-export function parseMcpImport(source: string): McpConfigFile {
+export function parseMcpImport(source: string, locale: UiLocale = 'zh'): McpConfigFile {
+  const copy = getMcpCopy(locale);
   const value: unknown = JSON.parse(source);
-  if (!isRecord(value)) throw new Error('MCP JSON 必须是 object');
+  if (!isRecord(value)) throw new Error(copy.errors.importObject);
 
   if ('mcpServers' in value || 'version' in value) {
     if ('version' in value && value.version !== 1) {
-      throw new Error(`不支持 MCP 配置版本 ${String(value.version)}，当前仅支持 version 1`);
+      throw new Error(copy.errors.importVersion(String(value.version)));
     }
-    if (!isRecord(value.mcpServers)) throw new Error('mcpServers 必须是 object');
+    if (!isRecord(value.mcpServers)) throw new Error(copy.errors.importServersObject);
     return { version: 1, mcpServers: value.mcpServers as Record<string, McpServerConfig> };
   }
 

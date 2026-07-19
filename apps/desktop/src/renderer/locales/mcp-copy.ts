@@ -1,0 +1,130 @@
+import type { UiCatalog, UiLocale } from '@maka/core';
+
+export type McpCopy = {
+  errors: {
+    load: string; install(name: string): string; cancelInstall(name: string): string; save: string; import: string;
+    update: string; test: string; remove: string; unavailableStatus: string; mapLine(line: number): string;
+    importObject: string; importVersion(version: string): string; importServersObject: string;
+  };
+  toast: {
+    templateInstalled(name: string): string; templateInstalledDetail: string; installed(name: string): string;
+    installedDetail: string; installCancelled(name: string): string; saved: string; savedDetail: string;
+    imported: string; importedDetail(count: number): string; connectionOk: string; toolLatency(count: number, latencyMs: number): string;
+    connectionFailed: string; removed: string;
+  };
+  remove: { title(id: string): string; description: string; confirm: string; cancel: string };
+  page: {
+    subtitle: string; actionsAria: string; refreshing: string; refresh: string; importJson: string; add: string;
+    workspaceAria: string; heroTitle: string; heroDescription: string; localStdio: string; connections: string; remoteHttp: string;
+    categoriesAria: string; market: string; installed: string; searchPlaceholder: string; searchAria: string;
+    noMarket: string; noMarketDetail(query: string): string; clearSearch: string; loading: string;
+    noInstalled: string; noInstalledDetail: string; browseMarket: string; noInstalledMatch: string; noInstalledMatchDetail(query: string): string;
+  };
+  card: {
+    macOnly: string; manage: string; cancellingAria(name: string): string; cancelAria(name: string): string; installAria(name: string): string;
+    cancelling: string; cancel: string; install: string;
+  };
+  row: {
+    enabledAria(id: string): string; testing: string; test: string; editAria(id: string): string; edit: string;
+    deleteAria(id: string): string; delete: string; tools(count: number): string; diagnostics: string;
+    disabled: string; disconnected: string; connecting: string; connected(count: number): string; failed: string;
+  };
+  editor: {
+    importTitle: string; editTitle(id: string): string; addTitle: string; importSubtitle: string; manualSubtitle: string;
+    modeAria: string; manual: string; pasteJson: string; jsonConfig: string; jsonHelp: string; cancel: string;
+    importing: string; importConnect: string; transportAria: string; localStdio: string; remoteUrl: string;
+    serverIdHelp: string; argumentsPlaceholder: string; argumentsHelp: string; advanced: string;
+    workingDirectoryPlaceholder: string; environmentHelp: string; headersHelp: string; saving: string; saveConnect: string;
+  };
+};
+
+const MCP_COPY = {
+  zh: {
+    errors: {
+      load: '载入 MCP 失败', install: (name) => `安装 ${name} 失败`, cancelInstall: (name) => `取消安装 ${name} 失败`, save: '保存 MCP 失败',
+      import: '导入 MCP 失败', update: '更新 MCP 失败', test: 'MCP 测试失败', remove: '删除 MCP 失败', unavailableStatus: 'Server 没有返回可用状态。',
+      mapLine: (line) => `第 ${line} 行应为 KEY=value`, importObject: 'MCP JSON 必须是 object',
+      importVersion: (version) => `不支持 MCP 配置版本 ${version}，当前仅支持 version 1`, importServersObject: 'mcpServers 必须是 object',
+    },
+    toast: {
+      templateInstalled: (name) => `${name} 模板已安装`, templateInstalledDetail: '请在「已安装」中完成凭据配置，再启用连接。',
+      installed: (name) => `${name} 已安装`, installedDetail: '发现的工具会从下一次 agent turn 开始生效。', installCancelled: (name) => `已取消安装 ${name}`,
+      saved: 'MCP 已保存', savedDetail: '新工具会从下一次 agent turn 开始生效。', imported: '已导入 MCP',
+      importedDetail: (count) => `本次导入 ${count} 个 server。`, connectionOk: 'MCP 连接正常',
+      toolLatency: (count, latencyMs) => `${count} 个工具 · ${latencyMs} ms`, connectionFailed: 'MCP 连接失败', removed: 'MCP 已删除',
+    },
+    remove: { title: (id) => `删除 MCP「${id}」？`, description: '它提供的工具会从下一次 agent turn 中移除，配置无法自动恢复。', confirm: '删除', cancel: '取消' },
+    page: {
+      subtitle: '连接外部应用、数据与服务，为 Maka 安全地扩展新工具。', actionsAria: 'MCP 操作', refreshing: '刷新中…', refresh: '刷新', importJson: 'JSON 导入', add: '添加 MCP',
+      workspaceAria: 'MCP 市场与已安装项', heroTitle: '把 Maka 连接到你的工作环境', heroDescription: '从精选模板开始，或添加任意 stdio、Streamable HTTP 与 SSE server。',
+      localStdio: '本地 stdio', connections: '连接管理', remoteHttp: '远程 HTTP', categoriesAria: 'MCP 分类', market: '市场', installed: '已安装',
+      searchPlaceholder: '搜索 MCP…', searchAria: '搜索 MCP', noMarket: '没有找到匹配的 MCP', noMarketDetail: (query) => `换一个关键词，或清空「${query}」查看全部模板。`,
+      clearSearch: '清空搜索', loading: '正在读取 MCP 配置…', noInstalled: '还没有安装 MCP', noInstalledDetail: '从市场选择模板，或手动添加你自己的 server。',
+      browseMarket: '浏览市场', noInstalledMatch: '没有匹配的已安装 MCP', noInstalledMatchDetail: (query) => `换一个关键词，或清空「${query}」查看全部已安装项。`,
+    },
+    card: {
+      macOnly: '仅 macOS', manage: '管理', cancellingAria: (name) => `正在取消安装 ${name}`, cancelAria: (name) => `取消安装 ${name}`, installAria: (name) => `安装 ${name}`,
+      cancelling: '正在取消…', cancel: '取消安装', install: '安装',
+    },
+    row: {
+      enabledAria: (id) => `${id} 启用状态`, testing: '测试中…', test: '测试', editAria: (id) => `编辑 ${id}`, edit: '编辑',
+      deleteAria: (id) => `删除 ${id}`, delete: '删除', tools: (count) => `${count} 个工具`, diagnostics: '连接诊断',
+      disabled: '已停用', disconnected: '未连接', connecting: '连接中', connected: (count) => `${count} 个工具`, failed: '连接失败',
+    },
+    editor: {
+      importTitle: '通过 JSON 导入', editTitle: (id) => `编辑 ${id}`, addTitle: '添加 MCP', importSubtitle: '粘贴 mcpServers 配置，同名 server 会被更新。',
+      manualSubtitle: '配置保存在当前工作区的 mcp.json。', modeAria: 'MCP 添加方式', manual: '手动配置', pasteJson: '粘贴 JSON', jsonConfig: 'JSON 配置',
+      jsonHelp: '支持完整 mcpServers 配置或直接的 server map。未在本次导入中出现的已有 MCP 会保留。', cancel: '取消', importing: '导入中…', importConnect: '导入并连接',
+      transportAria: 'MCP transport 类型', localStdio: '本地 stdio', remoteUrl: '远程 URL', serverIdHelp: '稳定标识，也会进入 tool name。',
+      argumentsPlaceholder: '每行一个 argument\n-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder', argumentsHelp: '每行作为独立 argument，不经过 shell interpolation。',
+      advanced: '高级设置', workingDirectoryPlaceholder: '可选，例如 /path/to/project', environmentHelp: '每行一个 KEY=value。', headersHelp: '每行一个 Header=value。',
+      saving: '保存中…', saveConnect: '保存并连接',
+    },
+  },
+  en: {
+    errors: {
+      load: 'Failed to load MCP', install: (name) => `Failed to install ${name}`, cancelInstall: (name) => `Failed to cancel installation of ${name}`, save: 'Failed to save MCP',
+      import: 'Failed to import MCP', update: 'Failed to update MCP', test: 'MCP test failed', remove: 'Failed to delete MCP', unavailableStatus: 'The server did not return an available status.',
+      mapLine: (line) => `Line ${line} must use KEY=value`, importObject: 'MCP JSON must be an object',
+      importVersion: (version) => `Unsupported MCP config version ${version}; only version 1 is supported`, importServersObject: 'mcpServers must be an object',
+    },
+    toast: {
+      templateInstalled: (name) => `${name} template installed`, templateInstalledDetail: 'Finish configuring credentials under Installed before enabling the connection.',
+      installed: (name) => `${name} installed`, installedDetail: 'Discovered tools take effect from the next agent turn.', installCancelled: (name) => `Cancelled installation of ${name}`,
+      saved: 'MCP saved', savedDetail: 'New tools take effect from the next agent turn.', imported: 'MCP imported', importedDetail: (count) => `Imported ${count} ${count === 1 ? 'server' : 'servers'}.`,
+      connectionOk: 'MCP connection healthy', toolLatency: (count, latencyMs) => `${count} ${count === 1 ? 'tool' : 'tools'} · ${latencyMs} ms`,
+      connectionFailed: 'MCP connection failed', removed: 'MCP deleted',
+    },
+    remove: { title: (id) => `Delete MCP “${id}”?`, description: 'Its tools will be removed from the next agent turn, and the configuration cannot be restored automatically.', confirm: 'Delete', cancel: 'Cancel' },
+    page: {
+      subtitle: 'Connect external apps, data, and services to safely extend Maka with new tools.', actionsAria: 'MCP actions', refreshing: 'Refreshing…', refresh: 'Refresh', importJson: 'Import JSON', add: 'Add MCP',
+      workspaceAria: 'MCP marketplace and installed servers', heroTitle: 'Connect Maka to your work environment', heroDescription: 'Start with a curated template, or add any stdio, Streamable HTTP, or SSE server.',
+      localStdio: 'Local stdio', connections: 'Connection management', remoteHttp: 'Remote HTTP', categoriesAria: 'MCP categories', market: 'Marketplace', installed: 'Installed',
+      searchPlaceholder: 'Search MCP…', searchAria: 'Search MCP', noMarket: 'No matching MCP servers', noMarketDetail: (query) => `Try another keyword, or clear “${query}” to view every template.`,
+      clearSearch: 'Clear search', loading: 'Reading MCP configuration…', noInstalled: 'No MCP servers installed', noInstalledDetail: 'Choose a template from the marketplace, or add your own server manually.',
+      browseMarket: 'Browse marketplace', noInstalledMatch: 'No matching installed MCP servers', noInstalledMatchDetail: (query) => `Try another keyword, or clear “${query}” to view every installed server.`,
+    },
+    card: {
+      macOnly: 'macOS only', manage: 'Manage', cancellingAria: (name) => `Cancelling installation of ${name}`, cancelAria: (name) => `Cancel installation of ${name}`, installAria: (name) => `Install ${name}`,
+      cancelling: 'Cancelling…', cancel: 'Cancel installation', install: 'Install',
+    },
+    row: {
+      enabledAria: (id) => `${id} enabled state`, testing: 'Testing…', test: 'Test', editAria: (id) => `Edit ${id}`, edit: 'Edit',
+      deleteAria: (id) => `Delete ${id}`, delete: 'Delete', tools: (count) => `${count} ${count === 1 ? 'tool' : 'tools'}`, diagnostics: 'Connection diagnostics',
+      disabled: 'Disabled', disconnected: 'Disconnected', connecting: 'Connecting', connected: (count) => `${count} ${count === 1 ? 'tool' : 'tools'}`, failed: 'Connection failed',
+    },
+    editor: {
+      importTitle: 'Import from JSON', editTitle: (id) => `Edit ${id}`, addTitle: 'Add MCP', importSubtitle: 'Paste an mcpServers configuration; servers with matching names will be updated.',
+      manualSubtitle: 'Configuration is saved in mcp.json for the current workspace.', modeAria: 'MCP add method', manual: 'Manual configuration', pasteJson: 'Paste JSON', jsonConfig: 'JSON configuration',
+      jsonHelp: 'Supports a complete mcpServers configuration or a server map. Existing MCP servers omitted from this import are preserved.', cancel: 'Cancel', importing: 'Importing…', importConnect: 'Import and connect',
+      transportAria: 'MCP transport type', localStdio: 'Local stdio', remoteUrl: 'Remote URL', serverIdHelp: 'A stable identifier that also appears in tool names.',
+      argumentsPlaceholder: 'One argument per line\n-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder', argumentsHelp: 'Each line is a separate argument and does not use shell interpolation.',
+      advanced: 'Advanced settings', workingDirectoryPlaceholder: 'Optional, for example /path/to/project', environmentHelp: 'One KEY=value entry per line.', headersHelp: 'One Header=value entry per line.',
+      saving: 'Saving…', saveConnect: 'Save and connect',
+    },
+  },
+} satisfies UiCatalog<McpCopy>;
+
+export function getMcpCopy(locale: UiLocale): McpCopy {
+  return MCP_COPY[locale];
+}
