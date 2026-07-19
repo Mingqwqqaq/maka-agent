@@ -21,19 +21,12 @@ import { EmptyState } from './empty-state.js';
 import { SectionHeader } from './primitives/section-header.js';
 import { CapabilityAuditStrip } from './capability-audit-strip.js';
 import type { BundledSkillCatalogEntry, ManagedSkillCategory, ManagedSkillSourceEntry, ManagedSkillUpdatePreview, SkillEntry } from './module-panel-types.js';
+import { getSkillsCopy, type SkillsCopy } from './skills-copy.js';
+import { useUiLocale } from './locale-context.js';
 
 // 市场 tab client-side filter/sort controls. Both are pure renderer
 // state — the managed-source list itself is fetched once over IPC.
 const MARKET_CATEGORY_ALL = '__all__';
-const MARKET_CATEGORIES: ReadonlyArray<ManagedSkillCategory> = [
-  '内容创作',
-  '数据与AI',
-  '设计与UI',
-  'DevOps与部署',
-  '文档与写作',
-  '效率工具',
-  '研究与分析',
-];
 type MarketSort = 'name' | 'recent';
 
 const SKILL_UPDATE_PREVIEW_MAX_LINES = 80;
@@ -65,6 +58,8 @@ function SkillLibraryPanel(props: {
   onInstallBundledSkill?(id: string): void | Promise<void>;
   installingBundledId?: string | null;
 }) {
+  const copy = getSkillsCopy(useUiLocale());
+  const marketCategories = Object.keys(copy.categories) as ManagedSkillCategory[];
   const skillCount = props.skills?.length ?? 0;
   // Designer audit P1-5: land on skills the user can actually run, not the
   // marketplace — every market card is still 即将上线, and leading with
@@ -147,11 +142,11 @@ function SkillLibraryPanel(props: {
     }
     return filtered;
   }, [allManagedSources, marketCategory, marketSort, normalizedSkillQuery]);
-  const skillListEmptyTitle = normalizedSkillQuery ? '没有匹配的 Skill' : '等待添加 Skill';
-  const skillListEmptyBody: ReactNode = normalizedSkillQuery ? '换一个关键词，或清空搜索查看全部本地技能。' : (
+  const skillListEmptyTitle = normalizedSkillQuery ? copy.installed.emptySearchTitle : copy.installed.emptyTitle;
+  const skillListEmptyBody: ReactNode = normalizedSkillQuery ? copy.installed.emptySearchBody : (
     <>
-      把一个含 <code className="maka-empty-state-code">SKILL.md</code> 的文件夹放到工作区的
-      {' '}<code className="maka-empty-state-code">skills/</code> 目录下，刷新后会出现在这里。
+      {copy.installed.emptyBodyBeforeCode} <code className="maka-empty-state-code">SKILL.md</code>{' '}
+      {copy.installed.emptyBodyAfterCode}
     </>
   );
   async function reviewManagedSkillUpdate(skill: SkillEntry) {
@@ -177,20 +172,20 @@ function SkillLibraryPanel(props: {
   }
 
   const categoryOptions: ReadonlyArray<SettingsSelectOption<ManagedSkillCategory | typeof MARKET_CATEGORY_ALL>> = [
-    [MARKET_CATEGORY_ALL, '全部分类'],
-    ...MARKET_CATEGORIES.map((category) => [category, category] as const),
+    [MARKET_CATEGORY_ALL, copy.market.categoryAll],
+    ...marketCategories.map((category) => [category, copy.categories[category]] as const),
   ];
   const sortOptions: ReadonlyArray<SettingsSelectOption<MarketSort>> = [
-    ['name', '排序：名称'],
-    ['recent', '排序：最近'],
+    ['name', copy.market.sortName],
+    ['recent', copy.market.sortRecent],
   ];
   const marketControls = activeSkillTab === 'market' && allManagedSources.length > 0 ? (
-    <div className="maka-skill-market-controls" role="group" aria-label="市场筛选与排序">
+    <div className="maka-skill-market-controls" role="group" aria-label={copy.market.controls}>
       <SettingsSelect<ManagedSkillCategory | typeof MARKET_CATEGORY_ALL>
         value={marketCategory}
         options={categoryOptions}
         onChange={(value) => setMarketCategory(value)}
-        ariaLabel="按分类筛选市场技能"
+        ariaLabel={copy.market.categoryFilter}
         width="full"
         className="maka-skill-market-select"
       />
@@ -198,7 +193,7 @@ function SkillLibraryPanel(props: {
         value={marketSort}
         options={sortOptions}
         onChange={(value) => setMarketSort(value)}
-        ariaLabel="市场技能排序方式"
+        ariaLabel={copy.market.sortAriaLabel}
         width="full"
         className="maka-skill-market-select"
       />
@@ -207,11 +202,11 @@ function SkillLibraryPanel(props: {
 
   const tabs = (
     <div className="maka-skill-tabs-bar">
-      <TabsList variant="underline" className="maka-skill-tabs" aria-label="技能视图">
+      <TabsList variant="underline" className="maka-skill-tabs" aria-label={copy.tabs.ariaLabel}>
         {([
-          ['market', '市场', allManagedSources.length],
-          ['builtin', '内置', bundledCatalog.length],
-          ['installed', '已安装', installedSkills.length],
+          ['market', copy.tabs.market, allManagedSources.length],
+          ['builtin', copy.tabs.builtin, bundledCatalog.length],
+          ['installed', copy.tabs.installed, installedSkills.length],
         ] as const).map(([tab, label, count]) => (
           <TabsTrigger
             key={tab}
@@ -231,38 +226,38 @@ function SkillLibraryPanel(props: {
   );
 
   const banner = (
-    <section className="maka-skill-featured-banner" data-skills-banner aria-label="精选技能">
+    <section className="maka-skill-featured-banner" data-skills-banner aria-label={copy.banner.ariaLabel}>
       <div>
-        <h3>为你精选的职场技能</h3>
-        <p>涵盖写作、效率、设计、数据分析等场景，将陆续上线，敬请期待。</p>
+        <h3>{copy.banner.title}</h3>
+        <p>{copy.banner.body}</p>
       </div>
       <div className="maka-skill-featured-art" aria-hidden="true">
         <span>
           <FileEdit size={22} />
-          <strong>复盘</strong>
-          <small>总结沉淀</small>
+          <strong>{copy.banner.review}</strong>
+          <small>{copy.banner.reviewDetail}</small>
         </span>
         <span>
           <BookOpen size={22} />
-          <strong>文档</strong>
-          <small>审阅润色</small>
+          <strong>{copy.banner.documents}</strong>
+          <small>{copy.banner.documentsDetail}</small>
         </span>
         <span>
           <Blocks size={22} />
-          <strong>发布</strong>
-          <small>检查清单</small>
+          <strong>{copy.banner.publish}</strong>
+          <small>{copy.banner.publishDetail}</small>
         </span>
       </div>
     </section>
   );
 
   const market = (
-    <section className="maka-skill-market" aria-label="技能市场">
+    <section className="maka-skill-market" aria-label={copy.market.ariaLabel}>
       <SectionHeader
         className="maka-skill-section-row"
-        title={<span className="maka-skill-section-label">官方精选</span>}
+        title={<span className="maka-skill-section-label">{copy.market.official}</span>}
         action={
-          <div className="maka-skill-filter-actions" aria-label="来源库操作">
+          <div className="maka-skill-filter-actions" aria-label={copy.market.sourceActions}>
             <UiButton
               type="button"
               variant="secondary"
@@ -270,7 +265,7 @@ function SkillLibraryPanel(props: {
               onClick={props.onImportManagedSkillSource}
               disabled={!props.onImportManagedSkillSource || props.actionBusy}
             >
-              导入本地 Skill
+              {copy.market.importLocal}
             </UiButton>
           </div>
         }
@@ -278,17 +273,17 @@ function SkillLibraryPanel(props: {
       {allManagedSources.length === 0 ? (
         <EmptyState
           Icon={BookOpen}
-          title={normalizedSkillQuery ? '没有匹配的市场技能' : '来源库还是空的'}
+          title={normalizedSkillQuery ? copy.market.emptySearchTitle : copy.market.emptyTitle}
           body={normalizedSkillQuery
-            ? '换一个关键词，或清空搜索查看全部来源。'
-            : '导入一个含 SKILL.md 的本地文件，它会作为可安装的来源出现在这里。'}
+            ? copy.market.emptySearchBody
+            : copy.market.emptyBody}
           extraClassName="maka-skill-installed-empty"
         />
       ) : marketSources.length === 0 ? (
         <EmptyState
           Icon={Search}
-          title="没有匹配的市场技能"
-          body="换一个分类或关键词，或清空筛选查看全部来源。"
+          title={copy.market.emptySearchTitle}
+          body={copy.market.emptyFilterBody}
           extraClassName="maka-skill-installed-empty"
         />
       ) : (
@@ -296,7 +291,7 @@ function SkillLibraryPanel(props: {
           {marketSources.map((source) => {
             const installed = (props.skills ?? []).some((skill) => skill.id === source.id);
             const installing = props.installingSourceId === source.id;
-            const description = source.description || '本地来源库 Skill。';
+            const description = source.description || copy.market.sourceFallback;
             return (
               <article key={source.id} className="maka-skill-market-card">
                 <div className="maka-skill-market-card-head">
@@ -316,16 +311,16 @@ function SkillLibraryPanel(props: {
                     size="icon-sm"
                     onClick={() => props.onInstallManagedSkill?.(source.id)}
                     disabled={installed || props.actionBusy || !props.onInstallManagedSkill}
-                    aria-label={`安装 ${source.name}`}
-                    title={installed ? '已安装到当前工作区' : `安装 ${source.name}`}
+                    aria-label={copy.install.action(source.name)}
+                    title={installed ? copy.install.installedTitle : copy.install.action(source.name)}
                   >
                     {installing ? <Loader2 size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
                   </UiButton>
                 </div>
                 <p>{description}</p>
                 <div className="maka-skill-market-card-foot">
-                  <Chip size="sm" variant="neutral" className="maka-skill-market-category">{source.category}</Chip>
-                  <span>{installed ? '已安装' : '未安装'}</span>
+                  <Chip size="sm" variant="neutral" className="maka-skill-market-category">{copy.categories[source.category]}</Chip>
+                  <span>{installed ? copy.install.installed : copy.install.notInstalled}</span>
                 </div>
               </article>
             );
@@ -336,30 +331,30 @@ function SkillLibraryPanel(props: {
   );
 
   const builtinCatalog = (
-    <section className="maka-skill-market" aria-label="内置技能">
+    <section className="maka-skill-market" aria-label={copy.builtin.ariaLabel}>
       <SectionHeader
         className="maka-skill-section-row"
-        title={<span className="maka-skill-section-label">应用自带</span>}
+        title={<span className="maka-skill-section-label">{copy.builtin.title}</span>}
       />
       {bundledCatalog.length === 0 ? (
         <EmptyState
           Icon={Blocks}
-          title="暂无内置技能"
-          body="应用自带的技能会出现在这里。"
+          title={copy.builtin.emptyTitle}
+          body={copy.builtin.emptyBody}
           extraClassName="maka-skill-installed-empty"
         />
       ) : bundledCatalogFiltered.length === 0 ? (
         <EmptyState
           Icon={Search}
-          title="没有匹配的内置技能"
-          body="换一个关键词，或清空搜索查看全部内置技能。"
+          title={copy.builtin.noMatchTitle}
+          body={copy.builtin.noMatchBody}
           extraClassName="maka-skill-installed-empty"
         />
       ) : (
         <div className="maka-skill-market-grid">
           {bundledCatalogFiltered.map((entry) => {
             const installing = props.installingBundledId === entry.id;
-            const description = entry.description || '应用自带 Skill。';
+            const description = entry.description || copy.builtin.fallback;
             return (
               <article key={entry.id} className="maka-skill-market-card">
                 <div className="maka-skill-market-card-head">
@@ -378,16 +373,16 @@ function SkillLibraryPanel(props: {
                     size="icon-sm"
                     onClick={() => props.onInstallBundledSkill?.(entry.id)}
                     disabled={entry.installed || props.actionBusy || !props.onInstallBundledSkill}
-                    aria-label={`安装 ${entry.name}`}
-                    title={entry.installed ? '已安装到当前工作区' : `安装 ${entry.name}`}
+                    aria-label={copy.install.action(entry.name)}
+                    title={entry.installed ? copy.install.installedTitle : copy.install.action(entry.name)}
                   >
                     {installing ? <Loader2 size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
                   </UiButton>
                 </div>
                 <p>{description}</p>
                 <div className="maka-skill-market-card-foot">
-                  <Chip size="sm" variant="neutral" className="maka-skill-market-category">{entry.category}</Chip>
-                  <span>{entry.installed ? '已安装' : '未安装'}</span>
+                  <Chip size="sm" variant="neutral" className="maka-skill-market-category">{copy.categories[entry.category]}</Chip>
+                  <span>{entry.installed ? copy.install.installed : copy.install.notInstalled}</span>
                 </div>
               </article>
             );
@@ -405,12 +400,12 @@ function SkillLibraryPanel(props: {
           title={emptyTitle}
           body={emptyBody}
           cta={props.onCreateSkillTemplate ? {
-            label: props.createPending ? '创建中…' : '创建示例技能',
+            label: props.createPending ? copy.installed.createPending : copy.installed.createExample,
             onClick: props.onCreateSkillTemplate,
             disabled: props.actionBusy,
           } : undefined}
           secondaryCta={props.onRefreshSkills ? {
-            label: props.refreshPending ? '刷新中…' : '刷新技能',
+            label: props.refreshPending ? copy.installed.refreshPending : copy.installed.refresh,
             onClick: props.onRefreshSkills,
             disabled: props.actionBusy,
           } : undefined}
@@ -421,15 +416,15 @@ function SkillLibraryPanel(props: {
           <SectionHeader
             className="maka-skill-section-row"
             title={<span className="maka-skill-section-label">{label}</span>}
-            count={`${list.length} 个`}
+            count={copy.installed.count(list.length)}
           />
-          <ul className="maka-skill-library-list" aria-label="技能列表">
+          <ul className="maka-skill-library-list" aria-label={copy.installed.listAriaLabel}>
             {list.map((skill) => {
               const tools = skill.declaredTools ?? [];
               const toolsLabel = tools.length > 0 ? tools.join(', ') : '';
-              const description = formatSkillLibraryDescription(skill);
-              const statusLabel = formatSkillStatusLabel(skill);
-              const runtimeLabel = formatSkillRuntimeLabel(skill);
+              const description = formatSkillLibraryDescription(skill, copy);
+              const statusLabel = formatSkillStatusLabel(skill, copy);
+              const runtimeLabel = formatSkillRuntimeLabel(skill, copy);
               const opening = props.openingSkillId === skill.id;
               const updating = props.updatingSkillId === skill.id;
               const toggling = props.togglingSkillId === skill.id;
@@ -439,8 +434,8 @@ function SkillLibraryPanel(props: {
               const reviewableManagedUpdate = skill.managedUpdateStatus === 'update_available' || skill.managedUpdateStatus === 'local_modified';
               const canToggleSkill = Boolean(props.onSetSkillEnabled) && skill.runtimeStatus !== 'state_error';
               const hoverText = tools.length > 0
-                ? `技能：${skill.id}\n\n运行状态：${runtimeLabel}\n来源状态：${statusLabel}\n声明工具：${toolsLabel}\n权限仍按当前会话策略判断；这里不是授权。`
-                : `技能：${skill.id}\n\n运行状态：${runtimeLabel}\n来源状态：${statusLabel}`;
+                ? copy.row.hoverWithTools(skill.id, runtimeLabel, statusLabel, toolsLabel)
+                : copy.row.hover(skill.id, runtimeLabel, statusLabel);
               return (
                 <li key={skill.id} className="maka-skill-library-item" data-runtime-status={skill.runtimeStatus}>
                   <div
@@ -474,10 +469,10 @@ function SkillLibraryPanel(props: {
                         <Chip size="sm" variant="warning" className="maka-skill-library-runtime-label" data-status={skill.runtimeStatus}>{runtimeLabel}</Chip>
                       )}
                       <Chip size="sm" variant={skillStatusChipTone(skill)} className="maka-skill-library-status-label" data-status={skill.managedUpdateStatus ?? skill.validationStatus ?? skill.sourceType ?? 'workspace'}>{statusLabel}</Chip>
-                      {opening && <span>打开中…</span>}
-                      {updating && <span>更新中…</span>}
-                      {toggling && <span>切换中…</span>}
-                      {reviewing && <span>审查中…</span>}
+                      {opening && <span>{copy.row.opening}</span>}
+                      {updating && <span>{copy.row.updating}</span>}
+                      {toggling && <span>{copy.row.toggling}</span>}
+                      {reviewing && <span>{copy.row.reviewing}</span>}
                     </span>
                   </div>
                   {props.onUseSkill && skill.enabled && (
@@ -488,9 +483,9 @@ function SkillLibraryPanel(props: {
                       className="maka-skill-library-use-button"
                       onClick={() => props.onUseSkill?.(skill.id, skill.name)}
                       disabled={props.actionBusy}
-                      aria-label={`在对话中使用 ${skill.name}`}
+                      aria-label={copy.row.useAriaLabel(skill.name)}
                     >
-                      使用
+                      {copy.row.use}
                     </UiButton>
                   )}
                   <UiButton
@@ -500,8 +495,8 @@ function SkillLibraryPanel(props: {
                     className="maka-skill-library-open-button"
                     onClick={() => props.onOpenSkill?.(skill.id)}
                     disabled={props.actionBusy || !props.onOpenSkill}
-                    aria-label={`打开 ${skill.name} 的 SKILL.md`}
-                    title="打开 SKILL.md"
+                    aria-label={copy.row.openAriaLabel(skill.name)}
+                    title={copy.row.openTitle}
                   >
                     {opening ? <Loader2 size={15} aria-hidden="true" /> : <FileEdit size={15} aria-hidden="true" />}
                   </UiButton>
@@ -509,8 +504,8 @@ function SkillLibraryPanel(props: {
                     className="maka-skill-library-runtime-switch"
                     checked={skill.enabled}
                     disabled={props.actionBusy || !canToggleSkill}
-                    aria-label={skill.enabled ? `停用 ${skill.name}` : `启用 ${skill.name}`}
-                    title={skill.runtimeStatus === 'state_error' ? '当前项目的 Skill 状态文件异常' : skill.enabled ? '当前项目中 agent 可以使用此技能' : '当前项目中 agent 不会看到或加载此技能'}
+                    aria-label={skill.enabled ? copy.row.disableAriaLabel(skill.name) : copy.row.enableAriaLabel(skill.name)}
+                    title={skill.runtimeStatus === 'state_error' ? copy.row.stateErrorTitle : skill.enabled ? copy.row.enabledTitle : copy.row.disabledTitle}
                     onCheckedChange={(next) => props.onSetSkillEnabled?.(skill.id, next === true)}
                   />
                   {reviewableManagedUpdate && props.onPreviewManagedSkillUpdate && (
@@ -521,7 +516,7 @@ function SkillLibraryPanel(props: {
                       onClick={() => void reviewManagedSkillUpdate(skill)}
                       disabled={props.actionBusy || reviewingSkillId !== null}
                     >
-                      {reviewing ? '审查中…' : skill.managedUpdateStatus === 'local_modified' ? '查看差异' : '查看更新'}
+                      {reviewing ? copy.row.reviewing : skill.managedUpdateStatus === 'local_modified' ? copy.row.viewDiff : copy.row.viewUpdate}
                     </UiButton>
                   )}
                   {props.onDeleteSkill && (
@@ -533,10 +528,10 @@ function SkillLibraryPanel(props: {
                       data-confirming={confirmingDelete ? 'true' : undefined}
                       onClick={() => requestDeleteSkill(skill)}
                       disabled={props.actionBusy && !deleting}
-                      aria-label={confirmingDelete ? `确认删除 ${skill.name}` : `删除 ${skill.name}`}
+                      aria-label={confirmingDelete ? copy.row.confirmDeleteAriaLabel(skill.name) : copy.row.deleteAriaLabel(skill.name)}
                     >
                       {deleting ? <Loader2 size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}
-                      {confirmingDelete ? '确认删除' : '删除'}
+                      {confirmingDelete ? copy.row.confirmDelete : copy.row.delete}
                     </UiButton>
                   )}
                 </li>
@@ -549,31 +544,31 @@ function SkillLibraryPanel(props: {
   );
 
   const updateReview = updatePreview ? (
-    <section className="maka-skill-governance-review" aria-label="Skill 更新审查">
+    <section className="maka-skill-governance-review" aria-label={copy.review.ariaLabel}>
       <SectionHeader
         className="maka-skill-section-row"
-        title={<span className="maka-skill-section-label">更新审查</span>}
-        count={formatSkillStatusLabel(updatePreview.skill)}
+        title={<span className="maka-skill-section-label">{copy.review.title}</span>}
+        count={formatSkillStatusLabel(updatePreview.skill, copy)}
       />
       <div className="maka-skill-governance-summary">
         <span>{updatePreview.skill.name}</span>
-        <span>{updatePreview.skill.managedSourceId ? `来源 ${updatePreview.skill.managedSourceId}` : '受管理来源'}</span>
-        <span>{updatePreview.skill.hasManagedBaseline ? '已有基线' : '缺少基线'}</span>
-        <span>{updatePreview.summary.currentLineCount} → {updatePreview.summary.sourceLineCount} 行</span>
-        <span>{updatePreview.summary.changedLineCount} 行不同</span>
+        <span>{updatePreview.skill.managedSourceId ? copy.review.source(updatePreview.skill.managedSourceId) : copy.review.managedSource}</span>
+        <span>{updatePreview.skill.hasManagedBaseline ? copy.review.hasBaseline : copy.review.missingBaseline}</span>
+        <span>{copy.review.lineTransition(updatePreview.summary.currentLineCount, updatePreview.summary.sourceLineCount)}</span>
+        <span>{copy.review.changedLines(updatePreview.summary.changedLineCount)}</span>
       </div>
       {updatePreview.skill.managedUpdateStatus === 'local_modified' && (
         <p className="maka-skill-governance-warning">
-          工作区副本已有本地修改。继续更新会用来源库版本覆盖当前 SKILL.md。
+          {copy.review.warning}
         </p>
       )}
       <div className="maka-skill-diff-grid">
         <div>
-          <span>当前工作区</span>
+          <span>{copy.review.workspace}</span>
           <pre>{previewText(updatePreview.currentContent)}</pre>
         </div>
         <div>
-          <span>来源库版本</span>
+          <span>{copy.review.sourceVersion}</span>
           <pre>{previewText(updatePreview.sourceContent)}</pre>
         </div>
       </div>
@@ -585,7 +580,7 @@ function SkillLibraryPanel(props: {
           onClick={() => setUpdatePreview(null)}
           disabled={props.actionBusy}
         >
-          取消
+          {copy.review.cancel}
         </UiButton>
         <UiButton
           type="button"
@@ -594,7 +589,7 @@ function SkillLibraryPanel(props: {
           onClick={() => void applyManagedSkillUpdate(updatePreview)}
           disabled={props.actionBusy || !props.onUpdateManagedSkill}
         >
-          {updatePreview.skill.managedUpdateStatus === 'local_modified' ? '覆盖本地修改' : '更新到来源版本'}
+          {updatePreview.skill.managedUpdateStatus === 'local_modified' ? copy.review.overwrite : copy.review.update}
         </UiButton>
       </div>
     </section>
@@ -608,63 +603,59 @@ function SkillLibraryPanel(props: {
         <TabsPanel value="market">{market}</TabsPanel>
         <TabsPanel value="builtin">{builtinCatalog}</TabsPanel>
         <TabsPanel value="installed">
-          {skillList(installedSkills, skillListEmptyTitle, skillListEmptyBody, '已安装技能')}
+          {skillList(installedSkills, skillListEmptyTitle, skillListEmptyBody, copy.installed.sectionLabel)}
           {updateReview}
         </TabsPanel>
       </TabsRoot>
       {props.skills && props.skills.length > 0 ? (
         <span className="maka-skill-tool-summary-hidden" aria-hidden="true">
-          {`${skillCount} 个 Skill · ${new Set((props.skills ?? []).flatMap((skill) => skill.declaredTools ?? [])).size} 类工具`}
+          {copy.installed.summary(skillCount, new Set((props.skills ?? []).flatMap((skill) => skill.declaredTools ?? [])).size)}
         </span>
       ) : null}
     </div>
   );
 }
 
-function formatSkillLibraryDescription(skill: SkillEntry): string | undefined {
+function formatSkillLibraryDescription(skill: SkillEntry, copy: SkillsCopy): string | undefined {
   const raw = skill.description?.trim();
   if (!raw) return undefined;
   if (/[\u3400-\u9fff]/.test(raw)) return raw;
 
   const source = `${skill.id} ${skill.name} ${raw}`.toLowerCase();
   if (source.includes('docx') || source.includes('word') || source.includes('google docs')) {
-    return '创建、编辑、检查文档内容。';
+    return copy.description.document;
   }
   if (source.includes('ppt') || source.includes('powerpoint') || source.includes('slide') || source.includes('presentation')) {
-    return '创建、编辑、检查演示文稿。';
+    return copy.description.presentation;
   }
   if (source.includes('spreadsheet') || source.includes('excel') || source.includes('csv') || source.includes('xlsx')) {
-    return '创建、编辑、分析表格数据。';
+    return copy.description.spreadsheet;
   }
   if (source.includes('image') || source.includes('photo') || source.includes('bitmap')) {
-    return '生成或编辑图片素材。';
+    return copy.description.image;
   }
   if (source.includes('browser') || source.includes('chrome') || source.includes('web target')) {
-    return '打开、检查、操作网页界面。';
+    return copy.description.browser;
   }
   if (source.includes('macos') || source.includes('swiftui') || source.includes('appkit')) {
-    return '辅助构建和调试 macOS 应用。';
+    return copy.description.macos;
   }
-  return '打开技能文件查看适用场景。';
+  return copy.description.fallback;
 }
 
-function formatSkillStatusLabel(skill: SkillEntry): string {
-  if (skill.validationStatus === 'metadata_error') return '元数据异常';
+function formatSkillStatusLabel(skill: SkillEntry, copy: SkillsCopy): string {
+  if (skill.validationStatus === 'metadata_error') return copy.status.metadataError;
   if (skill.sourceType === 'managed') {
-    if (skill.managedUpdateStatus === 'source_missing') return '来源缺失';
-    if (skill.managedUpdateStatus === 'update_available') return '可更新';
-    if (skill.managedUpdateStatus === 'local_modified') return '本地已修改';
-    if (skill.managedUpdateStatus === 'metadata_error') return '元数据异常';
-    return '受管理';
+    return copy.status.managed[skill.managedUpdateStatus ?? 'up_to_date'];
   }
-  if (skill.userModified) return '已修改';
-  if (skill.sourceType === 'bundled') return '内置';
-  return '本地';
+  if (skill.userModified) return copy.status.modified;
+  if (skill.sourceType === 'bundled') return copy.status.bundled;
+  return copy.status.local;
 }
 
-function formatSkillRuntimeLabel(skill: SkillEntry): string {
-  if (skill.runtimeStatus === 'state_error') return '状态异常';
-  return skill.enabled ? '已启用' : '已停用';
+function formatSkillRuntimeLabel(skill: SkillEntry, copy: SkillsCopy): string {
+  if (skill.runtimeStatus === 'state_error') return copy.status.stateError;
+  return skill.enabled ? copy.status.enabled : copy.status.disabled;
 }
 
 // Derive the source-status Chip tone from the same data-status the retired
@@ -710,6 +701,7 @@ export function SkillsModuleMain(props: {
   onSetSkillEnabled?(skillId: string, enabled: boolean): void | Promise<void>;
   onDeleteSkill?(skillId: string): void | Promise<void>;
 }) {
+  const copy = getSkillsCopy(useUiLocale());
   const [pendingSkillAction, setPendingSkillAction] = useState<string | null>(null);
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
   const skillActionMountedRef = useMountedRef();
@@ -739,25 +731,25 @@ export function SkillsModuleMain(props: {
   }
 
   const skillActionBusy = pendingSkillAction !== null;
-  const skillCreateLegacyLabel = pendingSkillAction === 'create' ? '创建中…' : '创建示例';
+  const skillCreateLegacyLabel = pendingSkillAction === 'create' ? copy.page.creating : copy.page.createExample;
   const auditReport = props.auditReport ?? deriveCapabilityAuditReport({ skills: props.skills ?? [] });
   return (
-    <main className="maka-main detailPane maka-module-main agents-chat-panel" aria-label="技能">
+    <main className="maka-main detailPane maka-module-main agents-chat-panel" aria-label={copy.page.title}>
       <PageHeader
         className="maka-module-main-header"
         as="h2"
-        title="技能"
-        subtitle="安装与管理技能，在对话中扩展 Maka 的能力。"
+        title={copy.page.title}
+        subtitle={copy.page.subtitle}
         actions={
-        <div className="maka-module-main-actions" role="group" aria-label="技能操作">
-          <label className="maka-skill-search" aria-label="搜索技能">
+        <div className="maka-module-main-actions" role="group" aria-label={copy.page.actions}>
+          <label className="maka-skill-search" aria-label={copy.page.search}>
             <Search size={15} aria-hidden="true" />
             <Input
               unstyled
               value={skillSearchQuery}
               onChange={(event) => setSkillSearchQuery(event.currentTarget.value)}
               maxLength={120}
-              placeholder="搜索技能"
+              placeholder={copy.page.search}
             />
           </label>
           <UiButton
@@ -767,7 +759,7 @@ export function SkillsModuleMain(props: {
             onClick={() => void runSkillAction('folder', props.onOpenSkillsFolder)}
             disabled={!props.onOpenSkillsFolder || skillActionBusy}
           >
-            打开目录
+            {copy.page.openFolder}
           </UiButton>
           {/* Detail round 6: the page CTA is a REAL primary (variant default,
               same recipe as daily-review's 生成每日回顾) — previously a ghost
@@ -780,7 +772,7 @@ export function SkillsModuleMain(props: {
             disabled={!props.onCreateSkillTemplate || skillActionBusy}
           >
             <Plus size={15} aria-hidden="true" />
-            {pendingSkillAction === 'create' ? '创建中…' : '添加'}
+            {pendingSkillAction === 'create' ? copy.page.creating : copy.page.add}
             <span className="maka-visually-hidden">{skillCreateLegacyLabel}</span>
           </UiButton>
           <UiButton
@@ -790,7 +782,7 @@ export function SkillsModuleMain(props: {
             onClick={() => void runSkillAction('refresh', props.onRefreshSkills)}
             disabled={!props.onRefreshSkills || skillActionBusy}
           >
-            {pendingSkillAction === 'refresh' ? '刷新中…' : '刷新'}
+            {pendingSkillAction === 'refresh' ? copy.page.refreshing : copy.page.refresh}
           </UiButton>
         </div>
         }

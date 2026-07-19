@@ -1165,11 +1165,11 @@ description: Exercise workspace-contained open paths.
     assert.match(ui, /onRefreshSkills\?\(\): void \| Promise<void>/);
     assert.match(ui, /onCreateSkillTemplate\?\(\): void \| Promise<void>/);
     assert.match(ui, /onOpenSkillsFolder\?\(\): void \| Promise<void>/);
-    assert.match(ui, /'创建示例技能'/);
-    assert.match(ui, /'刷新技能'/);
-    assert.match(ui, /'创建中…'/);
-    assert.match(ui, /'刷新中…'/);
-    assert.match(ui, />\s*打开目录\s*</);
+    assert.match(ui, /copy\.installed\.createExample/);
+    assert.match(ui, /copy\.installed\.refresh/);
+    assert.match(ui, /copy\.page\.creating/);
+    assert.match(ui, /copy\.page\.refreshing/);
+    assert.match(ui, /copy\.page\.openFolder/);
     // The inert 技能示例 example cards were removed — 添加 seeds a real,
     // editable starter skill instead. No decorative example rows may return.
     assert.doesNotMatch(ui, /title: '文档处理流'/);
@@ -1228,11 +1228,11 @@ description: Exercise workspace-contained open paths.
     assert.match(skillsModuleMain, /if \(!action \|\| pendingSkillActionRef\.current !== null\) return undefined;/, 'Skills actions must reject duplicate clicks immediately');
     assert.match(skillsModuleMain, /pendingSkillActionRef\.current = actionKey[\s\S]*setPendingSkillAction\(actionKey\)[\s\S]*return await action\(\)/, 'Skills actions must show pending state while waiting for renderer IPC and preserve action results');
     assert.match(skillsModuleMain, /pendingSkillActionRef\.current = null[\s\S]*if \(skillActionMountedRef\.current\) setPendingSkillAction\(null\)/, 'Skills actions must not clear pending UI state after unmount');
-    assert.match(skillsModuleMain, /className="maka-module-main-actions" role="group" aria-label="技能操作"/);
+    assert.match(skillsModuleMain, /className="maka-module-main-actions" role="group" aria-label=\{copy\.page\.actions\}/);
     assert.match(skillsModuleMain, /disabled=\{!props\.onOpenSkillsFolder \|\| skillActionBusy\}/, 'open folder button must be disabled while any Skills action is pending');
     assert.match(skillsModuleMain, /disabled=\{!props\.onRefreshSkills \|\| skillActionBusy\}/, 'top refresh button must be disabled while any Skills action is pending');
-    assert.match(skillsModuleMain, /pendingSkillAction === 'refresh' \? '刷新中…' : '刷新'/);
-    assert.match(skillsModuleMain, /pendingSkillAction === 'create' \? '创建中…' : '创建示例'/);
+    assert.match(skillsModuleMain, /pendingSkillAction === 'refresh' \? copy\.page\.refreshing : copy\.page\.refresh/);
+    assert.match(skillsModuleMain, /pendingSkillAction === 'create' \? copy\.page\.creating : copy\.page\.createExample/);
     assert.match(skillsModuleMain, /onClick=\{\(\) => void runSkillAction\('folder', props\.onOpenSkillsFolder\)\}/);
     assert.match(skillsModuleMain, /onCreateSkillTemplate=\{props\.onCreateSkillTemplate \? \(\) => runSkillAction\('create', props\.onCreateSkillTemplate\) : undefined\}/);
     assert.match(skillsModuleMain, /onOpenSkill=\{props\.onOpenSkill \? \(skillId\) => runSkillAction\(`open:\$\{skillId\}`, \(\) => props\.onOpenSkill\?\.\(skillId\)\) : undefined\}/);
@@ -1254,12 +1254,12 @@ description: Exercise workspace-contained open paths.
     assert.doesNotMatch(skillPanel, /maka-skill-template-row/);
     assert.match(skillPanel, /<section className="maka-skill-installed" aria-label={label}>/);
     assert.match(skillPanel, /<div className="maka-skill-library" aria-busy=\{props\.actionBusy \? 'true' : undefined\}>/);
-    assert.match(skillPanel, /<ul className="maka-skill-library-list" aria-label="技能列表">/);
+    assert.match(skillPanel, /<ul className="maka-skill-library-list" aria-label=\{copy\.installed\.listAriaLabel\}>/);
     assert.match(skillPanel, /<span className="maka-skill-library-status" aria-hidden="true">/);
-    assert.match(skillPanel, /const statusLabel = formatSkillStatusLabel\(skill\)/);
-    assert.match(skillPanel, /const runtimeLabel = formatSkillRuntimeLabel\(skill\)/);
-    assert.match(skillPanel, /来源状态：\$\{statusLabel\}/);
-    assert.match(skillPanel, /运行状态：\$\{runtimeLabel\}/);
+    assert.match(skillPanel, /const statusLabel = formatSkillStatusLabel\(skill, copy\)/);
+    assert.match(skillPanel, /const runtimeLabel = formatSkillRuntimeLabel\(skill, copy\)/);
+    assert.match(skillPanel, /copy\.row\.hoverWithTools\(skill\.id, runtimeLabel, statusLabel, toolsLabel\)/);
+    assert.match(skillPanel, /copy\.row\.hover\(skill\.id, runtimeLabel, statusLabel\)/);
     // Detail round 6, exception-only: the runtime chip renders ONLY for
     // state_error — enabled/disabled is already expressed by the Switch.
     // Round 1 convergence (#520 follow-up): the two status labels now render
@@ -1268,15 +1268,15 @@ description: Exercise workspace-contained open paths.
     assert.match(skillPanel, /\{skill\.runtimeStatus === 'state_error' && \([\s\S]*?<Chip[\s\S]*?className="maka-skill-library-runtime-label"[\s\S]*>\{runtimeLabel\}<\/Chip>/);
     assert.match(skillPanel, /<Chip[\s\S]*?className="maka-skill-library-status-label"[\s\S]*>\{statusLabel\}<\/Chip>/);
     assert.match(skillPanel, /function skillStatusChipTone\(skill: SkillEntry\)/, 'status-label tone derives from data-status via skillStatusChipTone');
-    assert.match(ui, /function formatSkillStatusLabel\(skill: SkillEntry\): string/);
-    assert.match(ui, /function formatSkillRuntimeLabel\(skill: SkillEntry\): string/);
-    assert.match(ui, /runtimeStatus === 'state_error'[\s\S]*状态异常/);
-    assert.match(ui, /skill\.enabled \? '已启用' : '已停用'/);
-    assert.match(ui, /metadata_error[\s\S]*元数据异常/);
-    assert.match(ui, /userModified[\s\S]*已修改/);
-    assert.match(ui, /sourceType === 'bundled'[\s\S]*内置/);
-    assert.match(ui, /sourceType === 'managed'[\s\S]*managedUpdateStatus[\s\S]*受管理/, 'Phase 2 can present verified managed state derived by main');
-    assert.match(ui, /return '本地'/);
+    assert.match(ui, /function formatSkillStatusLabel\(skill: SkillEntry, copy: SkillsCopy\): string/);
+    assert.match(ui, /function formatSkillRuntimeLabel\(skill: SkillEntry, copy: SkillsCopy\): string/);
+    assert.match(ui, /runtimeStatus === 'state_error'\) return copy\.status\.stateError/);
+    assert.match(ui, /skill\.enabled \? copy\.status\.enabled : copy\.status\.disabled/);
+    assert.match(ui, /validationStatus === 'metadata_error'\) return copy\.status\.metadataError/);
+    assert.match(ui, /userModified\) return copy\.status\.modified/);
+    assert.match(ui, /sourceType === 'bundled'\) return copy\.status\.bundled/);
+    assert.match(ui, /sourceType === 'managed'[\s\S]*copy\.status\.managed/, 'Phase 2 can present verified managed state derived by main');
+    assert.match(ui, /return copy\.status\.local/);
     assert.match(skillEntryContract, /sourceType\?: 'workspace' \| 'bundled' \| 'managed' \| 'unknown'/);
     assert.match(skillEntryContract, /managedUpdateStatus\?:/);
     assert.match(skillEntryContract, /enabled: boolean/);
@@ -1289,12 +1289,12 @@ description: Exercise workspace-contained open paths.
     // source cache is still surfaced (never runtime), just as a browse
     // grid keyed off props.managedSkillSources.
     assert.match(skillPanel, /const market = \(/, 'Phase 2 must surface the managed source cache without making it runtime');
-    assert.match(skillPanel, /<section className="maka-skill-market" aria-label="技能市场">/);
+    assert.match(skillPanel, /<section className="maka-skill-market" aria-label=\{copy\.market\.ariaLabel\}>/);
     assert.match(skillPanel, /<div className="maka-skill-market-grid">/, '市场 tab renders managed sources as a card grid');
     assert.match(skillPanel, /const marketSources = useMemo\(/, '市场 grid is a pure client-side filter/sort over managedSkillSources');
-    assert.match(skillPanel, /官方精选/, '市场 grid carries the 官方精选 section label');
-    assert.match(skillPanel, /variant="secondary"\s+size="icon-sm"[\s\S]*aria-label=\{`安装 \$\{source\.name\}`\}/, 'only the governed install icon-button acts; the market card body stays inert');
-    assert.match(skillPanel, /导入本地 Skill/);
+    assert.match(skillPanel, /copy\.market\.official/, '市场 grid carries the localized official section label');
+    assert.match(skillPanel, /variant="secondary"\s+size="icon-sm"[\s\S]*aria-label=\{copy\.install\.action\(source\.name\)\}/, 'only the governed install icon-button acts; the market card body stays inert');
+    assert.match(skillPanel, /copy\.market\.importLocal/);
     assert.doesNotMatch(skillPanel, /const managedSources = \(/, '来源库 list was replaced by the 市场 card grid');
     assert.match(skillPanel, /onInstallManagedSkill\?\(sourceId: string\): void \| Promise<void>/);
     assert.match(skillPanel, /onPreviewManagedSkillUpdate\?\(skillId: string\): Promise<ManagedSkillUpdatePreview \| null>/);
@@ -1309,10 +1309,10 @@ description: Exercise workspace-contained open paths.
     assert.match(skillPanel, /function requestDeleteSkill\(skill: SkillEntry\)/);
     assert.match(skillPanel, /setConfirmingDeleteSkillId\(skill\.id\)[\s\S]*setTimeout\([\s\S]*setConfirmingDeleteSkillId\(null\)/, 'armed delete state must auto-revert so a stray first click cannot linger');
     assert.match(skillPanel, /void props\.onDeleteSkill\(skill\.id\)/);
-    assert.match(skillPanel, /aria-label=\{confirmingDelete \? `确认删除 \$\{skill\.name\}` : `删除 \$\{skill\.name\}`\}/);
-    assert.match(skillPanel, /confirmingDelete \? '确认删除' : '删除'/);
+    assert.match(skillPanel, /aria-label=\{confirmingDelete \? copy\.row\.confirmDeleteAriaLabel\(skill\.name\) : copy\.row\.deleteAriaLabel\(skill\.name\)\}/);
+    assert.match(skillPanel, /confirmingDelete \? copy\.row\.confirmDelete : copy\.row\.delete/);
     assert.match(skillPanel, /<div[\s\S]*className="maka-skill-library-row"[\s\S]*<\/div>/, 'Skill row body must be information, not the open-file control');
-    assert.match(skillPanel, /className="maka-skill-library-open-button"[\s\S]*aria-label=\{`打开 \$\{skill\.name\} 的 SKILL\.md`\}/);
+    assert.match(skillPanel, /className="maka-skill-library-open-button"[\s\S]*aria-label=\{copy\.row\.openAriaLabel\(skill\.name\)\}/);
     assert.match(skillPanel, /<\/UiButton>\s*<Switch/, 'per-skill enable switch must sit next to the explicit open-file icon button');
     assert.match(skillPanel, /const updated = await props\.onUpdateManagedSkill\(preview\.skill\.id/);
     assert.match(skillPanel, /expectedCurrentSha256: preview\.expectedCurrentSha256/);
@@ -1320,22 +1320,22 @@ description: Exercise workspace-contained open paths.
     assert.match(skillPanel, /if \(updated\) setUpdatePreview\(null\)/);
     assert.match(skillPanel, /skill\.managedUpdateStatus === 'update_available'/);
     assert.match(skillPanel, /skill\.managedUpdateStatus === 'local_modified'/);
-    assert.match(skillPanel, /查看更新/);
-    assert.match(skillPanel, /查看差异/);
-    assert.match(skillPanel, /覆盖本地修改/);
+    assert.match(skillPanel, /copy\.row\.viewUpdate/);
+    assert.match(skillPanel, /copy\.row\.viewDiff/);
+    assert.match(skillPanel, /copy\.review\.overwrite/);
     assert.doesNotMatch(skillPanel, /恢复|修复|合并/, 'Phase 3 still must not imply automatic merge or repair flows');
     assert.doesNotMatch(skillPanel, /const SKILL_GOVERNANCE_FILTERS/);
     assert.doesNotMatch(skillPanel, /aria-label="技能状态筛选"/);
     assert.match(skillPanel, /className="maka-skill-library-status-label"/);
     assert.match(skillPanel, /function previewText\(content: string\): string/);
     assert.doesNotMatch(skillPanel, /maka-skill-library-action/, 'Open must be an explicit file icon button, not a status-like text pill');
-    assert.match(skillPanel, /label: props\.createPending \? '创建中…' : '创建示例技能'/);
-    assert.match(skillPanel, /label: props\.refreshPending \? '刷新中…' : '刷新技能'/);
+    assert.match(skillPanel, /label: props\.createPending \? copy\.installed\.createPending : copy\.installed\.createExample/);
+    assert.match(skillPanel, /label: props\.refreshPending \? copy\.installed\.refreshPending : copy\.installed\.refresh/);
     assert.match(skillPanel, /disabled: props\.actionBusy/);
     assert.match(skillPanel, /aria-busy=\{props\.actionBusy \? 'true' : undefined\}/);
     assert.match(skillPanel, /disabled=\{props\.actionBusy \|\| !props\.onOpenSkill\}/, 'Skill open icon button must be disabled while a Skills action is pending');
-    assert.match(skillPanel, /opening && <span>打开中…<\/span>/);
-    assert.match(skillPanel, /updating && <span>更新中…<\/span>/);
+    assert.match(skillPanel, /opening && <span>\{copy\.row\.opening\}<\/span>/);
+    assert.match(skillPanel, /updating && <span>\{copy\.row\.updating\}<\/span>/);
     assert.match(emptyState, /disabled\?: boolean/);
     assert.match(emptyState, /disabled=\{props\.cta\.disabled\}/);
     assert.match(emptyState, /disabled=\{props\.secondaryCta\.disabled\}/);

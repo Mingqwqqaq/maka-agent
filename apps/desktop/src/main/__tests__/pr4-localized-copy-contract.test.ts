@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { getDailyReviewCopy, getPlanReminderCopy, getSharedUiCopy } from '@maka/ui';
+import { getDailyReviewCopy, getPlanReminderCopy, getSharedUiCopy, getSkillsCopy } from '@maka/ui';
 import {
   findInlineCjkLiterals,
   findSilentCatalogFallbacks,
@@ -21,6 +21,7 @@ const PR4_SHARED_UI_PRESENTATION_FILES = [
   'packages/ui/src/plan-reminder-form-dialog.tsx',
   'packages/ui/src/plan-reminder-helpers.ts',
   'packages/ui/src/plan-reminder-panel.tsx',
+  'packages/ui/src/skills-panel.tsx',
   'packages/ui/src/primitives/spinner.tsx',
   'packages/ui/src/task-ledger-panel.tsx',
   'packages/ui/src/toast.tsx',
@@ -31,6 +32,7 @@ const PR4_SHARED_UI_CATALOG_FILES = [
   'packages/ui/src/daily-review-copy.ts',
   'packages/ui/src/plan-reminder-copy.ts',
   'packages/ui/src/shared-ui-copy.ts',
+  'packages/ui/src/skills-copy.ts',
 ] as const;
 
 function repoSource(file: string): string {
@@ -46,6 +48,8 @@ describe('PR4 remaining shared UI copy contract', () => {
     assert.equal(getDailyReviewCopy('en').page.title, 'Daily review');
     assert.equal(getPlanReminderCopy('zh').page.title, '定时任务');
     assert.equal(getPlanReminderCopy('en').page.title, 'Scheduled tasks');
+    assert.equal(getSkillsCopy('zh').page.title, '技能');
+    assert.equal(getSkillsCopy('en').page.title, 'Skills');
   });
 
   it('contains no inline user-visible Chinese in migrated shared UI owners', () => {
