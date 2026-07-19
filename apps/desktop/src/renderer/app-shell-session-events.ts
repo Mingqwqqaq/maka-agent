@@ -59,7 +59,7 @@ export function createAppShellSessionEventHandlers(options: {
 
   function updateLiveTurn(sessionId: string, event: SessionEvent): void {
     setLiveTurnBySession((current) => {
-      const nextProjection = applyLiveTurnEvent(current[sessionId], event);
+      const nextProjection = applyLiveTurnEvent(current[sessionId], event, uiLocale);
       if (nextProjection === current[sessionId]) return current;
       const next = { ...current };
       if (nextProjection) next[sessionId] = nextProjection;

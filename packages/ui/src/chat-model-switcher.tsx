@@ -124,7 +124,8 @@ export function ChatModelSwitcher(props: {
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?(level: ThinkingLevel | undefined): void | Promise<void>;
 }) {
-  const copy = getConversationCopy(useUiLocale()).model;
+  const locale = useUiLocale();
+  const copy = getConversationCopy(locale).model;
   const [localPending, setLocalPending] = useState(false);
   const pendingRef = useRef(false);
   const modelSwitcherMountedRef = useMountedRef();
@@ -134,7 +135,7 @@ export function ChatModelSwitcher(props: {
   const currentValue = modelChoiceValue(props.activeSession.llmConnectionSlug, currentModel);
   const pending = props.pending || localPending;
   const disabled = pending || Boolean(props.disabledReason) || !props.onChange || props.choices.length === 0;
-  const grouped = modelMenuGroups(props.choices);
+  const grouped = modelMenuGroups(props.choices, locale);
   const currentKnownChoice = props.choices.some((choice) => modelChoiceValue(choice.connectionSlug, choice.model) === currentValue);
   const displayLabel = props.activeModelLabel ?? currentModel;
   const currentSessionModelTitle = props.activeConnectionLabel && props.activeModelLabel
@@ -255,8 +256,9 @@ export function NewChatModelPicker(props: {
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?(level: ThinkingLevel | undefined): void | Promise<void>;
 }) {
-  const copy = getConversationCopy(useUiLocale()).model;
-  const grouped = modelMenuGroups(props.choices);
+  const locale = useUiLocale();
+  const copy = getConversationCopy(locale).model;
+  const grouped = modelMenuGroups(props.choices, locale);
   return (
     <ModelPicker
       triggerAppearance="quiet"

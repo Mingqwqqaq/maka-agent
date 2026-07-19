@@ -1,4 +1,4 @@
-import type { SessionEvent, StoredMessage } from '@maka/core';
+import type { SessionEvent, StoredMessage, UiLocale } from '@maka/core';
 import { applyAssistantComplete, applyAssistantDelta } from './assistant-stream.js';
 import { projectToolActivityArgs, toolResultActivityStatus } from '@maka/core';
 import type { ToolActivityItem } from './materialize.js';
@@ -72,14 +72,17 @@ export function armLiveTurn(turnId: string): LiveTurnProjection {
 export function applyLiveTurnEvent(
   current: LiveTurnProjection | undefined,
   event: LiveTurnContentEvent,
+  locale?: UiLocale,
 ): LiveTurnProjection;
 export function applyLiveTurnEvent(
   current: LiveTurnProjection | undefined,
   event: SessionEvent,
+  locale?: UiLocale,
 ): LiveTurnProjection | undefined;
 export function applyLiveTurnEvent(
   current: LiveTurnProjection | undefined,
   event: SessionEvent,
+  locale: UiLocale = 'zh',
 ): LiveTurnProjection | undefined {
   if (event.type === 'error' || event.type === 'abort') {
     if (!current || current.turnId !== event.turnId) return current;
@@ -128,7 +131,7 @@ export function applyLiveTurnEvent(
   const step = stepIndex >= 0 ? prior.steps[stepIndex]! : { stepId, tools: [] };
   let nextStep: LiveTurnStepProjection;
   if (event.type === 'thinking_delta') {
-    const applied = applyThinkingDelta(step.thinking?.text ?? '', event.text);
+    const applied = applyThinkingDelta(step.thinking?.text ?? '', event.text, { locale });
     nextStep = {
       ...step,
       thinking: {
@@ -138,7 +141,7 @@ export function applyLiveTurnEvent(
       },
     };
   } else if (event.type === 'thinking_complete') {
-    const applied = applyThinkingComplete(event.text);
+    const applied = applyThinkingComplete(event.text, { locale });
     nextStep = {
       ...step,
       thinking: {
@@ -148,7 +151,7 @@ export function applyLiveTurnEvent(
       },
     };
   } else if (event.type === 'text_delta') {
-    const applied = applyAssistantDelta(step.text?.text ?? '', event.text);
+    const applied = applyAssistantDelta(step.text?.text ?? '', event.text, { locale });
     nextStep = {
       ...step,
       text: {
@@ -158,7 +161,7 @@ export function applyLiveTurnEvent(
       },
     };
   } else if (event.type === 'text_complete') {
-    const applied = applyAssistantComplete(event.text);
+    const applied = applyAssistantComplete(event.text, { locale });
     nextStep = {
       ...step,
       text: {
@@ -200,7 +203,7 @@ export function applyLiveTurnEvent(
       text: event.chunk,
       redacted: event.redacted,
       createdAt: event.createdAt,
-    });
+    }, { locale });
     const tool: ToolActivityItem = {
       ...base,
       status: base.status === 'pending' ? 'running' : base.status,

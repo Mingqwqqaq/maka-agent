@@ -54,6 +54,16 @@ export interface SharedUiCopy {
     confirm: string;
     cancel: string;
   };
+  stream: {
+    assistantChunkTruncated: string;
+    assistantTailTruncated: string;
+    thinkingHeadTruncated: string;
+    thinkingChunkTruncated: string;
+    toolChunkTruncated: string;
+  };
+  artifact: { unknownSize: string };
+  mention: { skillInsertion: (name: string) => string };
+  providers: { minimaxChina: string; custom: string; claudeSubscription: string };
 }
 
 const SHARED_UI_COPY = {
@@ -103,6 +113,10 @@ const SHARED_UI_COPY = {
       mainAgent: '主代理',
     },
     toast: { notifications: '通知', closeNotification: '关闭通知', confirm: '确定', cancel: '取消' },
+    stream: { assistantChunkTruncated: '\n[…单条 delta 已截断]\n', assistantTailTruncated: '\n\n[…后续已截断]', thinkingHeadTruncated: '[…已截断早期 reasoning]\n', thinkingChunkTruncated: '\n[…单条 delta 已截断]\n', toolChunkTruncated: '\n[…已截断]\n' },
+    artifact: { unknownSize: '未知大小' },
+    mention: { skillInsertion: (name) => `使用 ${name} 技能：` },
+    providers: { minimaxChina: 'MiniMax 中国站', custom: '自定义', claudeSubscription: 'Claude 订阅' },
   },
   en: {
     capabilityAudit: {
@@ -150,6 +164,10 @@ const SHARED_UI_COPY = {
       mainAgent: 'Main agent',
     },
     toast: { notifications: 'Notifications', closeNotification: 'Close notification', confirm: 'Confirm', cancel: 'Cancel' },
+    stream: { assistantChunkTruncated: '\n[…single delta truncated]\n', assistantTailTruncated: '\n\n[…remaining output truncated]', thinkingHeadTruncated: '[…earlier reasoning truncated]\n', thinkingChunkTruncated: '\n[…single delta truncated]\n', toolChunkTruncated: '\n[…truncated]\n' },
+    artifact: { unknownSize: 'Unknown size' },
+    mention: { skillInsertion: (name) => `Use ${name} skill: ` },
+    providers: { minimaxChina: 'MiniMax China', custom: 'Custom', claudeSubscription: 'Claude subscription' },
   },
 } satisfies UiCatalog<SharedUiCopy>;
 

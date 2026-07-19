@@ -55,6 +55,8 @@
 
 import type { ToolOutputChunk } from './materialize.js';
 import { redactSecrets } from './redact.js';
+import type { UiLocale } from '@maka/core';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 /**
  * Default caps. Tuned to:
@@ -73,12 +75,11 @@ export const TOOL_STREAM_MAX_CHUNKS = 200;
 export const TOOL_STREAM_MAX_TOTAL_CHARS = 16 * 1024;
 export const TOOL_STREAM_MAX_CHUNK_CHARS = 4 * 1024;
 
-const TRUNCATED_CHUNK_MARKER = '\n[…已截断]\n';
-
 export interface ApplyToolOutputChunkOptions {
   maxChunks?: number;
   maxTotalChars?: number;
   maxChunkChars?: number;
+  locale?: UiLocale;
 }
 
 export interface ApplyToolOutputChunkResult {
@@ -126,6 +127,7 @@ export function applyToolOutputChunk(
   const maxChunks = options.maxChunks ?? TOOL_STREAM_MAX_CHUNKS;
   const maxTotalChars = options.maxTotalChars ?? TOOL_STREAM_MAX_TOTAL_CHARS;
   const maxChunkChars = options.maxChunkChars ?? TOOL_STREAM_MAX_CHUNK_CHARS;
+  const truncatedChunkMarker = getSharedUiCopy(options.locale ?? 'zh').stream.toolChunkTruncated;
 
   const list = prevChunks ?? [];
 
@@ -147,8 +149,8 @@ export function applyToolOutputChunk(
   let storedText = redactedText;
   let chunkTruncated = false;
   if (storedText.length > maxChunkChars) {
-    const tail = storedText.slice(storedText.length - maxChunkChars + TRUNCATED_CHUNK_MARKER.length);
-    storedText = TRUNCATED_CHUNK_MARKER + tail;
+    const tail = storedText.slice(storedText.length - maxChunkChars + truncatedChunkMarker.length);
+    storedText = truncatedChunkMarker + tail;
     chunkTruncated = true;
   }
 

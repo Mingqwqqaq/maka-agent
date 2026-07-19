@@ -20,7 +20,8 @@
  * harness (URI-encoded delimiters, malformed input fall-through).
  */
 
-import { PROVIDER_DEFAULTS, type ProviderType } from '@maka/core';
+import { PROVIDER_DEFAULTS, type ProviderType, type UiLocale } from '@maka/core';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 export interface ChatModelChoice {
   connectionSlug: string;
@@ -47,7 +48,7 @@ export interface ChatModelChoice {
  * `ProviderType`. models.dev-backed providers fall through to the shared
  * registry label so this UI does not become another provider fact table.
  */
-const PROVIDER_SHORT_LABEL: Partial<Record<ProviderType, string>> = {
+const STATIC_PROVIDER_SHORT_LABEL: Partial<Record<ProviderType, string>> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   google: 'Google',
@@ -57,9 +58,6 @@ const PROVIDER_SHORT_LABEL: Partial<Record<ProviderType, string>> = {
   'kimi-coding-plan': 'Kimi',
   'zai-coding-plan': 'Z.AI',
   MiniMax: 'MiniMax',
-  'MiniMax-cn': 'MiniMax 中国站',
-  'openai-compatible': '自定义',
-  'claude-subscription': 'Claude 订阅',
   'openai-codex': 'OpenAI OAuth',
   'gemini-cli': 'Gemini CLI',
 };
@@ -89,7 +87,14 @@ export interface ModelMenuGroup {
  * account email `connection.name` carries for `claude-subscription` /
  * `openai-codex` / `gemini-cli`.
  */
-export function modelMenuGroups(choices: ChatModelChoice[]): ModelMenuGroup[] {
+export function modelMenuGroups(choices: ChatModelChoice[], locale: UiLocale = 'zh'): ModelMenuGroup[] {
+  const copy = getSharedUiCopy(locale).providers;
+  const providerShortLabel: Partial<Record<ProviderType, string>> = {
+    ...STATIC_PROVIDER_SHORT_LABEL,
+    'MiniMax-cn': copy.minimaxChina,
+    'openai-compatible': copy.custom,
+    'claude-subscription': copy.claudeSubscription,
+  };
   const bySlug = new Map<string, { connectionSlug: string; providerType: ProviderType; connectionName?: string; choices: ChatModelChoice[] }>();
   for (const choice of choices) {
     const group = bySlug.get(choice.connectionSlug);
@@ -126,7 +131,7 @@ export function modelMenuGroups(choices: ChatModelChoice[]): ModelMenuGroup[] {
         choices: group.choices,
       };
     }
-    const label = PROVIDER_SHORT_LABEL[group.providerType] ?? PROVIDER_DEFAULTS[group.providerType].label;
+    const label = providerShortLabel[group.providerType] ?? PROVIDER_DEFAULTS[group.providerType].label;
     const ambiguous = (connectionsPerType.get(group.providerType) ?? 0) > 1;
     return {
       connectionSlug: group.connectionSlug,

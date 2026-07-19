@@ -40,7 +40,8 @@
  *   5. Add deterministic fixture and journey coverage.
  */
 
-import type { ArtifactBinaryReadResult, ArtifactKind } from '@maka/core';
+import type { ArtifactBinaryReadResult, ArtifactKind, UiLocale } from '@maka/core';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 /**
  * Narrow input to the resolver. Deliberately excludes
@@ -312,8 +313,8 @@ export function exceedsImagePayloadCap(base64: string): boolean {
  * Unsupported metadata display. KB / MB; no fractional precision
  * past 1 decimal. Returns `'未知大小'` for `undefined`.
  */
-export function formatPreviewSize(sizeBytes: number | undefined): string {
-  if (sizeBytes === undefined || sizeBytes < 0 || !Number.isFinite(sizeBytes)) return '未知大小';
+export function formatPreviewSize(sizeBytes: number | undefined, locale: UiLocale = 'zh'): string {
+  if (sizeBytes === undefined || sizeBytes < 0 || !Number.isFinite(sizeBytes)) return getSharedUiCopy(locale).artifact.unknownSize;
   if (sizeBytes < 1024) return `${sizeBytes} B`;
   if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;

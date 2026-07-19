@@ -30,6 +30,8 @@
  */
 
 import { redactSecrets } from './redact.js';
+import type { UiLocale } from '@maka/core';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 /**
  * Default caps. Tuned to:
@@ -43,14 +45,13 @@ import { redactSecrets } from './redact.js';
 export const THINKING_MAX_DELTA_CHARS = 4 * 1024;
 export const THINKING_MAX_TOTAL_CHARS = 32 * 1024;
 
-const TRUNCATED_HEAD_MARKER = '[…已截断早期 reasoning]\n';
-const TRUNCATED_CHUNK_MARKER = '\n[…单条 delta 已截断]\n';
-
 export interface ApplyThinkingOptions {
   /** Override per-delta cap. */
   maxDeltaChars?: number;
   /** Override per-session total cap. */
   maxTotalChars?: number;
+  /** Resolved UI locale for user-visible truncation markers. */
+  locale?: UiLocale;
 }
 
 export interface ApplyThinkingResult {
@@ -83,6 +84,9 @@ export function applyThinkingDelta(
 ): ApplyThinkingResult {
   const maxDelta = options.maxDeltaChars ?? THINKING_MAX_DELTA_CHARS;
   const maxTotal = options.maxTotalChars ?? THINKING_MAX_TOTAL_CHARS;
+  const copy = getSharedUiCopy(options.locale ?? 'zh').stream;
+  const truncatedHeadMarker = copy.thinkingHeadTruncated;
+  const truncatedChunkMarker = copy.thinkingChunkTruncated;
 
   // Defensive guard: a non-string `rawDelta` is a runtime contract
   // violation. Drop it silently rather than coerce to '' and claim
@@ -99,8 +103,8 @@ export function applyThinkingDelta(
   let delta = redactedDelta;
   let deltaTruncated = false;
   if (delta.length > maxDelta) {
-    const keep = maxDelta - TRUNCATED_CHUNK_MARKER.length;
-    delta = TRUNCATED_CHUNK_MARKER + delta.slice(delta.length - keep);
+    const keep = maxDelta - truncatedChunkMarker.length;
+    delta = truncatedChunkMarker + delta.slice(delta.length - keep);
     deltaTruncated = true;
   }
 
@@ -111,8 +115,8 @@ export function applyThinkingDelta(
   let result = appended;
   let totalTruncated = false;
   if (result.length > maxTotal) {
-    const keep = maxTotal - TRUNCATED_HEAD_MARKER.length;
-    result = TRUNCATED_HEAD_MARKER + result.slice(result.length - keep);
+    const keep = maxTotal - truncatedHeadMarker.length;
+    result = truncatedHeadMarker + result.slice(result.length - keep);
     totalTruncated = true;
   }
 
@@ -134,6 +138,7 @@ export function applyThinkingComplete(
   options: ApplyThinkingOptions = {},
 ): ApplyThinkingResult {
   const maxTotal = options.maxTotalChars ?? THINKING_MAX_TOTAL_CHARS;
+  const truncatedHeadMarker = getSharedUiCopy(options.locale ?? 'zh').stream.thinkingHeadTruncated;
 
   // Same defensive guard as `applyThinkingDelta`.
   if (typeof rawText !== 'string') {
@@ -148,8 +153,8 @@ export function applyThinkingComplete(
   let result = redacted;
   let totalTruncated = false;
   if (result.length > maxTotal) {
-    const keep = maxTotal - TRUNCATED_HEAD_MARKER.length;
-    result = TRUNCATED_HEAD_MARKER + result.slice(result.length - keep);
+    const keep = maxTotal - truncatedHeadMarker.length;
+    result = truncatedHeadMarker + result.slice(result.length - keep);
     totalTruncated = true;
   }
 

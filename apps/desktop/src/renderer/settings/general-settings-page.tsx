@@ -131,7 +131,7 @@ function GeneralDefaultsCard(props: {
   const [savingPermissionMode, setSavingPermissionMode] = useState(false);
 
   const modelChoices = useMemo(() => buildCatalogChatModelChoices(props.connections), [props.connections]);
-  const modelGroups = useMemo(() => modelMenuGroups(modelChoices), [modelChoices]);
+  const modelGroups = useMemo(() => modelMenuGroups(modelChoices, locale), [locale, modelChoices]);
   const selectedValue = useMemo(() => {
     if (!props.defaultSlug) return '';
     const connection = props.connections.find((candidate) => candidate.slug === props.defaultSlug);

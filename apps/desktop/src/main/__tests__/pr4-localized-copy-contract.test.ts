@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { getDailyReviewCopy, getPlanReminderCopy, getSharedUiCopy, getSkillsCopy } from '@maka/ui';
+import { applyAssistantComplete, getDailyReviewCopy, getPlanReminderCopy, getSharedUiCopy, getSkillsCopy, modelMenuGroups } from '@maka/ui';
 import {
   findInlineCjkLiterals,
   findSilentCatalogFallbacks,
@@ -13,6 +13,10 @@ const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
 
 const PR4_SHARED_UI_PRESENTATION_FILES = [
   'packages/ui/src/capability-audit-strip.tsx',
+  'packages/ui/src/artifact-preview-registry.ts',
+  'packages/ui/src/assistant-stream.ts',
+  'packages/ui/src/chat-model-helpers.ts',
+  'packages/ui/src/chat-model-switcher.tsx',
   'packages/ui/src/daily-review-helpers.ts',
   'packages/ui/src/daily-review-panel.tsx',
   'packages/ui/src/markdown-body.tsx',
@@ -24,8 +28,11 @@ const PR4_SHARED_UI_PRESENTATION_FILES = [
   'packages/ui/src/skills-panel.tsx',
   'packages/ui/src/primitives/spinner.tsx',
   'packages/ui/src/task-ledger-panel.tsx',
+  'packages/ui/src/thinking-stream.ts',
+  'packages/ui/src/tool-output-stream.ts',
   'packages/ui/src/toast.tsx',
   'packages/ui/src/ui.tsx',
+  'packages/ui/src/use-mention-popup.ts',
 ] as const;
 
 const PR4_SHARED_UI_CATALOG_FILES = [
@@ -50,6 +57,8 @@ describe('PR4 remaining shared UI copy contract', () => {
     assert.equal(getPlanReminderCopy('en').page.title, 'Scheduled tasks');
     assert.equal(getSkillsCopy('zh').page.title, '技能');
     assert.equal(getSkillsCopy('en').page.title, 'Skills');
+    assert.match(applyAssistantComplete('x'.repeat(100), { maxTotalChars: 40, locale: 'en' }).text, /remaining output truncated/);
+    assert.equal(modelMenuGroups([{ connectionSlug: 'custom', providerType: 'openai-compatible', model: 'm', label: 'M' }], 'en')[0]?.heading, 'Custom');
   });
 
   it('contains no inline user-visible Chinese in migrated shared UI owners', () => {

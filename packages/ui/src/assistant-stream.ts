@@ -38,6 +38,8 @@
  */
 
 import { redactSecrets } from './redact.js';
+import type { UiLocale } from '@maka/core';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 /**
  * Default caps. Tuned to:
@@ -56,14 +58,13 @@ import { redactSecrets } from './redact.js';
 export const ASSISTANT_MAX_DELTA_CHARS = 4 * 1024;
 export const ASSISTANT_MAX_TOTAL_CHARS = 256 * 1024;
 
-const TRUNCATED_CHUNK_MARKER = '\n[…单条 delta 已截断]\n';
-const TRUNCATED_TAIL_MARKER = '\n\n[…后续已截断]';
-
 export interface ApplyAssistantOptions {
   /** Override per-delta cap. */
   maxDeltaChars?: number;
   /** Override per-session total cap. */
   maxTotalChars?: number;
+  /** Resolved UI locale for user-visible truncation markers. */
+  locale?: UiLocale;
 }
 
 export interface ApplyAssistantResult {
@@ -116,6 +117,9 @@ export function applyAssistantDelta(
 ): ApplyAssistantResult {
   const maxDelta = options.maxDeltaChars ?? ASSISTANT_MAX_DELTA_CHARS;
   const maxTotal = options.maxTotalChars ?? ASSISTANT_MAX_TOTAL_CHARS;
+  const copy = getSharedUiCopy(options.locale ?? 'zh').stream;
+  const truncatedChunkMarker = copy.assistantChunkTruncated;
+  const truncatedTailMarker = copy.assistantTailTruncated;
 
   // Defensive guard: a non-string `rawDelta` is a runtime contract
   // violation. Drop it silently rather than coerce to '' and claim
@@ -132,7 +136,7 @@ export function applyAssistantDelta(
   // of subsequent deltas after the cap has been hit.
   if (
     previousText.length >= maxTotal &&
-    previousText.endsWith(TRUNCATED_TAIL_MARKER)
+    previousText.endsWith(truncatedTailMarker)
   ) {
     return { text: previousText, redacted: false, truncated: true };
   }
@@ -148,8 +152,8 @@ export function applyAssistantDelta(
   let delta = redactedDelta;
   let deltaTruncated = false;
   if (delta.length > maxDelta) {
-    const keep = maxDelta - TRUNCATED_CHUNK_MARKER.length;
-    delta = TRUNCATED_CHUNK_MARKER + delta.slice(delta.length - keep);
+    const keep = maxDelta - truncatedChunkMarker.length;
+    delta = truncatedChunkMarker + delta.slice(delta.length - keep);
     deltaTruncated = true;
   }
 
@@ -171,8 +175,8 @@ export function applyAssistantDelta(
   let result = safeAppended;
   let totalTruncated = false;
   if (result.length > maxTotal) {
-    const keep = maxTotal - TRUNCATED_TAIL_MARKER.length;
-    result = safeAppended.slice(0, keep) + TRUNCATED_TAIL_MARKER;
+    const keep = maxTotal - truncatedTailMarker.length;
+    result = safeAppended.slice(0, keep) + truncatedTailMarker;
     totalTruncated = true;
   }
 
@@ -190,9 +194,10 @@ export function applyAssistantDelta(
  */
 export function applyAssistantComplete(
   rawText: string,
-  options: Pick<ApplyAssistantOptions, 'maxTotalChars'> = {},
+  options: Pick<ApplyAssistantOptions, 'maxTotalChars' | 'locale'> = {},
 ): ApplyAssistantResult {
   const maxTotal = options.maxTotalChars ?? ASSISTANT_MAX_TOTAL_CHARS;
+  const truncatedTailMarker = getSharedUiCopy(options.locale ?? 'zh').stream.assistantTailTruncated;
 
   if (typeof rawText !== 'string') {
     return { text: '', redacted: false, truncated: false };
@@ -204,8 +209,8 @@ export function applyAssistantComplete(
   let result = redacted;
   let totalTruncated = false;
   if (result.length > maxTotal) {
-    const keep = maxTotal - TRUNCATED_TAIL_MARKER.length;
-    result = redacted.slice(0, keep) + TRUNCATED_TAIL_MARKER;
+    const keep = maxTotal - truncatedTailMarker.length;
+    result = redacted.slice(0, keep) + truncatedTailMarker;
     totalTruncated = true;
   }
 

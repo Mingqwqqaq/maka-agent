@@ -19,6 +19,8 @@
 import { useEffect, useId, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { detectMentionTrigger, mentionQueryMatches, type MentionTrigger } from './chat-input-behavior.js';
 import type { MentionItem } from './composer-mention-popup.js';
+import { useUiLocale } from './locale-context.js';
+import { getSharedUiCopy } from './shared-ui-copy.js';
 
 export interface ComposerMentionApi {
   /** The active trigger + query + trigger-char index; null when closed. */
@@ -59,6 +61,7 @@ export function useMentionPopup(input: {
   /** Inserting a mention is an edit: history navigation restarts. */
   resetPromptHistoryNavigation(): void;
 }): ComposerMentionApi {
+  const copy = getSharedUiCopy(useUiLocale());
   // Mention popup state (@ file / skill). `mention` holds the active trigger +
   // query + trigger-char index; items/loading/activeIndex drive the popup. The
   // whole block stays inert unless the matching provider prop is present, so
@@ -124,7 +127,7 @@ export function useMentionPopup(input: {
     if (!item) return;
     const insertion = item.type === 'file'
       ? `@${item.relativePath} `
-      : `使用 ${item.name} 技能：`;
+      : copy.mention.skillInsertion(item.name);
     const value = el.value;
     const caret = el.selectionEnd ?? value.length;
     // Replace [start, caret): the trigger char (at `start`) through the caret,
