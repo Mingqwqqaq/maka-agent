@@ -8,6 +8,7 @@ import {
   resolveVisualSmokeFixture,
   seedVisualSmokeFixture,
 } from '../visual-smoke-fixture.js';
+import { readVisualSmokeFixtureCombinedSource } from './visual-smoke-fixture-source-helpers.js';
 
 describe('visual smoke fixture mode', () => {
   it('stays fully disabled when MAKA_VISUAL_SMOKE_FIXTURE is unset', () => {
@@ -338,7 +339,10 @@ describe('visual smoke fixture mode', () => {
   });
 
   it('fixture source does not seed visible placeholder chat copy', async () => {
-    const src = await readFile(join(process.cwd(), 'src', 'main', 'visual-smoke-fixture.ts'), 'utf8');
+    // arch Round 3: the fixture split into a registry barrel + per-domain
+    // seeder modules, so this hygiene scan aggregates every fixture source
+    // file rather than the single monolith it used to read.
+    const src = await readVisualSmokeFixtureCombinedSource();
     assert.doesNotMatch(src, /占位用户消息|占位回复/, 'visual smoke screenshots must use product-like chat copy, not placeholder text');
   });
 
@@ -1265,6 +1269,41 @@ describe('visual smoke fixture mode', () => {
         readFile(join(workspaceRoot, 'artifacts', 'visual-smoke-artifact', 'artifact-missing-missing.md'), 'utf8'),
         /ENOENT/,
       );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('settings-bots-onboarding fixture (#1233 deferral)', () => {
+  it('opens 远程接入 and seeds the DingTalk provider so the scan-login modal auto-opens', () => {
+    const fixture = resolveVisualSmokeFixture('settings-bots-onboarding', false);
+    assert.ok(fixture, 'settings-bots-onboarding should resolve');
+    const state = getVisualSmokeState(fixture);
+    assert.equal(state?.scenario, 'settings-bots-onboarding');
+    assert.equal(state?.openSettingsSection, 'bot-chat');
+    // botOnboardingProvider is the contract the renderer reads to jump to the
+    // provider detail + auto-open the QR modal in its waiting state.
+    assert.equal(state?.botOnboardingProvider, 'dingtalk');
+    // Active session is the standard turn fixture so the chat surface behind
+    // the Settings modal renders meaningful context.
+    assert.equal(state?.activeSessionId, 'visual-smoke-turn');
+  });
+
+  it('reuses the standard turn seed so no bot-specific on-disk seed is needed', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'maka-visual-smoke-bots-onboarding-'));
+    try {
+      const fixture = resolveVisualSmokeFixture('settings-bots-onboarding', false);
+      assert.ok(fixture);
+      await seedVisualSmokeFixture({
+        workspaceRoot,
+        fixture,
+        credentialStore: fakeCredentialStore(),
+        now: 1_700_000_000_000,
+      });
+      const file = await readFile(join(workspaceRoot, 'sessions', 'visual-smoke-turn', 'session.jsonl'), 'utf8');
+      const header = JSON.parse(file.split('\n')[0]!) as { id: string };
+      assert.equal(header.id, 'visual-smoke-turn');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
