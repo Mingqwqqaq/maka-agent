@@ -194,30 +194,52 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
     argv.push('--ro-bind-try', path, path);
   }
 
+  const runtimeWritableRoots = removeNestedRoots(
+    (command.pathContext.runtimeWritableRoots ?? []).filter(isUsableRuntimeRoot),
+  );
+  const profileReadableRoots = removeRootsCoveredBy(
+    roots.readableRoots,
+    runtimeWritableRoots,
+  );
+  const profileWritableRoots = removeRootsCoveredBy(
+    roots.writableRoots,
+    runtimeWritableRoots,
+  );
+  const requiredRuntimeRoots = removeNestedRoots([
+    ...(command.pathContext.runtimeReadableRoots ?? []),
+    ...(command.pathContext.executableRoots ?? []),
+  ].filter(isUsableRuntimeRoot));
+  const requiredRuntimeMounts = removeRootsCoveredBy(requiredRuntimeRoots, [
+    ...DEFAULT_READ_ONLY_HOST_PATHS,
+    ...profileReadableRoots,
+    ...profileWritableRoots,
+    ...runtimeWritableRoots,
+  ]);
   const programDirectory = absoluteProgramDirectory(command.program);
   const profileCoverage = [
     ...DEFAULT_READ_ONLY_HOST_PATHS,
-    ...roots.readableRoots,
-    ...roots.writableRoots,
+    ...profileReadableRoots,
+    ...profileWritableRoots,
+    ...requiredRuntimeMounts,
+    ...runtimeWritableRoots,
   ];
   const extraProgramDirectories =
     programDirectory && !isCoveredByAnyRoot(programDirectory, profileCoverage)
       ? [programDirectory]
       : [];
   const extraRuntimeRoots = removeNestedRoots(
-    (command.pathContext.minimalRoots ?? []).filter(
-      (root) =>
-        posix.isAbsolute(root) &&
-        posix.normalize(root) !== '/' &&
-        !isCoveredByAnyRoot(root, profileCoverage),
-    ),
+    (command.pathContext.minimalRoots ?? [])
+      .filter(isUsableRuntimeRoot)
+      .filter((root) => !isCoveredByAnyRoot(root, profileCoverage)),
   );
   const mountRoots = uniqueRoots([
     ...extraProgramDirectories,
     ...extraRuntimeRoots,
+    ...requiredRuntimeMounts,
+    ...runtimeWritableRoots,
     ...roots.tempRoots,
-    ...roots.readableRoots,
-    ...roots.writableRoots,
+    ...profileReadableRoots,
+    ...profileWritableRoots,
   ]);
   for (const directory of requiredParentDirectories(mountRoots)) {
     argv.push('--dir', directory);
@@ -229,9 +251,11 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
   for (const directory of extraRuntimeRoots) {
     argv.push('--ro-bind-try', directory, directory);
   }
+  for (const root of requiredRuntimeMounts) argv.push('--ro-bind', root, root);
+  for (const root of runtimeWritableRoots) argv.push('--bind', root, root);
   for (const root of roots.tempRoots) argv.push('--tmpfs', root);
-  for (const root of roots.readableRoots) argv.push('--ro-bind', root, root);
-  for (const root of roots.writableRoots) argv.push('--bind', root, root);
+  for (const root of profileReadableRoots) argv.push('--ro-bind', root, root);
+  for (const root of profileWritableRoots) argv.push('--bind', root, root);
 
   for (const root of roots.protectedWritableRoots) {
     for (const name of roots.protectedMetadataNames) {
@@ -428,6 +452,17 @@ function isCoveredByAnyRoot(path: string, roots: readonly string[]): boolean {
     const relative = posix.relative(root, path);
     return relative === '' || (relative !== '..' && !relative.startsWith('../'));
   });
+}
+
+function isUsableRuntimeRoot(root: string): boolean {
+  return posix.isAbsolute(root) && posix.normalize(root) !== '/';
+}
+
+function removeRootsCoveredBy(
+  roots: readonly string[],
+  covering: readonly string[],
+): readonly string[] {
+  return roots.filter((root) => !isCoveredByAnyRoot(root, covering));
 }
 
 function removeCoveredRoots(
