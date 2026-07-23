@@ -10,6 +10,7 @@ import {
   buildParentAgentTools,
   assertProductBindingCatalogClean,
   createBuiltinSandboxManager,
+  isBuiltinFilesystemWorkerSandboxAvailable,
   createSandboxDiagnosticsProvider,
   createFilesystemWorkerLaunchSpecProvider,
   FilesystemWorkerClient,
@@ -98,15 +99,17 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
   } = deps;
 
   const sandboxManager = createBuiltinSandboxManager();
-  const filesystemWorkerLaunchSpecProvider = sandboxManager
-    ? createFilesystemWorkerLaunchSpecProvider({
-        runtime: 'electron',
-        executable: process.execPath,
-        resourceLocation: app.isPackaged
-          ? { kind: 'desktop-packaged', resourcesPath: process.resourcesPath }
-          : { kind: 'runtime' },
-      })
-    : undefined;
+  const filesystemWorkerLaunchSpecProvider =
+    sandboxManager && isBuiltinFilesystemWorkerSandboxAvailable()
+      ? createFilesystemWorkerLaunchSpecProvider({
+          runtime: 'electron',
+          platform: process.platform,
+          executable: process.execPath,
+          resourceLocation: app.isPackaged
+            ? { kind: 'desktop-packaged', resourcesPath: process.resourcesPath }
+            : { kind: 'runtime' },
+        })
+      : undefined;
   const filesystemWorker = sandboxManager && filesystemWorkerLaunchSpecProvider
     ? new FilesystemWorkerClient({
         sandboxManager,
@@ -213,7 +216,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
         enableBashAdditionalPermissions: true,
         enableFileToolAdditionalPermissions: true,
       } : {}),
-    }).filter((tool: MakaTool) => tool.name !== 'Edit'),
+    }),
   ];
   const toolsAfterSkill: MakaTool[] = [
     // External reference plan-mode borrow: a bounded read-only local worker for
@@ -284,7 +287,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
         enableBashAdditionalPermissions: true,
         enableFileToolAdditionalPermissions: true,
       } : {}),
-    }).filter((tool: MakaTool) => tool.name !== 'Edit'),
+    }),
     webSearchTool,
     ...agentTeamChildTools,
   ]);

@@ -209,10 +209,7 @@ describe('Linux sandbox smoke', () => {
     const allowedPath = join(outside, 'allowed.txt');
     const siblingPath = join(outside, 'sibling.txt');
     const escalatedPath = join(outside, 'escalated.txt');
-    await Promise.all([
-      writeFile(allowedPath, 'allowed-before'),
-      writeFile(siblingPath, 'sibling-before'),
-    ]);
+    await writeFile(siblingPath, 'sibling-before');
 
     try {
       const manager = new SandboxManager([new LinuxBubblewrapBackend({ capability })]);

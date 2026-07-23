@@ -19,6 +19,7 @@ import {
   buildRuntimeEventModelReplayPlan,
   buildChildAgentTools,
   createBuiltinSandboxManager,
+  isBuiltinFilesystemWorkerSandboxAvailable,
   createSandboxDiagnosticsProvider,
   createProviderRequestCaptureRecorder,
   createFilesystemWorkerLaunchSpecProvider,
@@ -226,12 +227,14 @@ export async function createMakaCliRuntimeContext(
     },
   });
   const sandboxManager = createBuiltinSandboxManager();
-  const filesystemWorkerLaunchSpecProvider = sandboxManager
-    ? createFilesystemWorkerLaunchSpecProvider({
-        runtime: 'node',
-        resourceLocation: { kind: 'runtime' },
-      })
-    : undefined;
+  const filesystemWorkerLaunchSpecProvider =
+    sandboxManager && isBuiltinFilesystemWorkerSandboxAvailable()
+      ? createFilesystemWorkerLaunchSpecProvider({
+          runtime: 'node',
+          platform: process.platform,
+          resourceLocation: { kind: 'runtime' },
+        })
+      : undefined;
   const filesystemWorker =
     sandboxManager && filesystemWorkerLaunchSpecProvider
       ? new FilesystemWorkerClient({

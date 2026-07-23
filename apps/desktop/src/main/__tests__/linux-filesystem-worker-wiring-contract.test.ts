@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../../../');
 
-test('CLI and Desktop create the filesystem worker for every builtin sandbox platform', async () => {
+test('CLI and Desktop create the filesystem worker only when the builtin sandbox is usable', async () => {
   const sources = await Promise.all([
     readFile(resolve(REPO_ROOT, 'packages/cli/src/runtime-bootstrap.ts'), 'utf8'),
     readFile(resolve(REPO_ROOT, 'apps/desktop/src/main/tool-assembly.ts'), 'utf8'),
@@ -14,11 +14,20 @@ test('CLI and Desktop create the filesystem worker for every builtin sandbox pla
   for (const source of sources) {
     assert.match(
       source,
-      /const filesystemWorkerLaunchSpecProvider\s*=\s*sandboxManager\s*\?\s*createFilesystemWorkerLaunchSpecProvider\(/,
+      /const filesystemWorkerLaunchSpecProvider\s*=\s*sandboxManager\s*&&\s*isBuiltinFilesystemWorkerSandboxAvailable\(\)\s*\?\s*createFilesystemWorkerLaunchSpecProvider\(/,
     );
     assert.doesNotMatch(
       source,
       /filesystemWorkerLaunchSpecProvider\s*=\s*process\.platform\s*===\s*'darwin'/,
     );
   }
+});
+
+test('Desktop exposes every worker-backed file tool, including Edit', async () => {
+  const source = await readFile(
+    resolve(REPO_ROOT, 'apps/desktop/src/main/tool-assembly.ts'),
+    'utf8',
+  );
+
+  assert.doesNotMatch(source, /\.filter\(\(tool:\s*MakaTool\)\s*=>\s*tool\.name\s*!==\s*'Edit'\)/);
 });

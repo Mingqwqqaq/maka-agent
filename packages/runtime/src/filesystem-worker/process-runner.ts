@@ -1,11 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
-import {
-  buildSpawnStdio,
-  type ChildFdInput,
-  writeChildFdInputs,
-} from '../child-fd-input.js';
+import { buildSpawnStdio, type ChildFdInput, writeChildFdInputs } from '../child-fd-input.js';
 import {
   DEFAULT_PROCESS_TERMINATION_GRACE_MS,
   terminateChildProcessTree,
