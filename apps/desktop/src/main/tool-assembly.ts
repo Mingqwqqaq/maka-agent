@@ -98,16 +98,15 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
   } = deps;
 
   const sandboxManager = createBuiltinSandboxManager();
-  const filesystemWorkerLaunchSpecProvider =
-    process.platform === 'darwin'
-      ? createFilesystemWorkerLaunchSpecProvider({
-          runtime: 'electron',
-          executable: process.execPath,
-          resourceLocation: app.isPackaged
-            ? { kind: 'desktop-packaged', resourcesPath: process.resourcesPath }
-            : { kind: 'runtime' },
-        })
-      : undefined;
+  const filesystemWorkerLaunchSpecProvider = sandboxManager
+    ? createFilesystemWorkerLaunchSpecProvider({
+        runtime: 'electron',
+        executable: process.execPath,
+        resourceLocation: app.isPackaged
+          ? { kind: 'desktop-packaged', resourcesPath: process.resourcesPath }
+          : { kind: 'runtime' },
+      })
+    : undefined;
   const filesystemWorker = sandboxManager && filesystemWorkerLaunchSpecProvider
     ? new FilesystemWorkerClient({
         sandboxManager,

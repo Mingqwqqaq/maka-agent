@@ -226,13 +226,12 @@ export async function createMakaCliRuntimeContext(
     },
   });
   const sandboxManager = createBuiltinSandboxManager();
-  const filesystemWorkerLaunchSpecProvider =
-    process.platform === 'darwin'
-      ? createFilesystemWorkerLaunchSpecProvider({
-          runtime: 'node',
-          resourceLocation: { kind: 'runtime' },
-        })
-      : undefined;
+  const filesystemWorkerLaunchSpecProvider = sandboxManager
+    ? createFilesystemWorkerLaunchSpecProvider({
+        runtime: 'node',
+        resourceLocation: { kind: 'runtime' },
+      })
+    : undefined;
   const filesystemWorker =
     sandboxManager && filesystemWorkerLaunchSpecProvider
       ? new FilesystemWorkerClient({
