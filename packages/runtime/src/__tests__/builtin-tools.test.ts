@@ -555,6 +555,7 @@ describe('builtin Bash streaming output', () => {
   test('completion cannot close a descriptor number reused after spawn handoff', async () => {
     const fixture = await linuxMissingExactWriteFixture();
     let reusedFd: number | undefined;
+    const openedFds: number[] = [];
     const bash = fixture.buildBash({
       async runForegroundBash(input: any) {
         const pinned = input.fdInputs.find(
@@ -563,8 +564,15 @@ describe('builtin Bash streaming output', () => {
         assert.ok(pinned);
         assert.equal(typeof pinned.releaseSource, 'function');
         pinned.releaseSource();
-        reusedFd = openSync(join(dirname(fixture.target), 'reused.txt'), 'w');
-        assert.equal(reusedFd, pinned.sourceFd, 'test requires immediate fd-number reuse');
+        for (let attempt = 0; attempt <= pinned.sourceFd + 16; attempt += 1) {
+          const fd = openSync(join(dirname(fixture.target), `reused-${attempt}.txt`), 'w');
+          openedFds.push(fd);
+          if (fd === pinned.sourceFd) {
+            reusedFd = fd;
+            break;
+          }
+        }
+        assert.equal(reusedFd, pinned.sourceFd, 'test could not force fd-number reuse');
         input.onCompletion?.({ successful: false });
         return terminalResult(input, 'failed', 7);
       },
@@ -578,7 +586,7 @@ describe('builtin Bash streaming output', () => {
       assert.ok(reusedFd !== undefined);
       assert.doesNotThrow(() => fstatSync(reusedFd!));
     } finally {
-      if (reusedFd !== undefined) closeSync(reusedFd);
+      for (const fd of openedFds.reverse()) closeSync(fd);
       await fixture.cleanup();
     }
   });
