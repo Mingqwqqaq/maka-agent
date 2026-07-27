@@ -1,5 +1,13 @@
-export type { NavSelection } from './nav-selection.js';
+export type {
+  AutomationModule,
+  ExtensionModule,
+  NavModuleMemory,
+  NavSelection,
+  SessionFilter,
+} from './nav-selection.js';
 export { CapabilityAuditStrip } from './capability-audit-strip.js';
+export { ModuleHubSelector } from './module-hub-selector.js';
+export type { ModuleHubHeader } from './module-hub-selector.js';
 export { SearchModal } from './search-modal.js';
 export { SessionListPanel } from './session-list-panel.js';
 export type { SessionViewMode } from './session-list-panel.js';

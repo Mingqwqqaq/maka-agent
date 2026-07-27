@@ -32,6 +32,7 @@
 
 import {
   failureClassFromCompleteStopReason,
+  normalizeMessageContent,
   type AnyPermissionRequestEvent,
   type CompleteEvent,
   type SessionEvent,
@@ -324,6 +325,9 @@ function mapBackendSessionEvent(
           kind: 'thinking',
           text: event.text,
           ...(event.signature !== undefined ? { signature: event.signature } : {}),
+          ...(event.providerOptions !== undefined
+            ? { providerOptions: structuredClone(event.providerOptions) }
+            : {}),
         },
         refs: { providerEventId: event.messageId },
       };
@@ -340,6 +344,9 @@ function mapBackendSessionEvent(
           id: event.toolUseId,
           name: event.toolName,
           args: structuredClone(event.args),
+          ...(event.providerOptions !== undefined
+            ? { providerOptions: structuredClone(event.providerOptions) }
+            : {}),
         },
         refs: {
           toolCallId: event.toolUseId,
@@ -456,9 +463,9 @@ function mapBackendSessionEvent(
         ...base,
         role: 'user',
         author: 'user',
-        // Raw text + steering marker: read models render the text as-is,
-        // model replay wraps it in the canonical steering envelope.
-        content: { kind: 'text', text: event.text, steering: true },
+        // Canonical content + steering marker: read models may prefer
+        // displayText, while model replay uses text and materializes attachments.
+        content: { kind: 'text', ...normalizeMessageContent(event.content), steering: true },
         refs: { providerEventId: event.messageId },
       };
 
@@ -466,6 +473,26 @@ function mapBackendSessionEvent(
     // legal producer and pushes it directly into the turn stream. The flow
     // drops a backend-yielded one at the ingress — see run() — so it is
     // excluded from this function's input vocabulary.)
+
+    // ── Transient provider retry progress ────────────────────────────────
+    case 'provider_retry':
+      return {
+        ...base,
+        partial: true,
+        role: 'system',
+        author: 'system',
+        actions: {
+          stateDelta: {
+            providerRetry: {
+              phase: event.phase,
+              attempt: event.attempt,
+              maxAttempts: event.maxAttempts,
+              ...(event.phase === 'scheduled' ? { delayMs: event.delayMs } : {}),
+              reason: event.reason,
+            },
+          },
+        },
+      };
 
     // ── Plan handoff (placeholder; Phase 5/7 refines) ─────────────────────
     case 'plan_submitted':

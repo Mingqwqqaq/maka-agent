@@ -6,6 +6,7 @@ import {
   Archive,
   ArchiveRestore,
   Ban,
+  Bot,
   ChevronRight,
   CircleCheckBig,
   Eye,
@@ -30,7 +31,7 @@ import { useUiLocale } from './locale-context.js';
 import { getConversationCopy } from './conversation-copy.js';
 
 type SessionRowActionId = 'flag' | 'archive' | 'rename' | 'delete';
-type SessionHistoryGroupVariant = 'status' | 'project';
+type SessionHistoryGroupVariant = 'conversation' | 'project';
 const PROJECT_GROUP_PREVIEW_LIMIT = 4;
 
 export interface SessionRowActions {
@@ -45,12 +46,10 @@ export interface SessionRowActions {
   onDelete(sessionId: string): void | Promise<void>;
 }
 
-export interface SessionHistoryStatusGroup {
+export interface SessionHistoryGroup {
   id: string;
   label: string;
   sessions: SessionSummary[];
-  collapsible: boolean;
-  defaultExpanded: boolean;
 }
 
 export function SessionHistoryList(props: {
@@ -72,15 +71,10 @@ export function SessionHistoryList(props: {
    * unaware of the connection store.
    */
   staleSessionIds?: Set<string>;
-  /**
-   * Pre-computed status-driven groups for the session list (PR109b).
-   * When provided, replaces the date-bucket grouping for the `chats`
-   * filter. Caller derives this via `deriveSessionStatusGroups()` from
-   * `apps/desktop/src/renderer/session-status-grouping.ts`. Each group
-   * carries its own collapsible/defaultExpanded flag so the panel
-   * doesn't have to know about Archived being closed by default.
-   */
-  statusGroups?: ReadonlyArray<SessionHistoryStatusGroup>;
+  /** Pre-computed groups used by the project view. */
+  groups?: ReadonlyArray<SessionHistoryGroup>;
+  /** Linked subagent Sessions keyed by their durable parent Session id. */
+  childSessionsByParentId?: ReadonlyMap<string, readonly SessionSummary[]>;
   groupVariant?: SessionHistoryGroupVariant;
   onSelectSession(sessionId: string): void;
   rowActions?: SessionRowActions;
@@ -174,26 +168,23 @@ export function SessionHistoryList(props: {
         >
           <SessionListGroups
             groups={
-              props.statusGroups
-                ? props.statusGroups.map((g) => ({
+              props.groups
+                ? props.groups.map((g) => ({
                     key: g.id,
                     label: g.label,
                     sessions: g.sessions,
-                    collapsible: g.collapsible,
-                    defaultExpanded: g.defaultExpanded,
                   }))
                 : groupSessionsForHistory(props.sessions, locale).map((g) => ({
-                    key: g.label,
+                    key: g.id,
                     label: g.label,
                     sessions: g.sessions,
-                    collapsible: false,
-                    defaultExpanded: true,
                   }))
             }
-            groupVariant={props.groupVariant ?? 'status'}
+            groupVariant={props.groupVariant ?? 'conversation'}
             activeId={props.activeId}
             streamingSessionIds={props.streamingSessionIds}
             staleSessionIds={props.staleSessionIds}
+            childSessionsByParentId={props.childSessionsByParentId}
             onSelectSession={props.onSelectSession}
             rowActions={props.rowActions}
           />
@@ -203,59 +194,24 @@ export function SessionHistoryList(props: {
   );
 }
 
-/**
- * Render an ordered list of session groups, supporting collapsibility
- * per group. Used by SessionListPanel for both the legacy date-bucket
- * grouping and the new status-driven grouping (PR109b).
- *
- * Each group has a header row with the group label + count. Collapsible
- * groups show a chevron and toggle expanded state via local state.
- * Expanded state is keyed on group `key` so the same group keeps its
- * state across re-renders (e.g., archived stays collapsed even when
- * sidebar refreshes).
- */
+/** Render either the flat conversation groups or project disclosures. */
 function SessionListGroups(props: {
   groups: ReadonlyArray<{
     key: string;
     label: string;
     sessions: SessionSummary[];
-    collapsible: boolean;
-    defaultExpanded: boolean;
   }>;
   groupVariant: SessionHistoryGroupVariant;
   activeId?: string;
   streamingSessionIds?: Set<string>;
   staleSessionIds?: Set<string>;
+  childSessionsByParentId?: ReadonlyMap<string, readonly SessionSummary[]>;
   onSelectSession(sessionId: string): void;
   rowActions?: SessionRowActions;
 }) {
-  const copy = getConversationCopy(useUiLocale()).sessions;
-  const [expandedByKey, setExpandedByKey] = useState<Record<string, boolean>>(() => {
-    const out: Record<string, boolean> = {};
-    for (const g of props.groups) out[g.key] = g.defaultExpanded;
-    return out;
-  });
-  // Ensure newly-appearing groups inherit their defaultExpanded value
-  // without overriding user-toggled state.
-  useEffect(() => {
-    setExpandedByKey((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const g of props.groups) {
-        if (!(g.key in next)) {
-          next[g.key] = g.defaultExpanded;
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [props.groups]);
   return (
     <>
       {props.groups.map((group) => {
-        const expanded = expandedByKey[group.key] ?? group.defaultExpanded;
-        const toggle = () =>
-          setExpandedByKey((current) => ({ ...current, [group.key]: !expanded }));
         if (props.groupVariant === 'project') {
           return (
             <ProjectSessionGroup
@@ -266,58 +222,33 @@ function SessionListGroups(props: {
               activeId={props.activeId}
               streamingSessionIds={props.streamingSessionIds}
               staleSessionIds={props.staleSessionIds}
+              childSessionsByParentId={props.childSessionsByParentId}
               onSelectSession={props.onSelectSession}
               rowActions={props.rowActions}
             />
           );
         }
         return (
-          <div key={group.key} className="maka-list-group" data-variant="status" data-collapsible={group.collapsible || undefined}>
-            {group.collapsible ? (
-              /* PR-LIST-GROUP-TOGGLE-PRIMITIVE-0 (round 10/30):
-                 disclosure-pattern toggle (aria-expanded +
-                 aria-controls). Base UI supplies the button semantics while
-                 this row seam owns layout and the shared focus-visible +
-                 `:active` contract for the session list. */
-              <BaseButton
-                type="button"
-                className="maka-list-group-label maka-list-group-toggle"
-                onClick={toggle}
-                aria-expanded={expanded}
-                aria-controls={`maka-list-group-body-${group.key}`}
-              >
-                <ChevronRight
-                  size={12}
-                  aria-hidden="true"
-                  className="maka-list-group-chevron"
-                  style={{ transform: expanded ? 'rotate(90deg)' : undefined }}
-                />
-                <span>{group.label}</span>
-                {/* Collapsed history buckets keep a subdued count so users
-                  can tell whether expanding the group is worth it. Open
-                  groups intentionally omit counts to keep the rail flat. */}
-                <span className="maka-list-group-count">{copy.groupCount(group.sessions.length)}</span>
-              </BaseButton>
-            ) : (
+          <div key={group.key} className="maka-list-group" data-variant="conversation">
+            {group.label ? (
               <div className="maka-list-group-label">
                 <span>{group.label}</span>
               </div>
-            )}
-            {expanded && (
-              <div id={`maka-list-group-body-${group.key}`}>
-                {group.sessions.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    active={session.id === props.activeId}
-                    streaming={props.streamingSessionIds?.has(session.id) ?? false}
-                    stale={props.staleSessionIds?.has(session.id) ?? false}
-                    onSelect={props.onSelectSession}
-                    actions={props.rowActions}
-                  />
-                ))}
-              </div>
-            )}
+            ) : null}
+            <div>
+              {group.sessions.map((session) => (
+                <SessionTreeRow
+                  key={session.id}
+                  session={session}
+                  activeId={props.activeId}
+                  streamingSessionIds={props.streamingSessionIds}
+                  staleSessionIds={props.staleSessionIds}
+                  childSessionsByParentId={props.childSessionsByParentId}
+                  onSelectSession={props.onSelectSession}
+                  rowActions={props.rowActions}
+                />
+              ))}
+            </div>
           </div>
         );
       })}
@@ -332,6 +263,7 @@ function ProjectSessionGroup(props: {
   activeId?: string;
   streamingSessionIds?: Set<string>;
   staleSessionIds?: Set<string>;
+  childSessionsByParentId?: ReadonlyMap<string, readonly SessionSummary[]>;
   onSelectSession(sessionId: string): void;
   rowActions?: SessionRowActions;
 }) {
@@ -363,14 +295,15 @@ function ProjectSessionGroup(props: {
         <>
           <div id={`maka-list-group-body-${props.groupKey}`}>
             {visibleSessions.map((session) => (
-              <SessionRow
+              <SessionTreeRow
                 key={session.id}
                 session={session}
-                active={session.id === props.activeId}
-                streaming={props.streamingSessionIds?.has(session.id) ?? false}
-                stale={props.staleSessionIds?.has(session.id) ?? false}
-                onSelect={props.onSelectSession}
-                actions={props.rowActions}
+                activeId={props.activeId}
+                streamingSessionIds={props.streamingSessionIds}
+                staleSessionIds={props.staleSessionIds}
+                childSessionsByParentId={props.childSessionsByParentId}
+                onSelectSession={props.onSelectSession}
+                rowActions={props.rowActions}
               />
             ))}
           </div>
@@ -385,6 +318,48 @@ function ProjectSessionGroup(props: {
             </BaseButton>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function SessionTreeRow(props: {
+  session: SessionSummary;
+  activeId?: string;
+  streamingSessionIds?: Set<string>;
+  staleSessionIds?: Set<string>;
+  childSessionsByParentId?: ReadonlyMap<string, readonly SessionSummary[]>;
+  onSelectSession(sessionId: string): void;
+  rowActions?: SessionRowActions;
+  depth?: number;
+}) {
+  const depth = props.depth ?? 0;
+  const children = props.childSessionsByParentId?.get(props.session.id) ?? [];
+  return (
+    <div
+      className="maka-list-session-tree"
+      data-depth={depth > 0 ? String(depth) : undefined}
+    >
+      <SessionRow
+        session={props.session}
+        active={props.session.id === props.activeId}
+        streaming={props.streamingSessionIds?.has(props.session.id) ?? false}
+        stale={props.staleSessionIds?.has(props.session.id) ?? false}
+        nested={depth > 0}
+        onSelect={props.onSelectSession}
+        actions={props.rowActions}
+      />
+      {children.length > 0 && (
+        <div className="maka-list-session-children">
+          {children.map((child) => (
+            <SessionTreeRow
+              key={child.id}
+              {...props}
+              session={child}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -474,10 +449,12 @@ const SessionRow = memo(function SessionRow(props: {
    * user can spot broken sessions in the list before clicking in.
    */
   stale?: boolean;
+  /** Render this linked child as an indented nested Session row. */
+  nested?: boolean;
   onSelect(sessionId: string): void;
   actions?: SessionRowActions;
 }) {
-  const { session, active, streaming, stale, actions, onSelect } = props;
+  const { session, active, streaming, stale, nested, actions, onSelect } = props;
   const locale = useUiLocale();
   const copy = getConversationCopy(locale).sessions;
   const [editing, setEditing] = useState(false);
@@ -561,6 +538,7 @@ const SessionRow = memo(function SessionRow(props: {
       data-menu-open={menuOpen ? 'true' : undefined}
       data-streaming={streaming ? 'true' : undefined}
       data-stale={stale ? 'true' : undefined}
+      data-subagent={nested ? 'true' : undefined}
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={(event) => {
         if (event.currentTarget.contains(document.activeElement)) return;
@@ -655,6 +633,13 @@ const SessionRow = memo(function SessionRow(props: {
           */}
           <div className="maka-list-row-text">
             <div className="maka-list-row-name">
+              {nested && (
+                <Bot
+                  size={12}
+                  aria-hidden="true"
+                  className="maka-list-row-subagent-icon"
+                />
+              )}
               {streaming && (
                 <span
                   className="maka-list-row-streaming-dot"
@@ -755,64 +740,27 @@ const SessionRow = memo(function SessionRow(props: {
 });
 
 interface SessionGroup {
+  id: 'pinned' | 'unpinned';
   label: string;
   sessions: SessionSummary[];
 }
 
-/**
- * In the Chats filter, pinned (flagged) sessions float to the top in their
- * own section per the session-list-lifecycle contract, separate from the
- * date-bucketed remainder. Other filters keep the date-bucket layout.
- */
 function groupSessionsForHistory(sessions: SessionSummary[], locale: UiLocale): SessionGroup[] {
   const copy = getConversationCopy(locale).sessions;
-  const pinned = sessions.filter((session) => session.isFlagged);
-  const rest = sessions.filter((session) => !session.isFlagged);
+  const ordered = [...sessions].sort((a, b) => {
+    const timestampDelta = (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
+    return timestampDelta || a.id.localeCompare(b.id);
+  });
+  const pinned = ordered.filter((session) => session.isFlagged);
+  const unpinned = ordered.filter((session) => !session.isFlagged);
   const groups: SessionGroup[] = [];
   if (pinned.length > 0) {
-    groups.push({ label: copy.pinned, sessions: pinned });
+    groups.push({ id: 'pinned', label: copy.pinned, sessions: pinned });
   }
-  return [...groups, ...groupSessionsByTime(rest, locale)];
-}
-
-/**
- * Cluster the session list into Today / Yesterday / Past 7 days / Past 30 days
- * / Older buckets. Sorted by lastMessageAt descending within each group. Falls
- * back to a single bucket if every session lacks a timestamp.
- */
-function groupSessionsByTime(sessions: SessionSummary[], locale: UiLocale): SessionGroup[] {
-  const copy = getConversationCopy(locale).sessions;
-  const now = Date.now();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const todayMs = startOfToday.getTime();
-  const yesterdayMs = todayMs - 24 * 60 * 60 * 1000;
-  const sevenDaysMs = todayMs - 7 * 24 * 60 * 60 * 1000;
-  const thirtyDaysMs = todayMs - 30 * 24 * 60 * 60 * 1000;
-
-  const buckets: SessionGroup[] = [
-    { label: copy.today, sessions: [] },
-    { label: copy.yesterday, sessions: [] },
-    { label: copy.past7Days, sessions: [] },
-    { label: copy.past30Days, sessions: [] },
-    { label: copy.earlier, sessions: [] },
-    { label: copy.pending, sessions: [] },
-  ];
-
-  for (const session of sessions) {
-    const at = session.lastMessageAt;
-    if (!at) {
-      buckets[5]!.sessions.push(session);
-      continue;
-    }
-    if (at >= todayMs) buckets[0]!.sessions.push(session);
-    else if (at >= yesterdayMs) buckets[1]!.sessions.push(session);
-    else if (at >= sevenDaysMs) buckets[2]!.sessions.push(session);
-    else if (at >= thirtyDaysMs) buckets[3]!.sessions.push(session);
-    else buckets[4]!.sessions.push(session);
+  if (unpinned.length > 0) {
+    groups.push({ id: 'unpinned', label: '', sessions: unpinned });
   }
-
-  return buckets.filter((group) => group.sessions.length > 0);
+  return groups;
 }
 
 function formatSessionMeta(session: SessionSummary, locale: UiLocale): string {

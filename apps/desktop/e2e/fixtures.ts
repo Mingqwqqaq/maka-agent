@@ -43,6 +43,8 @@ async function seedE2eInvocableSkills(userDataDir: string): Promise<void> {
   await Promise.all([
     mkdir(path.join(projectSkillRoot, 'project-only'), { recursive: true }),
     mkdir(path.join(projectSkillRoot, 'host-incompatible'), { recursive: true }),
+    mkdir(path.join(projectSkillRoot, 'agent-write'), { recursive: true }),
+    mkdir(path.join(projectSkillRoot, 'deep-research-only'), { recursive: true }),
     mkdir(path.join(workspaceSkillRoot, 'workspace-only'), { recursive: true }),
   ]);
   await Promise.all([
@@ -54,6 +56,16 @@ async function seedE2eInvocableSkills(userDataDir: string): Promise<void> {
     writeFile(
       path.join(projectSkillRoot, 'host-incompatible', 'SKILL.md'),
       `---\nname: Host Incompatible\ndescription: Must be hidden from this host.\nrequired-tools: [DefinitelyMissingTool]\n---\n# Host Incompatible`,
+      'utf8',
+    ),
+    writeFile(
+      path.join(projectSkillRoot, 'agent-write', 'SKILL.md'),
+      `---\nname: Agent Write\ndescription: Requires a mutating tool excluded from Plan mode.\nrequired-tools: [Write]\n---\n# Agent Write`,
+      'utf8',
+    ),
+    writeFile(
+      path.join(projectSkillRoot, 'deep-research-only', 'SKILL.md'),
+      `---\nname: Deep Research Only\ndescription: Requires a tool available only in Deep Research mode.\nrequired-tools: [deep_research_status]\n---\n# Deep Research Only`,
       'utf8',
     ),
     writeFile(
@@ -102,6 +114,11 @@ function buildE2eEnv(
     }
   }
   env.MAKA_E2E = '1';
+  // The login-shell PATH probe must not make E2E command resolution depend on
+  // the developer or CI account. buildE2eEnv owns the launched environment,
+  // so it owns the deterministic skip flag (unlike relying on TERM, which is
+  // unset under xvfb).
+  env.MAKA_SKIP_SHELL_ENV = '1';
   env.MAKA_E2E_USER_DATA_DIR = userDataDir;
   if (e2eFixtureScenario) env.MAKA_E2E_FIXTURE = e2eFixtureScenario;
   if (locale) env.MAKA_E2E_FIXTURE_LOCALE = locale;
@@ -199,15 +216,19 @@ export const test = base.extend<{
   staleSessionsWindow: Page;
   sessionWorkbarWindow: Page;
   botSettingsWindow: Page;
+  permissionSettingsWindow: Page;
+  usageSettingsWindow: Page;
+  searchSettingsWindow: Page;
   zhLocaleWindow: Page;
   enLocaleWindow: Page;
   localeSwitchWindow: Page;
   invocableSkillsWindow: Page;
+  planRemindersWindow: Page;
 }>({
   // Seeded: a pre-staged connection clears onboarding so the composer is ready.
   // Used by chat / session / settings / attachment specs.
   window: async ({}, use) => {
-    await withE2eWindow({ seed: true, readinessSelector: '.maka-onboarding-quickchat-input', locale: 'zh' }, use);
+    await withE2eWindow({ seed: true, readinessSelector: '.maka-composer-textarea', locale: 'zh' }, use);
   },
   // Empty: no connection staged — exercises the true first-run boot path.
   // Used by first-run only.
@@ -294,6 +315,54 @@ export const test = base.extend<{
       use,
     );
   },
+  // #1361: Permission Center with a typed OS-permission snapshot (see
+  // `main/permission-snapshot-e2e-fixture.ts`). The narrow-layout contract is
+  // about rows that carry grant buttons, which the host's real TCC state cannot
+  // guarantee — a granted dev machine renders none, and Linux CI reports most
+  // permissions as `unsupported`.
+  permissionSettingsWindow: async ({}, use) => {
+    await withE2eWindow(
+      {
+        seed: false,
+        readinessSelector: '.settingsOsPermissionRow',
+        e2eFixtureScenario: 'settings-permissions',
+        locale: 'zh',
+      },
+      use,
+    );
+  },
+  // #1364: Usage with seeded request traffic + details-on settings, so the
+  // request-log DataTable actually renders (the default window fixture keeps
+  // `showDetails` false and has no logs — the table CSS could regress without
+  // failing anything).
+  usageSettingsWindow: async ({}, use) => {
+    await withE2eWindow(
+      {
+        seed: false,
+        // The tabs bar, not the table: the renderer's first stats fetch can
+        // race the fixture seeding, so the spec refreshes until the seeded
+        // request log lands.
+        readinessSelector: '.settingsUsageTabsBar',
+        e2eFixtureScenario: 'settings-usage',
+        locale: 'zh',
+      },
+      use,
+    );
+  },
+  // #1364: Web Search with a configured Tavily key; queries are answered by
+  // the typed fixture in `main/web-search-e2e-fixture.ts` (e2e runs offline),
+  // so the hostile-width result list is reachable deterministically.
+  searchSettingsWindow: async ({}, use) => {
+    await withE2eWindow(
+      {
+        seed: false,
+        readinessSelector: '.settingsWebSearchQueryInputRow',
+        e2eFixtureScenario: 'settings-search',
+        locale: 'zh',
+      },
+      use,
+    );
+  },
   // Representative e2e-fixture renderer launches in both supported locales.
   // These use the same production LocaleProvider override path as screenshot capture.
   zhLocaleWindow: async ({}, use) => {
@@ -311,17 +380,28 @@ export const test = base.extend<{
   // Keep this fixture unpinned so the Follow system assertion observes the
   // actual host language while the legacy fixtures remain deterministic.
   localeSwitchWindow: async ({}, use) => {
-    await withE2eWindow({ seed: true, readinessSelector: '.maka-onboarding-quickchat-input' }, use);
+    await withE2eWindow({ seed: true, readinessSelector: '.maka-composer-textarea' }, use);
   },
   // Project + Maka-workspace Skills with one deliberately host-incompatible
   // entry. Proves `/` uses Runtime discovery/gating rather than management UI data.
   invocableSkillsWindow: async ({}, use) => {
     await withE2eWindow({
       seed: true,
-      readinessSelector: '.maka-onboarding-quickchat-input',
+      readinessSelector: '.maka-composer-textarea',
       locale: 'zh',
       invocableSkills: true,
     }, use);
+  },
+  planRemindersWindow: async ({}, use) => {
+    await withE2eWindow(
+      {
+        seed: false,
+        readinessSelector: '.maka-plan-card',
+        e2eFixtureScenario: 'plan-reminders',
+        locale: 'zh',
+      },
+      use,
+    );
   },
 });
 

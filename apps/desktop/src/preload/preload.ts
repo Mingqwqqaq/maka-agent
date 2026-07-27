@@ -6,7 +6,6 @@ import type {
   MakaBridge,
   OnboardingSnapshot,
   PermissionActionResult,
-  QuickChatResult,
   RendererIngestInput,
   WorkspaceInstructionsState,
 } from './bridge-contract.js';
@@ -95,8 +94,8 @@ import type { GoalState } from '@maka/runtime';
 import type { BundledSkillCatalogEntry, ManagedSkillSourceEntry, ManagedSkillUpdatePreview, SkillEntry, SkillGovernanceDetails } from '@maka/ui';
 import type { ConfigCategory } from '@maka/storage';
 import type { TestProxyInput } from '@maka/core/settings/network-settings';
-import type { Result } from '@maka/core/settings/result';
-import type { CreateSessionInput } from '@maka/core';
+import type { Result } from '@maka/core/result';
+import type { CreateSessionRequestInput } from '@maka/core';
 import type {
   McpConfigFile,
   McpServerConfig,
@@ -106,7 +105,6 @@ import type {
 import type {
   AttachmentRef,
   OnboardingMilestoneId,
-  QuickChatMode,
   QuoteRef,
 } from '@maka/core';
 
@@ -140,7 +138,13 @@ const makaBridge = {
     list(filter?: SessionListFilter): Promise<SessionSummary[]> {
       return ipcRenderer.invoke('sessions:list', filter);
     },
-    create(input?: Partial<CreateSessionInput>): Promise<SessionSummary> {
+    /**
+     * The single session-creation channel (#1433). `mode` names a
+     * product intent — main derives the permission boundary, name and
+     * labels it implies (`create-session-input.ts`); the renderer cannot
+     * reach a boundary like `explore` by asking for it directly.
+     */
+    create(input?: CreateSessionRequestInput): Promise<SessionSummary> {
       return ipcRenderer.invoke('sessions:create', input);
     },
     async send(
@@ -399,18 +403,6 @@ const makaBridge = {
     },
     clearMilestone(id: OnboardingMilestoneId): Promise<OnboardingSnapshot> {
       return ipcRenderer.invoke('onboarding:clearMilestone', id);
-    },
-  },
-  quickChat: {
-    /**
-     * PR110b: Quick Chat entry. Input is intentionally minimal —
-     * `{ prompt?: string }`. The main process always uses the
-     * derived ready default and never accepts user-supplied
-     * connection/model overrides at this stage (PR110c/d will add
-     * model picker UI).
-     */
-    start(input?: { prompt?: string; mode?: QuickChatMode; skillIds?: string[] }): Promise<QuickChatResult> {
-      return ipcRenderer.invoke('quickChat:start', input);
     },
   },
   expertTeam: {
@@ -1058,8 +1050,15 @@ const makaBridge = {
     list(): Promise<SkillEntry[]> {
       return ipcRenderer.invoke('skills:list');
     },
-    listInvocable(sessionId?: string): Promise<import('@maka/runtime').InvocableSkillEntry[]> {
-      return ipcRenderer.invoke('skills:listInvocable', sessionId);
+    listInvocable(
+      sessionId?: string,
+      newSessionContext?: {
+        llmConnectionSlug?: string;
+        model?: string;
+        collaborationMode?: 'agent' | 'plan';
+      },
+    ): Promise<import('@maka/runtime').InvocableSkillEntry[]> {
+      return ipcRenderer.invoke('skills:listInvocable', sessionId, newSessionContext);
     },
     catalog: {
       list(): Promise<BundledSkillCatalogEntry[]> {

@@ -16,6 +16,7 @@ import { SessionHistoryList } from '../session-history-list.js';
 import { ToolTrow } from '../tool-activity.js';
 import { summarizeTrowTools } from '../tool-activity/trow-summary.js';
 import { UserQuestionPrompt } from '../user-question-prompt.js';
+import { ModelProviderRetryIndicator } from '../chat-turn.js';
 
 function render(locale: UiLocale, children: ReactNode): string {
   return renderToStaticMarkup(<LocaleProvider locale={locale}>{children}</LocaleProvider>);
@@ -62,6 +63,23 @@ const archivedSession = {
 } satisfies SessionSummary;
 
 describe('localized conversation journey', () => {
+  it('renders provider retry attempts without exposing provider error details', () => {
+    const retry = {
+      type: 'provider_retry',
+      id: 'retry-1',
+      turnId: 'turn-1',
+      ts: 1,
+      phase: 'scheduled',
+      attempt: 3,
+      maxAttempts: 10,
+      delayMs: 4_000,
+      reason: 'rate_limit',
+    } as const;
+
+    assert.match(render('zh', <ModelProviderRetryIndicator retry={retry} />), /4 秒后重试（3\/10）/);
+    assert.match(render('en', <ModelProviderRetryIndicator retry={retry} />), /Retrying in 4s \(3\/10\)/);
+  });
+
   it('renders coherent empty and composer states in Chinese and English', () => {
     const surface = (
       <>
@@ -107,49 +125,92 @@ describe('localized conversation journey', () => {
     assert.match(en, /Go to model settings/);
   });
 
-  it('renders the compact Plan Mode switch only when the session action is available', () => {
-    const inactive = render(
+  it('keeps Plan Mode out of the toolbar and reachable from the ＋ menu (#1433)', () => {
+    const markup = render(
       'zh',
-      <Composer onSend={() => {}} onStop={() => {}} onPlanModeChange={() => {}} />,
+      <Composer onSend={() => {}} onStop={() => {}} onPickAttachments={() => {}} onPlanModeChange={() => {}} />,
     );
-    assert.match(inactive, /maka-composer-plan-mode-control/);
-    assert.match(inactive, />Plan</);
-    assert.match(inactive, /role="switch"/);
-    assert.match(inactive, /aria-label="开启 Plan Mode"/);
-    assert.match(inactive, /aria-checked="false"/);
+    // The toolbar no longer carries a standalone Plan switch…
+    assert.doesNotMatch(markup, /maka-composer-plan-mode-control/);
+    // …but the ＋ trigger is present so the mode stays reachable from the menu.
+    assert.match(markup, /aria-label="添加"/);
+  });
 
-    const active = render(
-      'en',
+  it('keeps the ＋ menu available when only mode switches are wired', () => {
+    const markup = render('zh', <Composer onSend={() => {}} onStop={() => {}} onPlanModeChange={() => {}} />);
+    assert.match(markup, /aria-label="添加"/);
+    assert.doesNotMatch(markup, /maka-composer-plan-mode-control/);
+  });
+
+  it('shows a quiet Plan indicator next to permission mode only while Plan is active', () => {
+    const on = render(
+      'zh',
+      <Composer onSend={() => {}} onStop={() => {}} planModeActive onPlanModeChange={() => {}} />,
+    );
+    assert.match(on, /maka-composer-mode-indicator/);
+    assert.match(on, /Plan 模式已启用/);
+    // Same visual language as the permission select: a quiet text BUTTON
+    // with an explicit close icon (no chevron — it cannot drop down);
+    // clicking turns the mode off.
+    assert.match(on, /<button[^>]*maka-composer-mode-indicator/);
+    assert.match(
+      on,
+      /<button[^>]*maka-composer-mode-indicator[^>]*>(?:(?!<\/button>)[\s\S])*?<svg[^>]*class="lucide lucide-x"[^>]*aria-hidden="true"/,
+    );
+
+    const off = render('zh', <Composer onSend={() => {}} onStop={() => {}} onPlanModeChange={() => {}} />);
+    assert.doesNotMatch(off, /maka-composer-mode-indicator/);
+  });
+
+  it('keeps the active-mode indicator visible but disabled with reason while streaming', () => {
+    const markup = render(
+      'zh',
       <Composer
         onSend={() => {}}
         onStop={() => {}}
-        planModeActive
-        onPlanModeChange={() => {}}
+        streaming
+        swarmModeActive
+        swarmModeDisabledReason="等待流式输出结束"
+        onSwarmModeChange={() => {}}
       />,
     );
-    assert.match(active, /aria-label="Disable Plan Mode"/);
-    assert.match(active, /aria-checked="true"/);
-
-    const unavailable = render('zh', <Composer onSend={() => {}} onStop={() => {}} />);
-    assert.doesNotMatch(unavailable, /maka-composer-plan-mode-control/);
+    assert.match(markup, /maka-composer-mode-indicator/);
+    assert.match(markup, /Swarm 模式已启用/);
+    assert.match(markup, /disabled=""/);
+    assert.match(markup, /等待流式输出结束/);
+    assert.match(
+      markup,
+      /<button[^>]*maka-composer-mode-indicator[^>]*>(?:(?!<\/button>)[\s\S])*?<svg[^>]*class="lucide lucide-x"[^>]*aria-hidden="true"/,
+    );
   });
 
-  it('renders the compact Swarm Mode switch with localized state labels', () => {
-    const inactive = render(
+  it('keeps the ＋ menu reachable while streaming (#1444)', () => {
+    const markup = render(
       'zh',
-      <Composer onSend={() => {}} onStop={() => {}} onSwarmModeChange={() => {}} />,
+      <Composer
+        onSend={() => {}}
+        onStop={() => {}}
+        streaming
+        onPickAttachments={() => {}}
+        expertTeams={[{ id: 'team-a', name: '专家团 A' }]}
+        onStartExpertTeam={() => {}}
+        onPlanModeChange={() => {}}
+        onSwarmModeChange={() => {}}
+      />,
     );
-    assert.match(inactive, /maka-composer-swarm-mode-control/);
-    assert.match(inactive, />Swarm</);
-    assert.match(inactive, /aria-label="开启 Swarm Mode"/);
-    assert.match(inactive, /aria-checked="false"/);
+    // Menu trigger must stay mounted mid-turn so attachments, expert teams,
+    // and Plan/Swarm remain reachable from the ＋ menu (import itself stays
+    // blocked mid-stream by runImportAction / the disabled attach item).
+    assert.match(markup, /aria-label="添加"/);
+  });
 
-    const active = render(
-      'en',
-      <Composer onSend={() => {}} onStop={() => {}} swarmModeActive onSwarmModeChange={() => {}} />,
+  it('keeps Swarm Mode out of the toolbar (#1433)', () => {
+    const markup = render(
+      'zh',
+      <Composer onSend={() => {}} onStop={() => {}} onPickAttachments={() => {}} onSwarmModeChange={() => {}} />,
     );
-    assert.match(active, /aria-label="Disable Swarm Mode"/);
-    assert.match(active, /aria-checked="true"/);
+    assert.doesNotMatch(markup, /maka-composer-swarm-mode-control/);
+    assert.match(markup, /aria-label="添加"/);
   });
 
   it('localizes permission and question chrome while preserving raw values', () => {
@@ -192,19 +253,11 @@ describe('localized conversation journey', () => {
     assert.doesNotMatch(en, /分钟|小时/);
   });
 
-  it('formats collapsed session-group counts with locale-correct punctuation', () => {
-    const group = (label: string) => ({
-      id: 'archived',
-      label,
-      sessions: [archivedSession],
-      collapsible: true,
-      defaultExpanded: false,
-    });
+  it('keeps the default conversation list flat without a redundant time heading', () => {
     const zh = render(
       'zh',
       <SessionHistoryList
         sessions={[archivedSession]}
-        statusGroups={[group('已归档')]}
         onSelectSession={() => {}}
       />,
     );
@@ -212,14 +265,16 @@ describe('localized conversation journey', () => {
       'en',
       <SessionHistoryList
         sessions={[archivedSession]}
-        statusGroups={[group('Archived')]}
         onSelectSession={() => {}}
       />,
     );
 
-    assert.match(zh, /已归档[\s\S]*（1）/);
-    assert.match(en, /Archived[\s\S]*\(1\)/);
-    assert.doesNotMatch(en, /Archived[\s\S]*（1）/);
+    assert.match(zh, /Archived conversation/);
+    assert.match(en, /Archived conversation/);
+    assert.doesNotMatch(
+      `${zh}${en}`,
+      /maka-list-group-label|maka-list-group-toggle|maka-list-group-count|aria-expanded/,
+    );
   });
 
   it('localizes live tool activity without rewriting tool-owned text', () => {

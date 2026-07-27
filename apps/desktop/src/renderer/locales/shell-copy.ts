@@ -142,14 +142,19 @@ type ShellCopy = {
     skillInvocationFailedTitle: string;
     skillInvocationFailedDescription(items: readonly string[]): string;
     skillInvocationFailureReason: Record<
-      'invalid_name' | 'not_found' | 'disabled' | 'host_incompatible' | 'resolution_failed',
+      | 'invalid_name'
+      | 'not_found'
+      | 'disabled'
+      | 'host_incompatible'
+      | 'resolution_failed'
+      | 'too_many_requests',
       string
     >;
     responseFailedTitle: string;
     responseFailedFallback: string;
     refreshFailedTitle: string;
-    quickChatFailedTitle: string;
-    quickChatFailedFallback: string;
+    sessionStartFailedTitle: string;
+    sessionStartFailedFallback: string;
     expertTeamFailedTitle: string;
     expertTeamFailedFallback: string;
     expertTeamNotFound: string;
@@ -375,10 +380,10 @@ type ShellCopy = {
     collapseWorkbar: string;
     workspaceActions: string;
     feedback: string;
-    feedbackTooltip: string;
     openCommandPalette: string;
     openHelp: string;
     openHealth: string;
+    moreActions: string;
   };
   app: {
     loadingWorkbarLabel: string;
@@ -676,12 +681,13 @@ const SHELL_COPY_BY_LOCALE = {
         disabled: '已停用',
         host_incompatible: '当前环境缺少依赖',
         resolution_failed: '解析失败',
+        too_many_requests: 'Skill 调用请求超过 50 个上限',
       },
       responseFailedTitle: '响应失败',
       responseFailedFallback: '会话操作失败，请稍后重试。',
       refreshFailedTitle: '刷新对话失败',
-      quickChatFailedTitle: '开始对话失败',
-      quickChatFailedFallback: '对话暂时无法开始，请稍后重试。',
+      sessionStartFailedTitle: '开始对话失败',
+      sessionStartFailedFallback: '对话暂时无法开始，请稍后重试。',
       expertTeamFailedTitle: '开始专家团失败',
       expertTeamFailedFallback: '专家团暂时无法开始，请稍后重试。',
       expertTeamNotFound: '找不到该专家团。',
@@ -1045,10 +1051,10 @@ const SHELL_COPY_BY_LOCALE = {
       collapseWorkbar: '收起会话工作栏',
       workspaceActions: '工作区辅助操作',
       feedback: '问题反馈',
-      feedbackTooltip: '问题反馈 · 打开关于与环境信息',
       openCommandPalette: '打开命令面板',
       openHelp: '打开帮助',
       openHealth: '打开健康中心',
+      moreActions: '更多操作',
     },
     app: {
       loadingWorkbarLabel: '正在加载会话工作栏',
@@ -1133,12 +1139,13 @@ const SHELL_COPY_BY_LOCALE = {
         disabled: 'disabled',
         host_incompatible: 'required tools unavailable',
         resolution_failed: 'resolution failed',
+        too_many_requests: 'more than 50 distinct Skill invocation requests',
       },
       responseFailedTitle: 'Response failed',
       responseFailedFallback: 'The conversation action failed. Try again later.',
       refreshFailedTitle: 'Could not refresh conversation',
-      quickChatFailedTitle: 'Could not start conversation',
-      quickChatFailedFallback: 'The conversation could not be started. Try again later.',
+      sessionStartFailedTitle: 'Could not start conversation',
+      sessionStartFailedFallback: 'The conversation could not be started. Try again later.',
       expertTeamFailedTitle: 'Could not start expert team',
       expertTeamFailedFallback: 'The expert team could not be started. Try again later.',
       expertTeamNotFound: 'That expert team could not be found.',
@@ -1544,10 +1551,10 @@ const SHELL_COPY_BY_LOCALE = {
       collapseWorkbar: 'Collapse conversation workbar',
       workspaceActions: 'Workspace actions',
       feedback: 'Send feedback',
-      feedbackTooltip: 'Send feedback · Open About and environment information',
       openCommandPalette: 'Open command palette',
       openHelp: 'Open help',
       openHealth: 'Open Health Center',
+      moreActions: 'More actions',
     },
     app: {
       loadingWorkbarLabel: 'Loading conversation workbar',

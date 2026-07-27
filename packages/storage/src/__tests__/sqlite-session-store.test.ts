@@ -7,11 +7,35 @@ import type { CreateSessionInput, SessionHeader } from '@maka/core';
 import {
   createLegacyFileSessionStore,
   createSessionStore,
+  isSessionNotFoundError,
+  SessionNotFoundError,
   SQLITE_SESSION_METADATA_DATABASE_NAME,
 } from '../session-store.js';
 import { createSqliteSessionMetadataStore } from '../sqlite-session-metadata-store.js';
 
 describe('default SQLite session metadata store', () => {
+  test('SQLite and legacy File stores expose one typed missing-Session boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'maka-session-store-not-found-'));
+    const stores = [
+      createSessionStore(join(root, 'sqlite')),
+      createLegacyFileSessionStore(join(root, 'legacy')),
+    ];
+    try {
+      for (const store of stores) {
+        await assert.rejects(store.readHeaderSnapshot('deleted-session'), (error) => {
+          assert.ok(error instanceof SessionNotFoundError);
+          assert.equal(isSessionNotFoundError(error), true);
+          assert.equal(error.code, 'session_not_found');
+          assert.equal(error.sessionId, 'deleted-session');
+          return true;
+        });
+      }
+    } finally {
+      await Promise.all(stores.map((store) => store.close?.()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('waits for in-flight legacy metadata import before closing SQLite', async () => {
     const root = await mkdtemp(join(tmpdir(), 'maka-session-store-close-ready-'));
     const legacy = createLegacyFileSessionStore(root);
@@ -228,7 +252,7 @@ describe('default SQLite session metadata store', () => {
     }
   });
 
-  test('fails the whole startup migration before exposing a partial catalog', async () => {
+  test('skips a malformed header during startup migration while importing valid sessions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'maka-default-session-invalid-'));
     const legacy = createLegacyFileSessionStore(root);
     const valid = await legacy.create(makeInput({ name: 'Valid' }));
@@ -240,7 +264,13 @@ describe('default SQLite session metadata store', () => {
 
     const store = createSessionStore(root);
     try {
-      await assert.rejects(() => store.list(), /Invalid legacy session header/);
+      // Startup import must not fail closed: valid sessions stay available.
+      assert.deepEqual(
+        (await store.list()).map((item) => item.id),
+        [valid.id],
+      );
+      assert.equal((await store.readHeader(valid.id)).name, 'Valid');
+      await assert.rejects(() => store.readHeader(invalid.id), /not found/);
     } finally {
       await store.close?.();
     }
@@ -249,8 +279,11 @@ describe('default SQLite session metadata store', () => {
       join(root, SQLITE_SESSION_METADATA_DATABASE_NAME),
     );
     try {
-      await assert.rejects(() => metadata.read(valid.id), /not found/);
-      assert.deepEqual(await metadata.list(), []);
+      assert.equal((await metadata.read(valid.id)).header.name, 'Valid');
+      assert.equal(await metadata.has(invalid.id), false);
+      // Malformed legacy headers are skipped, not tombstoned, so a repaired
+      // header can be imported on the next startup.
+      assert.equal(await metadata.isTombstoned(invalid.id), false);
     } finally {
       metadata.close();
       await rm(root, { recursive: true, force: true });

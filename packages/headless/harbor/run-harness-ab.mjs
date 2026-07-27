@@ -12,8 +12,14 @@ import {
   discoverCachedHarborTasks,
   fingerprintFixedPromptTaskTree,
   resolveFixedPromptRunRoot,
+  selectTasksByIds,
 } from '#fixed-prompt-task-source';
 import { createHarborTaskRunner } from '#harbor-task-runner';
+import {
+  createPierProviderProxyHub,
+  createPierTaskRunner,
+  PIER_MAKA_SETTLEMENT_GRACE_SEC,
+} from '#pier-task-runner';
 import {
   buildHarnessOracleExecutionPolicyFingerprint,
   HARBOR_ORACLE_DOCKER_PLATFORM,
@@ -38,12 +44,16 @@ import {
   CODEX_TOOLCHAIN_SPEC,
   prepareCodexToolchain,
 } from '#codex-toolchain';
+import { MAKA_NODE_TOOLCHAIN_FINGERPRINT, prepareMakaNodeToolchain } from '#maka-node-toolchain';
 import { createCodexOAuthHarnessCredentialBinding } from '#codex-oauth-harness';
 import {
+  assertDeepSweSubset30TaskTreeFingerprint,
   assertTerminalBench21TaskSet,
   assertTerminalBench21TaskTreeFingerprint,
   buildHarnessAbResumeFingerprint,
   buildHarnessAbRunManifest,
+  DEEP_SWE_REVISION,
+  DEEP_SWE_SUBSET_30_TASK_IDS,
   HARNESS_MAKA_CONTEXT_BUDGET,
   TERMINAL_BENCH_2_1_REVISION,
   TERMINAL_BENCH_2_1_TASK_IDS,
@@ -63,14 +73,12 @@ import { runExperiment } from '#experiment-engine';
 
 const execFileAsync = promisify(execFile);
 
-const EXPECTED_SOURCE_TASKS = TERMINAL_BENCH_2_1_TASK_IDS.length;
 export const DEFAULT_HARNESS_AB_RUN_ID = 'k3-maka-vs-kimi-code-tbench-2.1-full-v2';
 const CANARY_TASKS = 5;
 const PROVIDER = 'kimi-coding-plan';
 const MODEL = 'k3';
 const REASONING_EFFORT = 'max';
 const BASE_URL = 'https://api.kimi.com/coding/v1';
-const ORDER_SEED = 'terminal-bench-2.1:k3:harness-comparison:v1';
 const MAX_PAIR_CONCURRENCY = 4;
 const DEFAULT_PAIR_CONCURRENCY = 1;
 const DEFAULT_ARM_EXECUTION = 'sequential';
@@ -89,6 +97,115 @@ const BACKGROUND_RUN_ENV = 'MAKA_HARNESS_AB_BACKGROUND_RUN';
 const BACKGROUND_STARTED_AT_ENV = 'MAKA_HARNESS_AB_DETACHED_STARTED_AT';
 const BACKGROUND_JOURNAL_FILENAME = 'background-run.json';
 const BACKGROUND_LOG_FILENAME = 'background-run.log';
+
+/** The benchmark axis of a harness A/B. A benchmark is a BOUND pair of frozen
+ * task source and executor — Terminal-Bench 2.1 tasks run under plain Harbor
+ * 0.13.2, DeepSWE tasks under Pier ≥ 0.3.0 — so one profile carries both. The
+ * competitor axis (HARNESS_COMPETITOR_PROFILES) and the execution-policy env
+ * stay orthogonal to it. */
+export const HARNESS_BENCHMARK_PROFILES = Object.freeze({
+  'terminal-bench-2.1': Object.freeze({
+    id: 'terminal-bench-2.1',
+    label: 'Terminal-Bench 2.1',
+    dataset: 'terminal-bench',
+    version: '2.1',
+    revision: TERMINAL_BENCH_2_1_REVISION,
+    taskIds: TERMINAL_BENCH_2_1_TASK_IDS,
+    executor: 'harbor',
+    runIdSlug: 'tbench-2.1-full',
+    // The Harbor oracle registry (advisory task-quality evidence) exists only
+    // for Terminal-Bench; DeepSWE grading is each task's own verifier.
+    oracle: true,
+  }),
+  'deep-swe-1.1': Object.freeze({
+    id: 'deep-swe-1.1',
+    label: 'DeepSWE subset-30',
+    dataset: 'deep-swe',
+    version: '1.1',
+    revision: DEEP_SWE_REVISION,
+    taskIds: DEEP_SWE_SUBSET_30_TASK_IDS,
+    executor: 'pier',
+    runIdSlug: 'deepswe-subset30',
+    oracle: false,
+  }),
+});
+
+export function resolveHarnessBenchmarkProfile(
+  raw = process.env.MAKA_HARNESS_AB_BENCHMARK || 'terminal-bench-2.1',
+) {
+  const profile = HARNESS_BENCHMARK_PROFILES[raw];
+  if (!profile) {
+    throw new Error(
+      `MAKA_HARNESS_AB_BENCHMARK must be one of: ${Object.keys(HARNESS_BENCHMARK_PROFILES).join(', ')}`,
+    );
+  }
+  return profile;
+}
+
+export function defaultHarnessBenchmarkTasksRoot(benchmarkProfile) {
+  return benchmarkProfile.dataset === 'deep-swe'
+    ? join(homedir(), '.maka/eval/task-sources/deep-swe-6db64a40/tasks')
+    : join(homedir(), '.cache/harbor/tasks');
+}
+
+/** Discover, freeze, and fingerprint the benchmark's task source. The frozen
+ * set is always the benchmark's full task list — fingerprint identity must not
+ * depend on which slice of it a canary run evaluates. */
+export async function resolveFrozenBenchmarkTasks(benchmarkProfile, tasksRoot) {
+  const discovered = await discoverCachedHarborTasks(tasksRoot);
+  if (benchmarkProfile.dataset === 'deep-swe') {
+    // The DeepSWE repo tree carries more tasks than the frozen subset; pick
+    // the subset (loud on any missing id) instead of asserting the whole tree.
+    const tasks = selectTasksByIds(discovered, benchmarkProfile.taskIds, {
+      label: benchmarkProfile.label,
+    });
+    const taskSourceFingerprint = await fingerprintFixedPromptTaskTree(tasks);
+    assertDeepSweSubset30TaskTreeFingerprint(taskSourceFingerprint);
+    return { tasks, taskSourceFingerprint };
+  }
+  assertTerminalBench21TaskSet(discovered.map((task) => task.id));
+  const taskSourceFingerprint = await fingerprintFixedPromptTaskTree(discovered);
+  assertTerminalBench21TaskTreeFingerprint(taskSourceFingerprint);
+  return { tasks: discovered, taskSourceFingerprint };
+}
+
+/** Compose the run's toolchain identity. The Harbor payload is byte-identical
+ * to the historical formula; a Pier benchmark additionally freezes the Pier
+ * executor version, so a resume across a Pier upgrade forks instead of mixing
+ * cells produced under different execution semantics. */
+export function buildHarnessAbToolchainFingerprint({
+  hostToolchainFingerprint,
+  competitorProfile,
+  pierVersion = null,
+  makaNodeToolchainFingerprint = null,
+}) {
+  return `sha256:${createHash('sha256')
+    .update(
+      JSON.stringify({
+        hostToolchainFingerprint,
+        competitor: competitorProfile.id,
+        competitorToolchainFingerprint: competitorProfile.toolchainFingerprint,
+        ...(pierVersion === null ? {} : { pierVersion }),
+        ...(makaNodeToolchainFingerprint === null ? {} : { makaNodeToolchainFingerprint }),
+      }),
+    )
+    .digest('hex')}`;
+}
+
+async function readPierVersion() {
+  try {
+    // stdout only: pier leaks environment-dependent LiteLLM warnings to
+    // stderr, which must not enter the frozen resume identity.
+    const { stdout } = await execFileAsync('pier', ['--version']);
+    const version = stdout.trim();
+    if (!version) throw new Error('pier --version printed nothing on stdout');
+    return version;
+  } catch (error) {
+    throw new Error(
+      `the DeepSWE benchmark freezes its Pier executor version into the resume identity, but pier --version failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 export const HARNESS_COMPETITOR_PROFILES = Object.freeze({
   'kimi-code': Object.freeze({
@@ -221,6 +338,7 @@ export function resolveHarnessAbRunId(
   explicitRunId,
   isolatedTaskId,
   explicitTaskIds,
+  benchmarkProfile = resolveHarnessBenchmarkProfile(),
 ) {
   if (isolatedTaskId?.trim() && !explicitRunId?.trim()) {
     throw new Error('MAKA_HARNESS_AB_RUN_ID is required with MAKA_HARNESS_AB_TASK_ID');
@@ -228,13 +346,14 @@ export function resolveHarnessAbRunId(
   if (explicitTaskIds?.trim() && !explicitRunId?.trim()) {
     throw new Error('MAKA_HARNESS_AB_RUN_ID is required with MAKA_HARNESS_AB_TASK_IDS');
   }
+  if (explicitRunId) return explicitRunId;
+  // Historical name predating the derived template; kept so existing k3
+  // Terminal-Bench runs keep resuming into the same run root.
+  if (benchmarkProfile.dataset === 'terminal-bench' && competitorProfile.id === 'kimi-code') {
+    return DEFAULT_HARNESS_AB_RUN_ID;
+  }
   const runtime = resolveHarnessRuntimeProfile(competitorProfile);
-  return (
-    explicitRunId ||
-    (competitorProfile.id === 'kimi-code'
-      ? DEFAULT_HARNESS_AB_RUN_ID
-      : `${runtime.model}-maka-vs-${competitorProfile.id}${runtime.provider === 'openai-codex' ? '-oauth' : ''}-tbench-2.1-full-v1`)
-  );
+  return `${runtime.model}-maka-vs-${competitorProfile.id}${runtime.provider === 'openai-codex' ? '-oauth' : ''}-${benchmarkProfile.runIdSlug}-v1`;
 }
 
 export function resolveHarnessCompetitorToolchainPath(runRoot, competitorProfile) {
@@ -277,6 +396,19 @@ export function resolveHarnessCompetitorToolchain(runRoot, competitorProfile, en
   throw new Error(`unsupported harness competitor: ${competitorProfile.id}`);
 }
 
+export function resolveHarnessMakaNodeToolchain(runRoot, env = process.env) {
+  const fingerprintPrefix = MAKA_NODE_TOOLCHAIN_FINGERPRINT.slice(
+    'sha256:'.length,
+    'sha256:'.length + 12,
+  );
+  return {
+    path: env.MAKA_HARNESS_AB_MAKA_NODE_TOOLCHAIN
+      ? resolve(env.MAKA_HARNESS_AB_MAKA_NODE_TOOLCHAIN)
+      : join(runRoot, 'toolchains', `maka-node-${fingerprintPrefix}-linux-x64`),
+    prepare: prepareMakaNodeToolchain,
+  };
+}
+
 const envPath = (name, fallback) => parseEnvPath(name, process.env[name], fallback);
 const envPathFrom = (env, name, fallback) => parseEnvPath(name, env[name], fallback);
 
@@ -300,10 +432,11 @@ function defaultMakaWorkspaceRoot() {
   );
 }
 
-function runLimit(raw) {
+function runLimit(raw, benchmarkProfile) {
+  const fullCount = benchmarkProfile.taskIds.length;
   const parsed = Number(raw ?? CANARY_TASKS);
-  if (parsed !== CANARY_TASKS && parsed !== EXPECTED_SOURCE_TASKS) {
-    throw new Error(`MAKA_HARNESS_AB_LIMIT must be ${CANARY_TASKS} or ${EXPECTED_SOURCE_TASKS}`);
+  if (parsed !== CANARY_TASKS && parsed !== fullCount) {
+    throw new Error(`MAKA_HARNESS_AB_LIMIT must be ${CANARY_TASKS} or ${fullCount}`);
   }
   return parsed;
 }
@@ -336,7 +469,12 @@ export function resolveHarnessAbExecutionPolicy(rawPairConcurrency, rawArmExecut
   };
 }
 
-export function resolveHarnessAbTaskSelection(rawTaskId, rawLimit, rawTaskIds) {
+export function resolveHarnessAbTaskSelection(
+  rawTaskId,
+  rawLimit,
+  rawTaskIds,
+  benchmarkProfile = resolveHarnessBenchmarkProfile(),
+) {
   const taskId = rawTaskId?.trim();
   const explicitTaskIds = rawTaskIds
     ?.split(',')
@@ -354,11 +492,11 @@ export function resolveHarnessAbTaskSelection(rawTaskId, rawLimit, rawTaskIds) {
       throw new Error('MAKA_HARNESS_AB_TASK_IDS must not contain duplicate task ids');
     }
     const invalidTaskIds = uniqueTaskIds.filter(
-      (selectedTaskId) => !TERMINAL_BENCH_2_1_TASK_IDS.includes(selectedTaskId),
+      (selectedTaskId) => !benchmarkProfile.taskIds.includes(selectedTaskId),
     );
     if (invalidTaskIds.length > 0) {
       throw new Error(
-        `MAKA_HARNESS_AB_TASK_IDS contains unknown Terminal-Bench 2.1 tasks: ${invalidTaskIds.join(', ')}`,
+        `MAKA_HARNESS_AB_TASK_IDS contains unknown ${benchmarkProfile.label} tasks: ${invalidTaskIds.join(', ')}`,
       );
     }
     return {
@@ -368,12 +506,12 @@ export function resolveHarnessAbTaskSelection(rawTaskId, rawLimit, rawTaskIds) {
   }
   if (!taskId) {
     return {
-      taskIds: TERMINAL_BENCH_2_1_TASK_IDS,
-      limit: runLimit(rawLimit),
+      taskIds: benchmarkProfile.taskIds,
+      limit: runLimit(rawLimit, benchmarkProfile),
     };
   }
-  if (!TERMINAL_BENCH_2_1_TASK_IDS.includes(taskId)) {
-    throw new Error('MAKA_HARNESS_AB_TASK_ID must name a Terminal-Bench 2.1 task');
+  if (!benchmarkProfile.taskIds.includes(taskId)) {
+    throw new Error(`MAKA_HARNESS_AB_TASK_ID must name a ${benchmarkProfile.label} task`);
   }
   return { taskIds: [taskId], limit: 1 };
 }
@@ -398,33 +536,46 @@ export function harnessMakaContextBudgetEnv() {
   };
 }
 
+export function harnessMakaAgentEnv(benchmarkProfile) {
+  return {
+    ...(benchmarkProfile.executor === 'pier' ? { MAKA_HARBOR_MODE: 'task-run' } : {}),
+    ...harnessMakaContextBudgetEnv(),
+  };
+}
+
 export function buildHarnessAbManifest({
   subjectFingerprint,
   taskSourceFingerprint,
   toolchainFingerprint,
-  taskIds = TERMINAL_BENCH_2_1_TASK_IDS,
+  benchmarkProfile = resolveHarnessBenchmarkProfile(),
+  taskIds = benchmarkProfile.taskIds,
   competitorProfile = resolveHarnessCompetitorProfile(),
   pairConcurrency = Math.min(DEFAULT_PAIR_CONCURRENCY, taskIds.length),
   armExecution = DEFAULT_ARM_EXECUTION,
   oracleEvidence,
   credentialIdentity,
+  pierVersion = null,
 }) {
   const runtime = resolveHarnessRuntimeProfile(competitorProfile);
   const execution = buildHarnessExecutionProfile(competitorProfile);
   return buildHarnessAbRunManifest({
     benchmark: {
-      dataset: 'terminal-bench',
-      version: '2.1',
-      revision: TERMINAL_BENCH_2_1_REVISION,
+      dataset: benchmarkProfile.dataset,
+      version: benchmarkProfile.version,
+      revision: benchmarkProfile.revision,
+      // Human-readable executor identity for Pier benchmarks; the same
+      // version is hashed into the toolchain fingerprint. Absent for Harbor
+      // benchmarks so Terminal-Bench manifests stay byte-identical.
+      ...(pierVersion === null ? {} : { executor: { id: 'pier', version: pierVersion } }),
       timeoutPolicy: 'task-native',
       timeoutMultiplier: 1,
+      ...(benchmarkProfile.executor === 'pier'
+        ? { agentSettlementGraceSec: PIER_MAKA_SETTLEMENT_GRACE_SEC }
+        : {}),
       outerTimeoutGraceSec: HARBOR_SETUP_TEARDOWN_GRACE_SEC,
     },
     taskIds,
-    orderSeed:
-      execution.model === MODEL
-        ? ORDER_SEED
-        : `terminal-bench-2.1:${execution.model}:harness-comparison:v1`,
+    orderSeed: `${benchmarkProfile.id}:${execution.model}:harness-comparison:v1`,
     pilotTaskCount: Math.min(CANARY_TASKS, taskIds.length),
     model: {
       provider: execution.provider,
@@ -445,6 +596,15 @@ export function buildHarnessAbManifest({
           attemptPolicy: 'single',
           billingMode: runtime.billingMode,
           contextBudget: HARNESS_MAKA_CONTEXT_BUDGET,
+          ...(benchmarkProfile.executor === 'pier'
+            ? {
+                execution: {
+                  placement: 'task-container',
+                  isolation: 'harbor-local',
+                  nodeToolchainFingerprint: MAKA_NODE_TOOLCHAIN_FINGERPRINT,
+                },
+              }
+            : {}),
         },
       },
       {
@@ -454,6 +614,9 @@ export function buildHarnessAbManifest({
           ...competitorProfile.config,
           externalSystemPrompt: 'empty',
           profile: competitorProfile.id,
+          ...(benchmarkProfile.executor === 'pier'
+            ? { execution: { placement: 'task-container' } }
+            : {}),
         },
       },
     ],
@@ -474,20 +637,33 @@ export async function main() {
     ? resolve(process.env.MAKA_HARNESS_AB_MAKA_REPO)
     : repoRoot;
   const outDir = envPath('MAKA_HARNESS_AB_OUT_DIR');
-  const tasksRoot = envPath('MAKA_HARNESS_AB_TASKS_ROOT', join(homedir(), '.cache/harbor/tasks'));
+  const benchmarkProfile = resolveHarnessBenchmarkProfile();
+  const tasksRoot = envPath(
+    'MAKA_HARNESS_AB_TASKS_ROOT',
+    defaultHarnessBenchmarkTasksRoot(benchmarkProfile),
+  );
   const competitorProfile = resolveHarnessCompetitorProfile(
     process.env.MAKA_HARNESS_AB_COMPETITOR || 'kimi-code',
   );
+  // Fail before any run root or lock exists: a doomed benchmark × competitor
+  // pairing must not leave run state behind.
+  if (benchmarkProfile.executor === 'pier' && competitorProfile.id === 'opencode') {
+    throw new Error(
+      'the OpenCode adapter has no Pier arm; DeepSWE supports the kimi-code and codex competitors',
+    );
+  }
   const runId = resolveHarnessAbRunId(
     competitorProfile,
     process.env.MAKA_HARNESS_AB_RUN_ID,
     process.env.MAKA_HARNESS_AB_TASK_ID,
     process.env.MAKA_HARNESS_AB_TASK_IDS,
+    benchmarkProfile,
   );
   const selection = resolveHarnessAbTaskSelection(
     process.env.MAKA_HARNESS_AB_TASK_ID,
     process.env.MAKA_HARNESS_AB_LIMIT,
     process.env.MAKA_HARNESS_AB_TASK_IDS,
+    benchmarkProfile,
   );
   const executionPolicy = resolveHarnessAbExecutionPolicy(
     process.env.MAKA_HARNESS_AB_PAIR_CONCURRENCY,
@@ -508,6 +684,7 @@ export async function main() {
         selection,
         executionPolicy,
         runRoot,
+        benchmarkProfile,
         competitorProfile,
       });
     } catch (error) {
@@ -534,16 +711,17 @@ async function runLocked({
   selection,
   executionPolicy,
   runRoot,
+  benchmarkProfile,
   competitorProfile,
 }) {
-  const allTasks = await discoverCachedHarborTasks(tasksRoot);
-  assertTerminalBench21TaskSet(allTasks.map((task) => task.id));
-  const taskSourceFingerprint = await fingerprintFixedPromptTaskTree(allTasks);
-  assertTerminalBench21TaskTreeFingerprint(taskSourceFingerprint);
+  const { tasks: allTasks, taskSourceFingerprint } = await resolveFrozenBenchmarkTasks(
+    benchmarkProfile,
+    tasksRoot,
+  );
 
   if (process.env.MAKA_HARNESS_AB_DRY_RUN === '1') {
     console.log(
-      `dry-run: frozen ${EXPECTED_SOURCE_TASKS}-task source will run ${selection.limit} paired Pass@1 cells; Oracle evidence is advisory`,
+      `dry-run: frozen ${benchmarkProfile.taskIds.length}-task ${benchmarkProfile.label} source will run ${selection.limit} paired Pass@1 cells${benchmarkProfile.executor === 'pier' ? ' via Pier' : ''}${benchmarkProfile.oracle ? '; Oracle evidence is advisory' : ''}`,
     );
     return;
   }
@@ -560,49 +738,55 @@ async function runLocked({
     makaRepoPath,
     'MAKA_HARNESS_AB',
   );
-  const [verifierImplementationSource, composeImplementationSource] = await Promise.all([
-    readFile(join(makaRepoPath, 'packages/headless/harbor/maka_verifier.py')),
-    readFile(join(makaRepoPath, 'packages/headless/harbor/docker-compose-linux-amd64.yaml')),
-  ]);
-  const executionPolicyFingerprint = buildHarnessOracleExecutionPolicyFingerprint({
-    verifierImplementationSource,
-    composeImplementationSource,
-  });
-
   const tasksById = new Map(allTasks.map((task) => [task.id, task]));
   const manifestPath = join(runRoot, 'harness-ab-manifest.json');
-  const oracleEvidence = await resolveHarnessOracleEvidenceForRun(manifestPath, () =>
-    resolveAdvisoryOracleEvidence({
-      allTasks,
-      executionPolicyFingerprint,
-    }),
-  );
-  for (const warning of oracleEvidence.warnings) console.warn(`warning: ${warning}`);
+  // Oracle evidence is a Terminal-Bench/Harbor institution (the Maka oracle
+  // verifier + advisory registry); DeepSWE grading is each task's own verifier,
+  // so there is no oracle to consult.
+  let oracleEvidence = null;
+  if (benchmarkProfile.oracle) {
+    const [verifierImplementationSource, composeImplementationSource] = await Promise.all([
+      readFile(join(makaRepoPath, 'packages/headless/harbor/maka_verifier.py')),
+      readFile(join(makaRepoPath, 'packages/headless/harbor/docker-compose-linux-amd64.yaml')),
+    ]);
+    const executionPolicyFingerprint = buildHarnessOracleExecutionPolicyFingerprint({
+      verifierImplementationSource,
+      composeImplementationSource,
+    });
+    oracleEvidence = await resolveHarnessOracleEvidenceForRun(manifestPath, () =>
+      resolveAdvisoryOracleEvidence({
+        allTasks,
+        executionPolicyFingerprint,
+      }),
+    );
+    for (const warning of oracleEvidence.warnings) console.warn(`warning: ${warning}`);
+  }
 
   const credentials = await resolveHarnessRuntimeCredentials({
     competitorProfile,
     env: process.env,
   });
 
-  const toolchainFingerprint = `sha256:${createHash('sha256')
-    .update(
-      JSON.stringify({
-        hostToolchainFingerprint,
-        competitor: competitorProfile.id,
-        competitorToolchainFingerprint: competitorProfile.toolchainFingerprint,
-      }),
-    )
-    .digest('hex')}`;
+  const pierVersion = benchmarkProfile.executor === 'pier' ? await readPierVersion() : null;
+  const toolchainFingerprint = buildHarnessAbToolchainFingerprint({
+    hostToolchainFingerprint,
+    competitorProfile,
+    pierVersion,
+    makaNodeToolchainFingerprint:
+      benchmarkProfile.executor === 'pier' ? MAKA_NODE_TOOLCHAIN_FINGERPRINT : null,
+  });
   const manifest = buildHarnessAbManifest({
     subjectFingerprint,
     taskSourceFingerprint,
     toolchainFingerprint,
+    benchmarkProfile,
     taskIds: selection.taskIds,
     pairConcurrency: executionPolicy.pairConcurrency,
     armExecution: executionPolicy.armExecution,
-    oracleEvidence,
+    ...(oracleEvidence ? { oracleEvidence } : {}),
     competitorProfile,
     credentialIdentity: credentials.credentialIdentity,
+    pierVersion,
   });
   await ensureAbRunManifest(manifestPath, manifest);
   const evaluationTasks = manifest.evaluationTaskIds
@@ -612,7 +796,12 @@ async function runLocked({
     throw new Error('manifest contains a task absent from the frozen task source');
 
   const competitorToolchain = resolveHarnessCompetitorToolchain(runRoot, competitorProfile);
-  await competitorToolchain.prepare(competitorToolchain.path);
+  const makaNodeToolchain =
+    benchmarkProfile.executor === 'pier' ? resolveHarnessMakaNodeToolchain(runRoot) : null;
+  await Promise.all([
+    competitorToolchain.prepare(competitorToolchain.path),
+    makaNodeToolchain?.prepare(makaNodeToolchain.path),
+  ]);
 
   const execution = buildHarnessExecutionProfile(competitorProfile);
   if (
@@ -622,11 +811,19 @@ async function runLocked({
     throw new Error('harness credential is empty');
   const systemPromptPath = join(runRoot, 'prompts', 'default-system-prompt.txt');
   const evaluatedTaskIds = new Set(evaluationTasks.map((task) => task.id));
+  const providerProxyHub =
+    benchmarkProfile.executor === 'pier' ? await createPierProviderProxyHub() : undefined;
 
   const report = await runExperiment({
     runRoot,
     prompts: () => [{ path: systemPromptPath, content: DEFAULT_HEADLESS_SYSTEM_PROMPT }],
     run: async ({ jobsDir, resultsJsonlPath }) => {
+      // The benchmark owns its executor: Terminal-Bench trials run under plain
+      // Harbor, DeepSWE trials under Pier. The two runners share the TaskRunner
+      // contract; only the base-URL channel and Docker-platform pin differ
+      // (Pier's EnvironmentConfig cannot carry an explicit platform).
+      const createBenchmarkRunner =
+        benchmarkProfile.executor === 'pier' ? createPierTaskRunner : createHarborTaskRunner;
       const runnerOptions = {
         makaRepoPath,
         jobsDir,
@@ -635,11 +832,18 @@ async function runLocked({
         reasoningEffort: execution.reasoningEffort,
         ...credentials,
         pricing: execution.pricing,
-        agentEnv: { MAKA_BASE_URL: execution.baseUrl },
         timeoutMultiplier: 1,
-        dockerPlatform: 'linux/amd64',
+        ...(benchmarkProfile.executor === 'pier'
+          ? {
+              baseUrl: execution.baseUrl,
+              makaNodeToolchainPath: makaNodeToolchain.path,
+              providerProxyHub,
+            }
+          : {
+              agentEnv: { MAKA_BASE_URL: execution.baseUrl },
+              dockerPlatform: 'linux/amd64',
+            }),
       };
-      const makaContextBudgetEnv = harnessMakaContextBudgetEnv();
       const config = (id) => ({
         id: `harness-ab-${id}`,
         backend: 'ai-sdk',
@@ -660,10 +864,10 @@ async function runLocked({
             config: config('maka'),
             expectedPricingProfile: execution.pricing.source,
             billingMode: execution.billingMode,
-            harborRunner: createHarborTaskRunner({
+            harborRunner: createBenchmarkRunner({
               ...runnerOptions,
               agent: 'maka',
-              agentEnv: { ...runnerOptions.agentEnv, ...makaContextBudgetEnv },
+              agentEnv: { ...runnerOptions.agentEnv, ...harnessMakaAgentEnv(benchmarkProfile) },
             }),
           },
           {
@@ -671,7 +875,7 @@ async function runLocked({
             config: config(competitorProfile.id),
             expectedPricingProfile: execution.pricing.source,
             billingMode: execution.billingMode,
-            harborRunner: createHarborTaskRunner({
+            harborRunner: createBenchmarkRunner({
               ...runnerOptions,
               agent: competitorProfile.id,
               agentVersion: competitorProfile.version,
@@ -688,16 +892,19 @@ async function runLocked({
       });
       return buildHarnessAbReport(
         summary,
-        {
-          ...(oracleEvidence.resolvedSnapshotFingerprint
-            ? { snapshotFingerprint: oracleEvidence.resolvedSnapshotFingerprint }
-            : {}),
-          annotations: oracleEvidence.annotations.filter((annotation) =>
-            evaluatedTaskIds.has(annotation.taskId),
-          ),
-          warnings: oracleEvidence.warnings,
-        },
+        oracleEvidence
+          ? {
+              ...(oracleEvidence.resolvedSnapshotFingerprint
+                ? { snapshotFingerprint: oracleEvidence.resolvedSnapshotFingerprint }
+                : {}),
+              annotations: oracleEvidence.annotations.filter((annotation) =>
+                evaluatedTaskIds.has(annotation.taskId),
+              ),
+              warnings: oracleEvidence.warnings,
+            }
+          : { annotations: [], warnings: [] },
         execution.billingMode,
+        manifest,
       );
     },
     artifacts: (report) => [
@@ -711,7 +918,7 @@ async function runLocked({
         content: renderHarnessAbReportMarkdown(report),
       },
     ],
-  });
+  }).finally(() => providerProxyHub?.close());
   assertHarnessAbReportCompleted(report);
   console.log(
     `${report.runStatus}: ${report.coverage.attemptedCells}/${report.coverage.scheduledCells} cells attempted; ${report.effectiveness.pairedEvaluated} paired Pass@1 outcomes -> ${runRoot}`,

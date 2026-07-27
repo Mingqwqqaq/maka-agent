@@ -35,7 +35,7 @@ import { isModelExplicitlyUnsupportedForChat } from './model-catalog.js';
  * Canonical reasons why an LlmConnection is not ready to send.
  *
  * Moved from `apps/desktop/src/main/chat-readiness.ts` to keep the
- * taxonomy stable across send-path, onboarding, and quick-chat surfaces.
+ * taxonomy stable across the send path and onboarding surfaces.
  * Adding a new reason MUST update both this enum AND the matching
  * `OnboardingState` mapping in `onboarding.ts`.
  */
@@ -69,9 +69,9 @@ export interface IsConnectionReadyInput {
   /**
    * Optional override. When set, the helper validates THIS model
    * against the connection's enabled list. When omitted, it validates
-   * `connection.defaultModel`. Same helper covers both the default
-   * send path and a Quick Chat that lets the user pick a temporary
-   * model — no parallel helpers needed.
+   * `connection.defaultModel`. Same helper covers both the default send
+   * path and a `sessions:create` that names an explicit model — no parallel
+   * helpers needed.
    */
   requestedModel?: string;
 }

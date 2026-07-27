@@ -23,7 +23,6 @@ export type RuntimeEventReadModelDiagnosticCode =
   | 'incomplete_event'
   | 'archived_tool_result_placeholder'
   | 'generated_id'
-  | 'context_remaining_unsupported'
   | 'tool_use_id_mismatch'
   | 'missing_legacy_message'
   | 'unexpected_projected_message';
@@ -100,6 +99,7 @@ interface PendingThinking {
   messageId: string;
   text: string;
   signature?: string;
+  providerOptions?: Record<string, unknown>;
 }
 
 export function projectRuntimeEventsToStoredMessages(
@@ -198,15 +198,6 @@ export function projectRuntimeEventsToStoredMessages(
 
     if (isTerminalRuntimeEvent(event)) {
       projected = projectTerminalTurnState(event, state, messages) || projected;
-    }
-
-    if (event.actions?.tokenUsage?.contextRemaining !== undefined) {
-      diagnostic(
-        state,
-        event,
-        'context_remaining_unsupported',
-        'token usage contextRemaining is diagnostic-only in StoredMessage',
-      );
     }
 
     if (!projected) {
@@ -552,6 +543,9 @@ function projectThinking(
     messageId,
     text: event.content.text,
     ...(event.content.signature !== undefined ? { signature: event.content.signature } : {}),
+    ...(event.content.providerOptions !== undefined
+      ? { providerOptions: structuredClone(event.content.providerOptions) }
+      : {}),
   };
   // The step's assistant text row lands after its thinking in ledger order, so
   // attach eagerly if it already exists (older ordering), else park by message id
@@ -795,6 +789,7 @@ function projectTokenUsage(
     ...(usage.cacheCreation !== undefined ? { cacheCreation: usage.cacheCreation } : {}),
     ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
     ...(usage.systemPromptHash !== undefined ? { systemPromptHash: usage.systemPromptHash } : {}),
+    ...(usage.contextRemaining !== undefined ? { contextRemaining: usage.contextRemaining } : {}),
     ...(usage.prefixHash !== undefined ? { prefixHash: usage.prefixHash } : {}),
     ...(usage.prefixChangeReason !== undefined
       ? { prefixChangeReason: usage.prefixChangeReason }
@@ -805,6 +800,9 @@ function projectTokenUsage(
       : {}),
     ...(usage.promptSegments !== undefined ? { promptSegments: usage.promptSegments } : {}),
     ...(usage.contextBudget !== undefined ? { contextBudget: usage.contextBudget } : {}),
+    ...(event.refs?.providerRequestTraceId !== undefined
+      ? { providerRequestTraceId: event.refs.providerRequestTraceId }
+      : {}),
   });
   return true;
 }
@@ -916,6 +914,9 @@ function attachThinkingToAssistant(
     message.thinking = {
       text: pending.text,
       ...(pending.signature !== undefined ? { signature: pending.signature } : {}),
+      ...(pending.providerOptions !== undefined
+        ? { providerOptions: structuredClone(pending.providerOptions) }
+        : {}),
     };
     return true;
   }
@@ -1205,16 +1206,19 @@ function semanticMessage(message: StoredMessage): unknown {
         reasoning: message.reasoning,
         total: message.total,
         rawFinishReason: message.rawFinishReason,
+        runtimeSteps: message.runtimeSteps,
         cacheRead: message.cacheRead,
         cacheCreation: message.cacheCreation,
         costUsd: message.costUsd,
         systemPromptHash: message.systemPromptHash,
+        contextRemaining: message.contextRemaining,
         prefixHash: message.prefixHash,
         prefixChangeReason: message.prefixChangeReason,
         requestShapeHash: message.requestShapeHash,
         requestShapeChangeReason: message.requestShapeChangeReason,
         promptSegments: message.promptSegments,
         contextBudget: message.contextBudget,
+        providerRequestTraceId: message.providerRequestTraceId,
       };
     case 'turn_state':
       return {

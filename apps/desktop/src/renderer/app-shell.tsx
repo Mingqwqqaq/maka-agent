@@ -10,12 +10,21 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import type { PermissionMode, PlanReminder, SessionSummary, UiLocale, UiLocalePreference } from '@maka/core';
+import type {
+  PermissionMode,
+  PlanReminder,
+  QuoteRef,
+  SessionSummary,
+  UiLocale,
+  UiLocalePreference,
+} from '@maka/core';
 import {
   buildDeepResearchImplementationPrompt,
   collapseSessionRevisions,
+  filterLinkedSessionTree,
   hasSettledInitialOnboarding,
   parseSwarmCommand,
+  projectRevisionLinkedSessionTree,
   resolveUiLocale,
 } from '@maka/core';
 import {
@@ -25,6 +34,7 @@ import {
   type MakaUriDest,
   MakaUriContext,
   LocaleProvider,
+  ModuleHubSelector,
   ToastProvider,
   type NavSelection,
   SessionListPanel,
@@ -33,6 +43,7 @@ import {
   type TurnFooterActionMeta,
   useToast,
   activeInteractionFor,
+  getSharedUiCopy,
 } from '@maka/ui';
 import { useKeyboardHelp } from './keyboard-help';
 import { useCommandPalette } from './command-palette';
@@ -57,14 +68,13 @@ import { useShellSearch } from './use-shell-search';
 import { useSessionGoal } from './use-session-goal';
 import { deriveStaleSessionIds } from './stale-sessions';
 import { deriveProjectGroups } from './session-project-grouping';
-import { deriveSessionStatusGroups } from './session-status-grouping';
 import { deriveAppShellTurnViewModel } from './app-shell-turn-view-model';
 import { readScrollMotionBehavior } from './scroll-motion-policy';
 import { deriveBranchBanner } from './branch-banner';
-import { filterSessions, readNavSelection } from './nav-selection';
+import { readNavigationState, selectNavigation } from './nav-selection';
+import { sessionMatchesNavSelection } from './session-nav-filter';
 import { deriveSessionRevisionNavigation } from './session-revisions';
 import {
-  SESSION_LIST_COLLAPSED_WIDTH,
   SESSION_LIST_EXPANDED_MAX_WIDTH,
   SESSION_LIST_EXPANDED_MIN_WIDTH,
 } from './session-list-layout';
@@ -72,6 +82,7 @@ import { modelSetupToastCopy } from './model-connection-errors';
 import { basenameFromPath } from './app-shell-copy';
 import type { AppShellCommandListOptions } from './app-shell-command-actions';
 import { AppShellTopbarActions, AppShellWorkspaceTopActions } from './app-shell-chrome-actions';
+import { AppShellDetailPanel } from './app-shell-detail-panel';
 import { AppShellOverlays } from './app-shell-overlays';
 import { createAppShellDailyReviewBridge } from './app-shell-daily-review-bridge';
 import { useAppShellModuleData } from './use-module-data';
@@ -86,7 +97,7 @@ import {
   type TurnRevisionDraft,
 } from './app-shell-revision-actions';
 import { createAppShellLayoutActions } from './app-shell-layout-actions';
-import { createAppShellQuickChatActions } from './app-shell-quick-chat-actions';
+import { createAppShellSessionStartActions } from './app-shell-session-start-actions';
 import { createAppShellDailyReviewActions } from './app-shell-daily-review-actions';
 import { createAppShellSessionRowActions } from './app-shell-session-row-actions';
 import { createAppShellSessionSettingsActions } from './app-shell-session-settings-actions';
@@ -225,13 +236,21 @@ function AppShellContent({
     draftKey: attachmentDraftKey,
   });
   const [newChatPlanModeActive, setNewChatPlanModeActive] = useState(false);
+  const [planReminderCreateRequestNonce, setPlanReminderCreateRequestNonce] = useState(0);
   const [pendingCollaborationModeBySession, setPendingCollaborationModeBySession] = useState<Record<string, boolean>>({});
   const [newChatSwarmModeActive, setNewChatSwarmModeActive] = useState(false);
   const [pendingOrchestrationModeBySession, setPendingOrchestrationModeBySession] = useState<Record<string, boolean>>({});
   // P3: session ids with a live embedded-browser view. The right-side
   // BrowserPanel mounts only for these, so ordinary chats reserve no space.
   const [liveBrowserSessionIds, setLiveBrowserSessionIds] = useState<string[]>([]);
-  const [navSelection, setNavSelection] = useState<NavSelection>(() => readNavSelection());
+  const [navigationState, setNavigationState] = useState(() => readNavigationState());
+  const navSelection = navigationState.selection;
+  const setNavSelection = useCallback<Dispatch<SetStateAction<NavSelection>>>((nextSelection) => {
+    setNavigationState((current) => selectNavigation(
+      current,
+      typeof nextSelection === 'function' ? nextSelection(current.selection) : nextSelection,
+    ));
+  }, []);
   const navSelectionRef = useRef<NavSelection>(navSelection);
   const {
     messageLoadErrorBySession,
@@ -262,12 +281,14 @@ function AppShellContent({
     settingsRequestedSection,
     settingsProviderCatalogOpen,
     settingsConnectionDetailSlug,
+    settingsCreateProviderType,
     setSettingsOpen,
     setSettingsProviderCatalogOpen,
     openSettings,
     openSettingsSection,
     openProviderCatalog,
     openConnectionDetail,
+    openProviderCreate,
   } = useSettingsModal();
   const {
     themePref,
@@ -287,14 +308,48 @@ function AppShellContent({
     setUiLocalePreference,
   });
   const shellCopy = getShellCopy(uiLocale).app;
+  const moduleHubCopy = getSharedUiCopy(uiLocale).moduleHubs;
+  const extensionsHubHeader = {
+    title: moduleHubCopy.extensions.title,
+    subtitle: moduleHubCopy.extensions.description,
+    badge: (
+      <ModuleHubSelector
+        hub="extensions"
+        value={navSelection.section === 'extensions' ? navSelection.module : navigationState.moduleMemory.extensions}
+        onChange={(module) => setNavSelection({ section: 'extensions', module })}
+      />
+    ),
+  };
+  const automationsHubHeader = {
+    title: moduleHubCopy.automations.title,
+    subtitle: moduleHubCopy.automations.description,
+    badge: (
+      <ModuleHubSelector
+        hub="automations"
+        value={navSelection.section === 'automations' ? navSelection.module : navigationState.moduleMemory.automations}
+        onChange={(module) => setNavSelection({ section: 'automations', module })}
+      />
+    ),
+  };
   // Persisted composer defaults seed the empty-state model, project path, and
   // recent workspace history so the home view is populated before the async
   // `app:info` round-trip completes on mount.
   const persistedComposerDefaults = loadComposerDefaults();
   const [helpOpen, closeHelp, openHelp] = useKeyboardHelp();
   const [paletteOpen, openPalette, closePalette] = useCommandPalette();
-  const [viewMode, setViewMode] = useState<SessionViewMode>('status');
+  const [viewMode, setViewMode] = useState<SessionViewMode>('conversation');
   const composerRef = useRef<ComposerHandle>(null);
+  // Codex-style quote side panel: a companion (fork of the main session) opened
+  // from text selections in the transcript, surfaced as a transient workbar tab.
+  // `quotes` accumulates excerpts staged for the next follow-up — selecting more
+  // text adds to the SAME panel rather than opening a new one; `sourceSessionId`
+  // pins it to the main session the companion forks from.
+  const [quotePanel, setQuotePanel] = useState<
+    { sourceSessionId: string; quotes: QuoteRef[] } | null
+  >(null);
+  // The quote companion's ephemeral fork id, while its panel is open — hidden
+  // from the main session list (the fork is removed on panel dismiss).
+  const [companionForkId, setCompanionForkId] = useState<string | undefined>(undefined);
   const [revisionDraft, setRevisionDraft] = useState<TurnRevisionDraft | null>(null);
   const revisionDraftRef = useRef<TurnRevisionDraft | null>(null);
   const commitRevisionDraft = useCallback((draft: TurnRevisionDraft | null) => {
@@ -341,20 +396,21 @@ function AppShellContent({
   // Running → Waiting → Blocked → Active → Review → Done → Archived);
   // `aborted` is dropped. Pinned (flagged) sessions float to the top
   // in their own group, preserving the PR48 pin-floats behavior.
-  const sidebarSessions = useMemo(
-    () => collapseSessionRevisions(sessions, activeId),
+  const sidebarSessionTree = useMemo(
+    () => projectRevisionLinkedSessionTree(sessions, activeId),
     [sessions, activeId],
   );
-  const visibleSessions = useMemo(
-    () => filterSessions(sidebarSessions, navSelection),
-    [sidebarSessions, navSelection],
+  const visibleSessionTree = useMemo(
+    () =>
+      // Exclude the quote companion's ephemeral fork so it stays hidden from the
+      // main session list while its panel is open.
+      filterLinkedSessionTree(sidebarSessionTree, (session) =>
+        session.id !== companionForkId ? sessionMatchesNavSelection(session, navSelection) : false,
+      ),
+    [sidebarSessionTree, navSelection, companionForkId],
   );
-  const sessionStatusGroups = useMemo(
-    () => deriveSessionStatusGroups(visibleSessions, { pinFirst: true, locale: uiLocale }),
-    [visibleSessions, uiLocale],
-  );
+  const visibleSessions = visibleSessionTree.roots;
   const sessionProjectGroups = useMemo(() => deriveProjectGroups(visibleSessions, uiLocale), [visibleSessions, uiLocale]);
-  const sessionListGroups = viewMode === 'project' ? sessionProjectGroups : sessionStatusGroups;
 
   // PR-DAILY-REVIEW-MVP-0: bridge for the main Daily Review module.
   // Memoized so the panel's `useEffect` cleanup keys
@@ -810,19 +866,20 @@ function AppShellContent({
   // when sessions.length === 0; any session (including archived /
   // aborted) takes over with the existing chat surface.
   const onboarding = useOnboardingSnapshot(initialOnboardingSnapshot);
-  const [quickChatPending, setQuickChatPending] = useState(false);
-  const quickChatPendingRef = useRef(false);
-  const { handleQuickChatSubmit, handleExpertTeamStart } = useStableActions(createAppShellQuickChatActions, {
+  // Re-entrancy lock only — a ref, not state, because nothing renders
+  // from it (#1433 removed its last reader with the first-run hero).
+  const sessionStartPendingRef = useRef(false);
+  const { startModeSession, handleExpertTeamStart } = useStableActions(createAppShellSessionStartActions, {
     uiLocale,
     activeIdRef,
     captureComposerImportOwner,
     composerRef,
     isShellSurfaceOwnerActive,
     openSessionInChat,
-    quickChatPendingRef,
+    sessionStartPendingRef,
     refreshOnboarding: onboarding.refresh,
     refreshSessions,
-    setQuickChatPending,
+    showModelSetupToast,
     toastApi,
   });
   // Built-in expert teams for the composer "+" menu - loaded once via
@@ -889,11 +946,15 @@ function AppShellContent({
   // + snapshot===null flashes the prompt-suggestion EmptyChatHero before
   // the state-routed OnboardingHero mounts.
   const isOnboardingLoading = sessions.length === 0 && onboardingState === undefined && !onboardingSettled;
+  // Only unfinished setup takes the chat surface over. A configured user with
+  // no sessions is not onboarding: they land on the normal empty chat and use
+  // the one real Composer, which creates the session on its first send.
   const showOnboardingHero =
     sessions.length === 0 &&
     !onboardingSettled &&
     onboardingState !== undefined &&
-    onboardingState.kind !== 'ready_with_history';
+    onboardingState.kind !== 'ready_with_history' &&
+    onboardingState.kind !== 'ready_empty';
   const onboardingComposerHidden = isOnboardingLoading || (showOnboardingHero && onboardingState !== undefined);
   const {
     sessionListWidth,
@@ -916,16 +977,25 @@ function AppShellContent({
     setWorkbarWidth,
   });
 
+  // The companion panel unmounts (and its fork is removed) when the workbar
+  // collapses or the active session moves off the panel's source; clear the
+  // stale panel state too, so returning doesn't reopen a blank companion tab.
+  useEffect(() => {
+    if (quotePanel && (workbarCollapsed || quotePanel.sourceSessionId !== activeId)) {
+      setQuotePanel(null);
+    }
+  }, [quotePanel, workbarCollapsed, activeId]);
+
   function isAutomationsSurfaceActive(): boolean {
-    return navSelectionRef.current.section === 'automations';
+    return navSelectionRef.current.section === 'automations' && navSelectionRef.current.module === 'plan-reminders';
   }
 
   function isSkillsSurfaceActive(): boolean {
-    return navSelectionRef.current.section === 'skills';
+    return navSelectionRef.current.section === 'extensions' && navSelectionRef.current.module === 'skills';
   }
 
   function isDailyReviewSurfaceActive(): boolean {
-    return navSelectionRef.current.section === 'daily-review';
+    return navSelectionRef.current.section === 'automations' && navSelectionRef.current.module === 'daily-review';
   }
 
   const {
@@ -1001,6 +1071,8 @@ function AppShellContent({
     skills,
     sessionId: activeId,
     projectPath: projectInfo?.projectPath,
+    newSessionModel: newChatModel,
+    newSessionCollaborationMode: newChatPlanModeActive ? 'plan' : 'agent',
   });
 
   const { applyE2eFixture } = useStableActions(createAppShellE2eFixtureActions, {
@@ -1035,6 +1107,7 @@ function AppShellContent({
     captureComposerImportOwner,
     clearPendingSessionAction,
     isNewChatSendSurfaceActive,
+    isShellSurfaceOwnerActive,
     markSessionReadLocally,
     markSessionRunningOptimistic,
     messageRetryPendingRef,
@@ -1175,8 +1248,8 @@ function AppShellContent({
       return ok;
     }
     const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
-    const expectedRevisionSessionId = revisionSend
-      ? revisionDraftRef.current?.draftSessionId
+    const expectedRevisionDraft = revisionSend
+      ? revisionDraftRef.current
       : undefined;
     const quotes = pendingQuotes.length > 0 ? pendingQuotes : undefined;
     const ok = await send(text, pending, {
@@ -1186,8 +1259,11 @@ function AppShellContent({
     if (ok !== false && pending) clearSubmittedAttachments(pending);
     if (ok !== false && quotes) clearQuotes();
     if (ok !== false && revisionSend) {
-      if (expectedRevisionSessionId) {
-        composerRef.current?.clearDraft(expectedRevisionSessionId);
+      if (expectedRevisionDraft) {
+        composerRef.current?.clearDraft(expectedRevisionDraft.draftSessionId);
+        if (expectedRevisionDraft.sourceSessionId !== expectedRevisionDraft.draftSessionId) {
+          composerRef.current?.clearDraft(expectedRevisionDraft.sourceSessionId);
+        }
       }
       commitRevisionDraft(null);
     }
@@ -1301,7 +1377,7 @@ function AppShellContent({
     toastApi,
   });
   useAppShellPersistenceEffects({
-    navSelection,
+    navigationState,
     sessionListCollapsed,
     sessionListWidth,
     workbarCollapsed,
@@ -1348,25 +1424,31 @@ function AppShellContent({
     };
   }
 
-  function isComposerImportOwnerActive(owner: ComposerImportOwner): boolean {
-    return (
-      owner.navSection === 'sessions' &&
-      navSelectionRef.current.section === 'sessions' &&
-      activeIdRef.current === owner.sessionId
-    );
-  }
-
-  function isNewChatSendSurfaceActive(owner: ComposerImportOwner): boolean {
-    return (
-      owner.navSection === 'sessions' &&
-      owner.sessionId === undefined &&
-      navSelectionRef.current.section === 'sessions' &&
-      activeIdRef.current === undefined
-    );
-  }
-
+  /**
+   * "Is this owner still the surface the user is looking at." One rule, both
+   * halves: an async result that lands after the user moved on must not toast,
+   * navigate or steal focus, and `selectNavigation` never clears `activeId`
+   * (nav-selection.ts) — so the session id alone answers yes long after the
+   * user left for 扩展 or 设置.
+   *
+   * The two below are this same question with a precondition on what KIND of
+   * owner the caller wants, not second opinions about the question. They were
+   * three independent spellings once, and the one that re-derived it from an
+   * id drifted: it lost the section half, which is exactly what let a failed
+   * send pull a user out of 技能 and into 设置 · 模型.
+   */
   function isShellSurfaceOwnerActive(owner: ComposerImportOwner): boolean {
     return navSelectionRef.current.section === owner.navSection && activeIdRef.current === owner.sessionId;
+  }
+
+  /** …and the owner was captured on the chat surface. */
+  function isComposerImportOwnerActive(owner: ComposerImportOwner): boolean {
+    return owner.navSection === 'sessions' && isShellSurfaceOwnerActive(owner);
+  }
+
+  /** …and it was the new-chat surface, which by definition has no session. */
+  function isNewChatSendSurfaceActive(owner: ComposerImportOwner): boolean {
+    return owner.sessionId === undefined && isComposerImportOwnerActive(owner);
   }
 
   async function bootstrapSessions() {
@@ -1386,11 +1468,9 @@ function AppShellContent({
   }
 
   function openPlanReminderForm() {
-    setNavSelection({ section: 'automations' });
+    setNavSelection({ section: 'automations', module: 'plan-reminders' });
     closePalette();
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLInputElement>('[data-maka-plan-title-input="true"]')?.focus({ preventScroll: false });
-    });
+    setPlanReminderCreateRequestNonce((nonce) => nonce + 1);
   }
 
   /**
@@ -1494,7 +1574,7 @@ function AppShellContent({
     closePalette,
     composerRef,
     createSession,
-    handleQuickChatSubmit,
+    startModeSession,
     isComposerImportOwnerActive,
     openHelp,
     openPlanReminderForm,
@@ -1522,8 +1602,8 @@ function AppShellContent({
         data-sidebar-state={sessionListCollapsed ? 'collapsed' : 'expanded'}
         style={
           {
-          '--maka-session-list-width': `${sessionListCollapsed ? SESSION_LIST_COLLAPSED_WIDTH : sessionListWidth}px`,
-          '--maka-resize-handle-width': '0px',
+            '--maka-session-list-expanded-width': `${sessionListWidth}px`,
+            '--maka-resize-handle-width': '0px',
           } as CSSProperties
         }
       >
@@ -1551,13 +1631,14 @@ function AppShellContent({
             staleSessionIds={staleSessionIds}
             viewMode={viewMode}
             onViewModeChange={setViewMode}
-            statusGroups={sessionListGroups}
+            groups={viewMode === 'project' ? sessionProjectGroups : undefined}
+            childSessionsByParentId={visibleSessionTree.childrenByParentId}
+            moduleMemory={navigationState.moduleMemory}
             onSelect={setNavSelection}
             onSelectSession={sessionListSelectSession}
             onOpenSettings={openSettings}
             onNew={createSession}
             rowActions={sessionRowActions}
-            sidebarCollapsed={sessionListCollapsed}
           />
         </div>
         <div
@@ -1573,19 +1654,14 @@ function AppShellContent({
           onPointerDown={startColumnResize}
           onKeyDown={onResizeHandleKeyDown}
         />
-        <div
-          className="maka-panel maka-panel-detail maka-floating-panel agents-content-area agents-parchment-paper-surface"
+        <AppShellDetailPanel
           data-sidebar-state={sessionListCollapsed ? 'collapsed' : 'expanded'}
-          data-agents-view={
+          agentsView={
             navSelection.section === 'automations'
-              ? 'cron'
-              : navSelection.section === 'skills'
-                ? 'skills'
-                : navSelection.section === 'mcp'
-                  ? 'mcp'
-                : navSelection.section === 'sessions'
-                  ? 'im_hub'
-                  : navSelection.section
+              ? navSelection.module === 'daily-review' ? 'daily-review' : 'cron'
+              : navSelection.section === 'extensions'
+                ? navSelection.module
+                : 'im_hub'
           }
         >
           <AppShellWorkspaceTopActions
@@ -1608,8 +1684,9 @@ function AppShellContent({
           <MakaUriContext.Provider value={dispatchMakaUri}>
           <div className="maka-detail-with-artifacts">
             <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}>
-              {navSelection.section === 'skills' ? (
+              {navSelection.section === 'extensions' && navSelection.module === 'skills' ? (
                 <SkillsPage
+                  hubHeader={extensionsHubHeader}
                   skills={skills}
                   planReminders={planReminders}
                   onRefreshSkills={() => refreshSkills()}
@@ -1630,12 +1707,14 @@ function AppShellContent({
                   onSetSkillPinned={(skillRef, pinned) => setSkillPinned(skillRef, pinned)}
                   onDeleteSkill={(skillId) => deleteSkill(skillId)}
                 />
-              ) : navSelection.section === 'mcp' ? (
-                <McpPage />
-              ) : navSelection.section === 'automations' ? (
+              ) : navSelection.section === 'extensions' && navSelection.module === 'mcp' ? (
+                <McpPage hubHeader={extensionsHubHeader} />
+              ) : navSelection.section === 'automations' && navSelection.module === 'plan-reminders' ? (
                 <AutomationsPage
-                  skills={skills}
+                  hubHeader={automationsHubHeader}
                   reminders={planReminders}
+                  createRequestNonce={planReminderCreateRequestNonce}
+                  onCreateRequestHandled={() => setPlanReminderCreateRequestNonce(0)}
                   keepSystemAwake={
                     keepSystemAwakeController.supported
                       ? keepSystemAwakeController.keepSystemAwake
@@ -1659,8 +1738,9 @@ function AppShellContent({
                   onClearRunHistory={(id) => clearPlanReminderRunHistory(id)}
                   onDelete={(id) => deletePlanReminder(id)}
                 />
-              ) : navSelection.section === 'daily-review' ? (
+              ) : navSelection.section === 'automations' && navSelection.module === 'daily-review' ? (
                 <DailyReviewPage
+                  hubHeader={automationsHubHeader}
                   bridge={dailyReviewBridge}
                   onSelectSession={openSessionInChat}
                   onCopyMarkdown={(input) => copyDailyReviewMarkdown(input, { shouldShowFeedback: isDailyReviewSurfaceActive })}
@@ -1738,6 +1818,27 @@ function AppShellContent({
                   addQuote(selection);
                   composerRef.current?.focus();
                 }}
+                onAskAboutSelection={
+                  activeId
+                    ? (input) => {
+                        const quote: QuoteRef = {
+                          text: input.text,
+                          ...(input.turnId ? { sourceTurnId: input.turnId } : {}),
+                        };
+                        // Accumulate onto the open panel for this session rather
+                        // than spawning a new one; otherwise start a fresh panel.
+                        setQuotePanel((prev) =>
+                          prev && prev.sourceSessionId === activeId
+                            ? { ...prev, quotes: [...prev.quotes, quote] }
+                            : { sourceSessionId: activeId, quotes: [quote] },
+                        );
+                        // Surface it inside the session workbar (as a tab) rather
+                        // than a second right column — open the bar on the quote tab.
+                        setWorkbarCollapsed(false);
+                        setWorkbarTab('quote');
+                      }
+                    : undefined
+                }
                 onContinueDeepResearchHandoff={(run) => {
                   const prompt = buildDeepResearchImplementationPrompt(run);
                   void createSession().then(() => {
@@ -1755,10 +1856,8 @@ function AppShellContent({
                   if (section) openSettingsSection(section);
                   else openSettings();
                 }}
+                onAddProvider={openProviderCreate}
                 onBrowseProviders={openProviderCatalog}
-                onQuickChatSubmit={handleQuickChatSubmit}
-                mentionSkills={mentionSkills}
-                quickChatPending={quickChatPending}
                 connections={connections}
                 onRefreshConnections={refreshConnections}
                 onSkip={async () => {
@@ -1772,11 +1871,6 @@ function AppShellContent({
                     );
                   }
                 }}
-                onOpenSettingsSection={(section) => openSettingsSection(section)}
-                onOpenSidebarModule={(target) => {
-                  setNavSelection({ section: target });
-                }}
-                onStartPlanReminder={openPlanReminderForm}
                 conversationItems={planConversationItems}
               />
               )}
@@ -1958,11 +2052,21 @@ function AppShellContent({
                 onActiveTabChange={setWorkbarTab}
                 startWorkbarResize={startWorkbarResize}
                 onWorkbarResizeHandleKeyDown={onWorkbarResizeHandleKeyDown}
+                quote={
+                  quotePanel && quotePanel.sourceSessionId === activeId ? quotePanel : null
+                }
+                onClearQuote={() => setQuotePanel(null)}
+                onQuotesConsumed={() =>
+                  setQuotePanel((prev) => (prev ? { ...prev, quotes: [] } : prev))
+                }
+                onForkChange={setCompanionForkId}
+                sourceSession={activeSessionForView}
+                modelChoices={chatModelChoices}
               />
             )}
           </div>
           </MakaUriContext.Provider>
-        </div>
+        </AppShellDetailPanel>
       </div>
       <AppShellOverlays
         settingsOpen={settingsOpen}
@@ -1980,9 +2084,10 @@ function AppShellContent({
         settingsRequestedSection={settingsRequestedSection}
         settingsProviderCatalogOpen={settingsProviderCatalogOpen}
         settingsConnectionDetailSlug={settingsConnectionDetailSlug}
+        settingsCreateProviderType={settingsCreateProviderType}
         onOpenDailyReview={() => {
           closeSettings();
-          setNavSelection({ section: 'daily-review' });
+          setNavSelection({ section: 'automations', module: 'daily-review' });
         }}
         onOpenSettingsSession={(sessionId) => {
           closeSettings();

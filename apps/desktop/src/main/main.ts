@@ -4,18 +4,16 @@ import { join } from 'node:path';
 import { wireAppLifecycle } from './app-lifecycle.js';
 import {
   collapseSessionRevisions,
-  DEFAULT_SESSION_NAME,
   filterModelVisibleTaskLedgerTasks,
-  DEEP_RESEARCH_SESSION_LABEL,
 } from '@maka/core';
 import type {
   BotProvider,
   ConnectionEvent,
   CreateSessionInput,
-  PermissionMode,
   SessionChangedEvent,
   SessionChangedReason,
   SessionEvent,
+  SessionHeader,
 } from '@maka/core';
 import { deriveBotStatusPersistenceUpdate } from './bot-status-persistence.js';
 import { runThreadSearch } from './search/thread-search.js';
@@ -27,7 +25,7 @@ import { GitHubCopilotSubscriptionService } from './oauth/github-copilot-subscri
 import { CursorSubscriptionService } from './oauth/cursor-subscription-service.js';
 import { AntigravitySubscriptionService } from './oauth/antigravity-subscription-service.js';
 import type { WorkspacePrivacyContext } from '@maka/core/incognito';
-import { ok } from '@maka/core/settings/result';
+import { ok } from '@maka/core/result';
 import {
   BackendRegistry,
   FakeBackend,
@@ -81,11 +79,10 @@ import {
 } from './chat-readiness.js';
 import { createFileCredentialStore } from './credential-store.js';
 import { bindOnboardingDeps, createOnboardingService } from './onboarding-service.js';
-import { handleQuickChatStart as runQuickChatStart, type QuickChatResult } from './quick-chat.js';
 import { createDailyReviewArchiveStore } from './daily-review-archive-store.js';
-import { resolveDefaultPermissionMode } from './permission-mode-default.js';
 import { resolveE2eFixture, seedE2eFixture } from './e2e-fixture.js';
 import { resolveBuildInfo } from './build-info.js';
+import { resolveShellEnv } from './shell-env.js';
 import { OpenGatewayService } from './open-gateway.js';
 import { LocalMemoryService } from './local-memory-service.js';
 import { createAttachmentApprovalRegistry } from './attachment-approval.js';
@@ -108,6 +105,7 @@ import { registerConnectionsIpc } from './connections-ipc-main.js';
 import { registerConfigIpc } from './config-ipc-main.js';
 import { registerPlanReminderIpc } from './plan-reminders-ipc-main.js';
 import { registerWorkspaceResourcesIpc } from './workspace-resources-ipc-main.js';
+import type { NewSessionSkillContext } from './workspace-resources-ipc-main.js';
 import { registerDailyReviewIpc } from './daily-review-ipc-main.js';
 import { registerUsageIpc } from './usage-ipc-main.js';
 import { registerWebSearchIpc } from './web-search-ipc-main.js';
@@ -125,6 +123,11 @@ import { createE2eFixtureBotOnboardingAdapters } from './bot-onboarding-e2e-fixt
 import { createKeepSystemAwakeController } from './keep-system-awake.js';
 import { createSettingsRuntimeEffects } from './settings-runtime-effects.js';
 import { createAiSdkBackendFactory, createSessionStreamer } from './session-stream.js';
+import {
+  resolveDesktopBackendToolSurface,
+  resolveDesktopNewSessionSkillHost,
+  resolveDesktopSessionSkillHost,
+} from './desktop-backend-tool-surface.js';
 import { registerGatewayIpc } from './gateway-ipc-main.js';
 import { registerSessionsIpc } from './sessions-ipc-main.js';
 import {
@@ -171,6 +174,14 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const buildInfo = resolveBuildInfo(app.isPackaged, app.getAppPath());
+
+// Resolve the user's login-shell PATH before any stores, tools, or child
+// processes are created. On macOS, apps launched from Finder/Dock inherit a
+// minimal PATH that lacks /opt/homebrew/bin, ~/.local/bin, etc. Only PATH is
+// imported; application-control variables remain owned by this process.
+// Skipped on Windows, when MAKA_SKIP_SHELL_ENV=1, and when launched from a
+// terminal (TERM/COLORTERM set).
+await resolveShellEnv();
 
 // PR-VISUAL-SMOKE-HEADLESS: resolve the fixture defensively. An unknown
 // scenario (e.g. a stale build, or a typo'd MAKA_E2E_FIXTURE) throws
@@ -495,9 +506,10 @@ const localMemory = new LocalMemoryService({
   updateSettings: (patch) => settingsStore.update(patch),
   getPrivacyContext: getWorkspacePrivacyContext,
 });
-// Resolve a session's backend host at Skill invocation time. The fallback is
-// the binding-derived Desktop surface created after the product tool catalog
-// is assembled below.
+// The synchronous Runtime Skill tools execute inside an already-built backend.
+// Their resolver uses the exact host cached by that backend. Pre-send
+// invocation and slash discovery derive a fresh surface from the persisted
+// session header instead; see resolveDesktopSkillHostForSession below.
 const desktopSessionSkillHosts = new Map<string, HostCapabilities>();
 const resolveDesktopSkillHost: HostCapabilitiesResolver = ({ sessionId }) =>
   desktopSessionSkillHosts.get(sessionId) ?? desktopHostCapabilities;
@@ -579,6 +591,7 @@ const {
   snapshotReadImage,
   persistArchivedToolResult,
   readArchivedToolResult,
+  readArchivedToolResultResource,
 } = createToolArtifactPersistence({ artifactStore, storeReadImage, safeSendToRenderer });
 
 const {
@@ -605,9 +618,23 @@ const {
   settingsStore,
   shellRuns,
   snapshotReadImage,
+  readArchivedToolResultResource,
   getWorkspacePrivacyContext,
   resolveDesktopSkillHost,
 });
+const desktopBackendToolSurfaceDeps = {
+  isComputerUseRealModelE2e,
+  ensureMcpReady,
+  getReadyConnection,
+  mcpManager,
+  taskLedgerStore,
+  deepResearchTools,
+  computerUseTools,
+  agentTeamLeadTools,
+  builtinTools,
+  toolAvailability,
+  planStore,
+};
 // Cursor-overlay teardown assigns a module-scoped `let`, so it stays in main.ts.
 onMainWindowClose = () => computerUseOverlay.destroyAll();
 const systemPromptService = createSystemPromptMainService({
@@ -626,8 +653,8 @@ const previousBotStatus = new Map<BotProvider, Pick<BotStatus, 'readiness' | 're
 let botIncoming: ReturnType<typeof createBotIncomingMainService>;
 // Single authority for the "current project root" selection, shared across the
 // app/window, git, workspace-search, workspace-instructions, and session-entry
-// IPC surfaces. botIncoming, automation cron runs, and quick-chat read the
-// current selection through the thin `resolveCurrentProjectRoot` adapter below.
+// IPC surfaces. botIncoming and automation cron runs read the current
+// selection through the thin `resolveCurrentProjectRoot` adapter below.
 const projectRootController = createProjectRootController({
   lastProjectPathFile: join(workspaceRoot, 'last-project-path.json'),
   fallbackRoots: () => [process.cwd(), app.getAppPath()],
@@ -696,29 +723,21 @@ const planReminders = createPlanReminderMainService({
 app.setName('Maka');
 
 backends.register('ai-sdk', createAiSdkBackendFactory({
-  isComputerUseRealModelE2e,
-  ensureMcpReady,
-  getReadyConnection,
+  ...desktopBackendToolSurfaceDeps,
   buildSubscriptionModelFetch,
   systemPromptService,
-  mcpManager,
   permissionEngine,
-  taskLedgerStore,
   telemetryRepo,
   artifactStore,
-  deepResearchTools,
   desktopSessionSkillHosts,
-  computerUseTools,
-  agentTeamLeadTools,
-  builtinTools,
-  toolAvailability,
   sandboxDiagnosticsProvider,
   persistToolArtifacts,
   persistArchivedToolResult,
   readArchivedToolResult,
   runtimeCommitStore: runtimePersistence.runtimeCommitStore,
-  planStore,
   safeSendToRenderer,
+  openGateway,
+  emitSessionsChanged,
   getRuntime: () => runtime,
   getLookupPricing: () => lookupPricing,
 }));
@@ -727,10 +746,11 @@ backends.register('fake', (ctx) =>
   new FakeBackend({ sessionId: ctx.sessionId, header: ctx.header, store: ctx.store, appendMessage: ctx.appendMessage }),
 );
 
-// E2E: also route 'ai-sdk' (requested by sessions:create and quickChat:start)
-// through the deterministic fake backend, so no session-creation path can
-// escape the E2E seam and hit a real provider. Registered after the real
-// ai-sdk factory to override it (BackendRegistry uses last-write-wins).
+// E2E: also route 'ai-sdk' (requested by sessions:create, the single
+// session-creation IPC) through the deterministic fake backend, so no
+// session-creation path can escape the E2E seam and hit a real provider.
+// Registered after the real ai-sdk factory to override it (BackendRegistry
+// uses last-write-wins).
 // Production builds never set MAKA_E2E.
 if (isE2e) {
   backends.register('ai-sdk', (ctx) =>
@@ -963,7 +983,6 @@ function registerIpc(): void {
     ensureSessionCanSend,
     createSession: createDesktopSession,
     streamEvents,
-    quickChatStart: (input) => handleQuickChatStart(input, currentProjectRoot),
   });
   registerPermissionsIpc({
     settingsStore,
@@ -1093,32 +1112,62 @@ function getReadyConnection(slug: string | null | undefined, model?: string) {
   return requireReadyConnection(slug, readyConnectionDeps, model);
 }
 
+async function resolveDesktopSkillHostForSession(
+  sessionId: string,
+): Promise<HostCapabilities> {
+  const header = await store.readHeader(sessionId);
+  return resolveDesktopSessionSkillHost(desktopBackendToolSurfaceDeps, {
+    sessionId,
+    header,
+    childTools: childAgentTools,
+  });
+}
+
+async function resolveDesktopSkillHostForNewSession(
+  projectRoot: string,
+  context?: NewSessionSkillContext,
+): Promise<HostCapabilities> {
+  const ready = await getReadyConnection(
+    context?.llmConnectionSlug ?? (await connectionStore.getDefault()),
+    context?.model,
+  );
+  return resolveDesktopNewSessionSkillHost(desktopBackendToolSurfaceDeps, {
+    projectRoot,
+    workspaceRoot,
+    readyConnection: ready,
+    context,
+  });
+}
+
 async function prepareDesktopSkillInvocation(
   sessionId: string,
   text: string,
   skillIds?: readonly string[],
 ) {
+  const [projectRoot, host] = await Promise.all([
+    resolveProjectRootForContext(sessionId),
+    resolveDesktopSkillHostForSession(sessionId),
+  ]);
   return prepareSkillInvocationMessage({
     text,
     ...(skillIds ? { skillIds } : {}),
-    source: resolveSkillDiscoveryPaths(
-      await resolveProjectRootForContext(sessionId),
-      workspaceRoot,
-    ),
-    host: desktopSessionSkillHosts.get(sessionId) ?? desktopHostCapabilities,
+    source: resolveSkillDiscoveryPaths(projectRoot, workspaceRoot),
+    host,
   });
 }
 
-async function listDesktopInvocableSkills(sessionId?: string) {
+async function listDesktopInvocableSkills(
+  sessionId?: string,
+  newSessionContext?: NewSessionSkillContext,
+) {
   try {
+    const projectRoot = await resolveProjectRootForContext(sessionId);
+    const host = sessionId
+      ? await resolveDesktopSkillHostForSession(sessionId)
+      : await resolveDesktopSkillHostForNewSession(projectRoot, newSessionContext);
     return await listInvocableSkills(
-      resolveSkillDiscoveryPaths(
-        await resolveProjectRootForContext(sessionId),
-        workspaceRoot,
-      ),
-      sessionId
-        ? (desktopSessionSkillHosts.get(sessionId) ?? desktopHostCapabilities)
-        : desktopHostCapabilities,
+      resolveSkillDiscoveryPaths(projectRoot, workspaceRoot),
+      host,
     );
   } catch (error) {
     // Stale sessions with a removed working directory remain browseable, but
@@ -1127,67 +1176,6 @@ async function listDesktopInvocableSkills(sessionId?: string) {
     if (sessionId && isSessionWorkspaceUnavailableError(error)) return [];
     throw error;
   }
-}
-
-/**
- * PR110b: Quick Chat entry — thin adapter over the extracted helper.
- * The discriminated-union logic + readiness gating lives in
- * `./quick-chat.ts` so it can be unit-tested without spinning up an
- * Electron app.
- */
-async function handleQuickChatStart(
-  rawInput: unknown,
-  getCurrentProjectRoot: () => Promise<string>,
-): Promise<QuickChatResult> {
-  return runQuickChatStart(rawInput, {
-    getOnboardingState: async () => (await onboardingService.getSnapshot()).state,
-    createSession: async (input) => {
-      // Re-run requireReadyConnection inside the create path to close
-      // the race window between `getSnapshot()` and `createSession()`
-      // (e.g. user revoked credential in another window).
-      // Deep Research always forces 'explore' (read-only exploration
-      // boundary) regardless of the user's default; any other Quick Chat
-      // session seeds from the same default as the regular sessions:create
-      // path. The settings read is independent of the connection check, and
-      // this sits on the first-message latency path — run them in parallel.
-      const [ready, permissionMode] = await Promise.all([
-        getReadyConnection(input.defaultConnectionSlug, input.defaultModel),
-        input.mode === 'deep_research'
-          ? Promise.resolve<PermissionMode>('explore')
-          : resolveDefaultPermissionMode(() => settingsStore.get()),
-      ]);
-      return createDesktopSession({
-        cwd: await getCurrentProjectRoot(),
-        backend: 'ai-sdk',
-        llmConnectionSlug: ready.connection.slug,
-        model: ready.model,
-        permissionMode,
-        name: input.mode === 'deep_research' ? 'Deep Research' : DEFAULT_SESSION_NAME,
-        labels: input.mode === 'deep_research' ? [DEEP_RESEARCH_SESSION_LABEL] : [],
-      });
-    },
-    emitCreated: (sessionId) => emitSessionsChanged('created', sessionId),
-    ensureCanSend: (sessionId) => ensureSessionCanSend(sessionId),
-    prepareSkillInvocation: (sessionId, text, skillIds) =>
-      prepareDesktopSkillInvocation(sessionId, text, skillIds),
-    removeSession: (sessionId) => runtime.remove(sessionId),
-    sendFirstMessage: async (sessionId, text, displayText) => {
-      // @xuan PR110b: do NOT return the turnId — its lifetime / id
-      // ownership belongs to SessionManager + the eventual
-      // sessions:event stream, not to Quick Chat. The user message
-      // id is generated inside `runtime.sendMessage()`.
-      const turnId = randomUUID();
-      const iterator = runtime.sendMessage(sessionId, {
-        turnId,
-        text,
-        ...(displayText ? { displayText } : {}),
-      });
-      void streamEvents(sessionId, iterator, {
-        turnId,
-        goalBoundary: 'external',
-      });
-    },
-  });
 }
 
 function emitConnectionListChanged(): void {

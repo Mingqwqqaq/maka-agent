@@ -11,6 +11,13 @@ import type {
 const LEGACY_SESSION_HEADER_MAX_BYTES = 1024 * 1024;
 const LEGACY_SESSION_HEADER_READ_BYTES = 8192;
 
+class MalformedLegacySessionHeaderError extends Error {
+  constructor(sourcePath: string, cause?: unknown) {
+    super(`Invalid legacy session header at ${sourcePath}`, { cause });
+    this.name = 'MalformedLegacySessionHeaderError';
+  }
+}
+
 export interface LegacySessionMetadataImportReport {
   filesScanned: number;
   headersRead: number;
@@ -23,8 +30,10 @@ export interface LegacySessionMetadataImportReport {
 /**
  * Import every legacy line-1 SessionHeader in one SQLite transaction.
  *
- * The scan and decode phase completes before the transaction begins, so a
- * malformed header cannot leave a partially imported session catalog.
+ * The scan and decode phase completes before the transaction begins.
+ * Malformed headers are skipped (not tombstoned) so one corrupt session
+ * cannot block the rest of the catalog.  Skipping without tombstoning means
+ * a repaired header will be picked up on the next launch.
  */
 export async function importLegacySessionMetadataTree(input: {
   workspaceRoot: string;
@@ -44,11 +53,22 @@ export async function importLegacySessionMetadataTree(input: {
         transcriptMarkerSessionIds.push(directory);
       }
     } catch (error) {
-      if (!isNotFound(error)) throw error;
-      const canonicalStateExists =
-        (await input.destination.has(directory)) ||
-        (await input.destination.isTombstoned(directory));
-      if (canonicalStateExists) continue;
+      if (isNotFound(error)) {
+        const canonicalStateExists =
+          (await input.destination.has(directory)) ||
+          (await input.destination.isTombstoned(directory));
+        if (canonicalStateExists) continue;
+        throw error;
+      }
+      // Corrupt or malformed legacy session headers should not crash the
+      // entire import. Skip the session without tombstoning it — the
+      // deletion tombstone is permanent and would suppress a repaired
+      // header on subsequent launches. Skipping means the malformed
+      // session is retried next launch, which is harmless (it will be
+      // skipped again until repaired).
+      if (error instanceof MalformedLegacySessionHeaderError) {
+        continue;
+      }
       throw error;
     }
   }
@@ -76,34 +96,34 @@ export async function readLegacySessionMetadataEntry(
   sourcePath: string,
   sessionId: string,
 ): Promise<SessionMetadataImportEntry | null> {
+  const headerLine = await readFirstJsonlRecord(sourcePath);
   let value: unknown;
-  let headerLine: string;
   try {
-    headerLine = await readFirstJsonlRecord(sourcePath);
     value = JSON.parse(headerLine) as unknown;
-    if (isSessionTranscriptMarker(value)) {
-      decodeSessionTranscriptMarker(value, sessionId);
-      return null;
-    }
-    return {
-      header: decodeSessionHeader(value, sessionId),
-      source: {
-        path: sourcePath,
-        fingerprint: createHash('sha256').update(headerLine).digest('hex'),
-      },
-    };
   } catch (error) {
-    throw new Error(`Invalid legacy session header at ${sourcePath}`, { cause: error });
+    throw new MalformedLegacySessionHeaderError(sourcePath, error);
   }
+  if (isSessionTranscriptMarker(value)) {
+    decodeSessionTranscriptMarker(value, sessionId);
+    return null;
+  }
+  let header;
+  try {
+    header = decodeSessionHeader(value, sessionId);
+  } catch (error) {
+    throw new MalformedLegacySessionHeaderError(sourcePath, error);
+  }
+  return {
+    header,
+    source: {
+      path: sourcePath,
+      fingerprint: createHash('sha256').update(headerLine).digest('hex'),
+    },
+  };
 }
 
 function isNotFound(error: unknown): boolean {
-  let current = error;
-  while (current && typeof current === 'object') {
-    if ('code' in current && current.code === 'ENOENT') return true;
-    current = 'cause' in current ? current.cause : undefined;
-  }
-  return false;
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
 async function sessionDirectoryNames(root: string): Promise<string[]> {
@@ -142,7 +162,10 @@ async function readFirstJsonlRecord(path: string): Promise<string> {
       if (newline >= 0) return text.slice(0, newline);
       offset += bytesRead;
     }
-    throw new Error(`Cannot read legacy session header from ${path}`);
+    throw new MalformedLegacySessionHeaderError(
+      path,
+      new Error(`Cannot read legacy session header from ${path}`),
+    );
   } finally {
     await handle.close();
   }

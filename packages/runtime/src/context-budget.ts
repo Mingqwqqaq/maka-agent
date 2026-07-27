@@ -98,7 +98,7 @@ import {
   type HistoryRewriteGatePolicy,
 } from './history-compact.js';
 
-import type { ModelMessage } from 'ai';
+import type { ModelMessage } from './model-protocol.js';
 import type { RuntimeEvent } from '@maka/core/runtime-event';
 import type {
   CompactionDecisionDiagnostic,
@@ -140,7 +140,7 @@ export interface ContextBudgetPolicy {
    */
   activeToolResultPrune?: ActiveToolResultPrunePolicy;
   /**
-   * Optional active-loop full compact replacement. When enabled, prepareStep can
+   * Optional active-loop full compact replacement. When enabled, request projection can
    * replace a validated older provider-message span with a source-bearing block.
    */
   activeFullCompact?: ActiveFullCompactPolicy;

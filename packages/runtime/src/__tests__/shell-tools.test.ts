@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import {
   buildLocalForegroundBashTool,
   buildManagedBashTool,
+  shapeTerminalResult,
   type ShellRunLauncher,
 } from '../shell-tools.js';
 import type { ShellPlan } from '../shell-detect.js';
@@ -122,6 +123,58 @@ describe('Bash tool shell is threaded through to execution, not just the descrip
 
     await tool.impl({ command: 'true' }, fakeToolContext());
     assert.equal(completionCount, 1);
+  });
+});
+
+describe('shapeTerminalResult sandbox denial projection', () => {
+  test('surfaces sandboxDenial when a sandboxed command fails with a denial message', () => {
+    const result = shapeTerminalResult({
+      cwd: '/ws',
+      command: 'rm -rf /',
+      result: {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Operation not permitted',
+        sandboxed: true,
+        sandboxType: 'macos-seatbelt',
+      },
+    });
+    assert.deepEqual(result.sandboxDenial, {
+      likely: true,
+      backend: 'macos-seatbelt',
+      recovery: 'require_escalated',
+    });
+  });
+
+  test('omits sandboxDenial when sandboxed is false', () => {
+    const result = shapeTerminalResult({
+      cwd: '/ws',
+      command: 'ls /no-such-dir',
+      result: {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Operation not permitted',
+        sandboxed: false,
+      },
+    });
+    assert.equal(result.sandboxDenial, undefined);
+  });
+
+  test('omits sandboxDenial when sandboxed field is absent (BoundedShellResult shape)', () => {
+    const result = shapeTerminalResult({
+      cwd: '/ws',
+      command: 'ls',
+      result: {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Operation not permitted',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        timedOut: false,
+        aborted: false,
+      },
+    });
+    assert.equal(result.sandboxDenial, undefined);
   });
 });
 

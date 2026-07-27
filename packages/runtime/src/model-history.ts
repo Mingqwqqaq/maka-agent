@@ -44,7 +44,7 @@ import {
 } from '@maka/core/runtime-event';
 import { normalizeShellToolResultContent } from '@maka/core';
 import type { AttachmentRef, QuoteRef } from '@maka/core/events';
-import type { ModelMessage } from 'ai';
+import type { ModelMessage, UserContent, UserModelMessage } from './model-protocol.js';
 
 // ============================================================================
 // Output type
@@ -86,7 +86,6 @@ export type RuntimeEventReplayDiagnosticCode =
   | 'terminal_fact_diagnostic_only'
   | 'error_content_diagnostic_only'
   | 'empty_text_skipped'
-  | 'unsigned_thinking_skipped'
   | 'signed_thinking_in_tool_turn_skipped'
   | 'unmatched_tool_result'
   | 'unmatched_tool_call'
@@ -125,6 +124,7 @@ export type RuntimeEventModelReplayItem =
       kind: 'thinking';
       text: string;
       signature?: string;
+      providerOptions?: NonNullable<ModelMessage['providerOptions']>;
       /** Assistant step id; pairs this reasoning with its step's tool calls. */
       stepId?: string;
       eventId: string;
@@ -135,6 +135,7 @@ export type RuntimeEventModelReplayItem =
       toolCallId: string;
       toolName: string;
       input: unknown;
+      providerOptions?: NonNullable<ModelMessage['providerOptions']>;
       /** Assistant step id (from tool_start); groups the call with its step. */
       stepId?: string;
       eventId: string;
@@ -279,6 +280,10 @@ export function collectToolActivityTurnIds(events: readonly RuntimeEvent[]): Set
     }
   }
   return ids;
+}
+
+function assistantReplayStepId(event: RuntimeEvent): string | undefined {
+  return event.refs?.providerEventId ?? event.refs?.storedMessageId;
 }
 
 export function buildRuntimeEventModelReplayPlan(
@@ -436,6 +441,7 @@ export function buildRuntimeEventModelReplayPlan(
           continue;
         }
         const steeringReplay = event.content.steering === true && role === 'user';
+        const assistantStepId = role === 'assistant' ? assistantReplayStepId(event) : undefined;
         items.push({
           kind: 'text',
           role,
@@ -446,11 +452,9 @@ export function buildRuntimeEventModelReplayPlan(
             : formatTextWithInlineRefs(event.content),
           ...(steeringReplay ? { steering: { eventId: event.id } } : {}),
           ...(event.content.attachments ? { attachments: event.content.attachments } : {}),
-          // Model text carries its step id (the message id) so the materializer
-          // can close a step and group its reasoning + tool calls.
-          ...(role === 'assistant' && event.refs?.providerEventId
-            ? { stepId: event.refs.providerEventId }
-            : {}),
+          // Live events carry providerEventId; missing-ledger recovery carries
+          // the same assistant message identity as storedMessageId.
+          ...(assistantStepId ? { stepId: assistantStepId } : {}),
           eventId: event.id,
           ts: event.ts,
         });
@@ -465,26 +469,9 @@ export function buildRuntimeEventModelReplayPlan(
           );
           continue;
         }
-        if (!event.content.signature) {
-          // Unsigned thinking cannot be replayed provider-native: Anthropic
-          // rejects a thinking block without its signature, and other providers
-          // accept no native thinking at all. Skip it from replay items (and its
-          // semantic kind) rather than block — a non-Anthropic (e.g. GLM) turn
-          // persists thinking for the UI, but must not drag the whole history
-          // down to stored-message projection. The thinking stays in the
-          // read-model; it just never re-enters the model request.
-          diagnostics.push(
-            diagnostic(
-              event,
-              'unsigned_thinking_skipped',
-              'unsigned thinking RuntimeEvent skipped for model replay',
-            ),
-          );
-          continue;
-        }
-        if (event.turnId && unpairedToolTurnIds.has(event.turnId)) {
-          // Signed, but its turn has tool calls with no step id to pair against
-          // (legacy per-turn history) — the end-of-turn reasoning cannot be
+        if (event.content.signature && event.turnId && unpairedToolTurnIds.has(event.turnId)) {
+          // Its turn has tool calls with no step id to pair against (legacy
+          // per-turn history) — the end-of-turn reasoning cannot be
           // reattached to the tool-use assistant message. Keep it in the
           // read-model for the UI; skip it from replay without downgrading the
           // whole history. Per-step history (paired tool calls) is not skipped:
@@ -498,11 +485,19 @@ export function buildRuntimeEventModelReplayPlan(
           );
           continue;
         }
+        const thinkingStepId = assistantReplayStepId(event);
         items.push({
           kind: 'thinking',
           text: event.content.text,
-          signature: event.content.signature,
-          ...(event.refs?.providerEventId ? { stepId: event.refs.providerEventId } : {}),
+          ...(event.content.signature ? { signature: event.content.signature } : {}),
+          ...(event.content.providerOptions !== undefined
+            ? {
+                providerOptions: event.content.providerOptions as NonNullable<
+                  ModelMessage['providerOptions']
+                >,
+              }
+            : {}),
+          ...(thinkingStepId ? { stepId: thinkingStepId } : {}),
           eventId: event.id,
           ts: event.ts,
         });
@@ -527,6 +522,13 @@ export function buildRuntimeEventModelReplayPlan(
           toolCallId: event.content.id,
           toolName: event.content.name,
           input: event.content.args,
+          ...(event.content.providerOptions !== undefined
+            ? {
+                providerOptions: event.content.providerOptions as NonNullable<
+                  ModelMessage['providerOptions']
+                >,
+              }
+            : {}),
           ...(event.refs?.stepId ? { stepId: event.refs.stepId } : {}),
           eventId: event.id,
           ts: event.ts,
@@ -762,11 +764,14 @@ export function steeringProviderOptions(
   return { [STEERING_PROVIDER_OPTIONS_NAMESPACE]: { steeringEventId: eventId } };
 }
 
-/** The canonical injected/replayed form of one steered user message. */
-export function steeringModelMessage(eventId: string, text: string): ModelMessage {
+/** Add structured steering identity to already-canonical provider content. */
+export function steeringModelMessage(
+  eventId: string,
+  providerContent: UserContent,
+): UserModelMessage {
   return {
     role: 'user',
-    content: buildSteeringEnvelope(text),
+    content: providerContent,
     providerOptions: steeringProviderOptions(eventId),
   };
 }
@@ -807,7 +812,7 @@ export function steeringMessagesMissingFromBase(
 /**
  * The messages with THIS TURN'S injected steering removed (transport-retry
  * base). Only the injected set may be stripped: the retry attempt's own
- * prepareStep re-appends exactly that accumulator, while a historical,
+ * request projection re-appends exactly that accumulator, while a historical,
  * ledger-replayed steering message (same marker, different event id) is part
  * of the base that nothing re-appends — stripping it would erase it from
  * every post-retry request.

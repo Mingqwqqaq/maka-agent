@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const SQLITE_SESSION_METADATA_SCHEMA_VERSION = 5;
+export const SQLITE_SESSION_METADATA_SCHEMA_VERSION = 7;
 
 const MIGRATIONS: ReadonlyMap<number, string> = new Map([
   [
@@ -180,6 +180,54 @@ const MIGRATIONS: ReadonlyMap<number, string> = new Map([
       AND subagent_initial_run_id IS NOT NULL;
 
     DROP INDEX session_metadata_by_subagent_spawn;
+  `,
+  ],
+  [
+    6,
+    `
+    CREATE TABLE agent_graph_intent_claims (
+      claim_id TEXT PRIMARY KEY,
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+      graph_id TEXT NOT NULL,
+      intent_id TEXT NOT NULL,
+      intent_fingerprint TEXT NOT NULL,
+      readiness_context_fingerprint TEXT NOT NULL,
+      target_operator_id TEXT NOT NULL,
+      target_session_id TEXT NOT NULL,
+      target_turn_id TEXT NOT NULL,
+      target_run_id TEXT NOT NULL,
+      claimed_at INTEGER NOT NULL,
+      UNIQUE(graph_id, intent_id),
+      UNIQUE(target_session_id, target_turn_id),
+      UNIQUE(target_session_id, target_run_id)
+    );
+
+    CREATE INDEX agent_graph_intent_claims_by_graph
+      ON agent_graph_intent_claims(graph_id, claimed_at, intent_id);
+  `,
+  ],
+  [
+    7,
+    `
+    CREATE TABLE agent_graph_schedule_updates (
+      graph_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      update_id TEXT NOT NULL UNIQUE,
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+      update_fingerprint TEXT NOT NULL,
+      source_session_id TEXT NOT NULL,
+      source_run_id TEXT NOT NULL,
+      source_turn_id TEXT NOT NULL,
+      source_tool_call_id TEXT NOT NULL,
+      closes_graph INTEGER NOT NULL CHECK (closes_graph IN (0, 1)),
+      payload_json TEXT NOT NULL,
+      committed_at INTEGER NOT NULL CHECK (committed_at >= 0),
+      PRIMARY KEY(graph_id, revision),
+      UNIQUE(source_session_id, source_run_id, source_tool_call_id)
+    );
+
+    CREATE INDEX agent_graph_schedule_updates_by_graph
+      ON agent_graph_schedule_updates(graph_id, committed_at, update_id);
   `,
   ],
 ]);

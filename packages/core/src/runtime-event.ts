@@ -14,7 +14,7 @@
  * projection, or ledger logic lives here. Those arrive in later nodes.
  */
 
-import type { AttachmentRef, QuoteRef } from './events.js';
+import { isMessageContent, normalizeMessageContent, type MessageContent } from './events.js';
 import type { PermissionRequestPayload, PermissionResponse } from './permission.js';
 import type { UserQuestionRequest } from './user-question.js';
 import type {
@@ -32,7 +32,6 @@ import {
   isStringArray,
 } from './record-schema.js';
 import {
-  isAttachmentRef,
   isPermissionRequestPayload,
   isPermissionResponse,
   isUserQuestionRequest,
@@ -109,25 +108,8 @@ export function isTerminalRuntimeEventStatus(value: unknown): boolean {
 // Content (model-facing payload)
 // ============================================================================
 
-export interface RuntimeEventTextContent {
+export interface RuntimeEventTextContent extends MessageContent {
   kind: 'text';
-  text: string;
-  /**
-   * Human-facing text when it differs from `text` (e.g. the typed
-   * `/skill:…` prompt while `text` is the composed skill-injection
-   * envelope). Model-history projections MUST ignore this and use `text`
-   * only; UI/transcript/rewind projections should prefer it when present.
-   */
-  displayText?: string;
-  /**
-   * Optional user-bound attachments carried with the text turn. Adapters
-   * MUST preserve these when converting legacy UserMessage rows so
-   * RuntimeEvent history does not silently degrade multimodal/file turns
-   * into plain text.
-   */
-  attachments?: AttachmentRef[];
-  /** Inline quoted excerpts carried with the text turn (see QuoteRef). */
-  quotes?: QuoteRef[];
   /**
    * Marks a user message steered into a running turn at a step boundary.
    * `text` stays raw for UI/transcript projections; model-replay projections
@@ -143,6 +125,8 @@ export interface RuntimeEventThinkingContent {
   text: string;
   /** Anthropic signed thinking — MUST be re-sent on replay when present. */
   signature?: string;
+  /** Provider-owned replay metadata that must survive model replay. */
+  providerOptions?: Record<string, unknown>;
 }
 
 export interface RuntimeEventFunctionCallContent {
@@ -151,6 +135,8 @@ export interface RuntimeEventFunctionCallContent {
   id: string;
   name: string;
   args: unknown;
+  /** Provider-owned opaque call metadata that must survive model replay. */
+  providerOptions?: Record<string, unknown>;
 }
 
 export interface RuntimeEventFunctionResponseContent {
@@ -382,11 +368,11 @@ const TEXT_CONTENT_SHAPE = defineObjectShape<RuntimeEventTextContent>()(
 );
 const THINKING_CONTENT_SHAPE = defineObjectShape<RuntimeEventThinkingContent>()(
   ['kind', 'text'],
-  ['signature'],
+  ['signature', 'providerOptions'],
 );
 const FUNCTION_CALL_CONTENT_SHAPE = defineObjectShape<RuntimeEventFunctionCallContent>()(
   ['kind', 'id', 'name', 'args'],
-  [],
+  ['providerOptions'],
 );
 const FUNCTION_RESPONSE_CONTENT_SHAPE = defineObjectShape<RuntimeEventFunctionResponseContent>()(
   ['kind', 'id', 'name', 'result'],
@@ -489,6 +475,16 @@ export function decodeRuntimeEvent(value: unknown): RuntimeEvent {
   ) {
     throw new Error('Invalid RuntimeEvent schema');
   }
+  if (isRecord(value.content) && value.content.kind === 'text') {
+    return {
+      ...value,
+      content: {
+        kind: 'text',
+        ...normalizeMessageContent(value.content as unknown as MessageContent),
+        ...(value.content.steering === true ? { steering: true as const } : {}),
+      },
+    } as unknown as RuntimeEvent;
+  }
   return value as unknown as RuntimeEvent;
 }
 
@@ -496,26 +492,32 @@ function isRuntimeEventContent(value: unknown): value is RuntimeEventContent {
   if (!isRecord(value)) return false;
   switch (value.kind) {
     case 'text':
-      return (
-        hasExactShape(value, TEXT_CONTENT_SHAPE) &&
-        typeof value.text === 'string' &&
-        isOptionalString(value.displayText) &&
-        (value.attachments === undefined ||
-          (Array.isArray(value.attachments) && value.attachments.every(isAttachmentRef))) &&
-        (value.steering === undefined || value.steering === true)
-      );
+      if (
+        !hasExactShape(value, TEXT_CONTENT_SHAPE) ||
+        (value.steering !== undefined && value.steering !== true)
+      ) {
+        return false;
+      }
+      return isMessageContent({
+        text: value.text,
+        ...(value.displayText !== undefined ? { displayText: value.displayText } : {}),
+        ...(value.attachments !== undefined ? { attachments: value.attachments } : {}),
+        ...(value.quotes !== undefined ? { quotes: value.quotes } : {}),
+      });
     case 'thinking':
       return (
         hasExactShape(value, THINKING_CONTENT_SHAPE) &&
         typeof value.text === 'string' &&
-        isOptionalString(value.signature)
+        isOptionalString(value.signature) &&
+        (value.providerOptions === undefined || isRecord(value.providerOptions))
       );
     case 'function_call':
       return (
         hasExactShape(value, FUNCTION_CALL_CONTENT_SHAPE) &&
         typeof value.id === 'string' &&
         typeof value.name === 'string' &&
-        Object.hasOwn(value, 'args')
+        Object.hasOwn(value, 'args') &&
+        (value.providerOptions === undefined || isRecord(value.providerOptions))
       );
     case 'function_response':
       return (

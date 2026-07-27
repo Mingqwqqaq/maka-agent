@@ -7,9 +7,9 @@
  */
 
 import {
+  decodeMessageContent,
   TOOL_ACTIVITY_KINDS,
-  type AttachmentRef,
-  type QuoteRef,
+  type MessageContent,
   type ToolActivityKind,
   type ToolResultContent,
 } from './events.js';
@@ -35,12 +35,15 @@ import {
   isOptionalString,
   isRecord,
 } from './record-schema.js';
-import { isAttachmentRef, isPermissionDecisionFields } from './interaction-record-schema.js';
+import { isPermissionDecisionFields } from './interaction-record-schema.js';
 import { isTokenUsageFields } from './usage-record-schema.js';
 import {
   decodeCanonicalToolResultContent,
   normalizeToolResultContentForRead,
 } from './tool-result-record-schema.js';
+
+export { isDeepResearchSession } from './explore-agent.js';
+export { isExpertTeamSession } from './expert-team.js';
 
 export const SESSION_STATUSES = [
   'active',
@@ -264,6 +267,29 @@ export interface SessionSummary {
   orchestrationMode?: OrchestrationMode;
 }
 
+/**
+ * Host-facing projection of linked subagent Sessions.
+ *
+ * The flat Session list remains the storage/read authority. Hosts use this
+ * projection to nest a linked child beneath its durable parent without
+ * confusing ordinary branch lineage with subagent ownership. Missing-parent
+ * and cyclic relations fail open into roots so an inspectable child can never
+ * disappear from the product surface.
+ */
+export interface LinkedSessionTree {
+  roots: SessionSummary[];
+  childrenByParentId: ReadonlyMap<string, readonly SessionSummary[]>;
+}
+
+export interface LinkedSessionTreeProjectionOptions {
+  /**
+   * Read-model aliases from durable physical parent ids to visible logical
+   * Session ids. Revision projection uses this to keep a child attached when
+   * its spawning parent revision is no longer the selected representative.
+   */
+  parentSessionIdAliases?: ReadonlyMap<string, string>;
+}
+
 const SUBAGENT_SESSION_PARENT_SHAPE = defineObjectShape<SubagentSessionParent>()(
   ['kind', 'parentSessionId', 'spawnedBy', 'lifecycle'],
   ['swarm'],
@@ -386,6 +412,101 @@ export function childSessionsForParent(
   );
 }
 
+/** Read-model projection; input order is preserved at every tree level. */
+export function projectLinkedSessionTree(
+  sessions: readonly SessionSummary[],
+  options: LinkedSessionTreeProjectionOptions = {},
+): LinkedSessionTree {
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const nestedParentByChildId = new Map<string, string>();
+  const linkedParentId = (session: SessionSummary): string | undefined => {
+    const relation = session.subagentParent;
+    if (!isSubagentSessionParent(relation)) return undefined;
+    return (
+      options.parentSessionIdAliases?.get(relation.parentSessionId) ?? relation.parentSessionId
+    );
+  };
+
+  for (const session of sessions) {
+    const parentSessionId = linkedParentId(session);
+    if (!parentSessionId) continue;
+    if (!sessionsById.has(parentSessionId)) continue;
+    if (parentSessionId === session.id) continue;
+    if (linkedParentChainContainsCycle(session.id, sessionsById, linkedParentId)) continue;
+    nestedParentByChildId.set(session.id, parentSessionId);
+  }
+
+  const roots: SessionSummary[] = [];
+  const mutableChildren = new Map<string, SessionSummary[]>();
+  for (const session of sessions) {
+    const parentSessionId = nestedParentByChildId.get(session.id);
+    if (!parentSessionId) {
+      roots.push(session);
+      continue;
+    }
+    const children = mutableChildren.get(parentSessionId) ?? [];
+    children.push(session);
+    mutableChildren.set(parentSessionId, children);
+  }
+
+  return {
+    roots,
+    childrenByParentId: mutableChildren,
+  };
+}
+
+/**
+ * Filter a linked tree without leaking non-matching descendants through a
+ * matching parent. Matching descendants whose ancestors do not match are
+ * promoted to the nearest matching ancestor, or to a root when none exists.
+ */
+export function filterLinkedSessionTree(
+  tree: LinkedSessionTree,
+  include: (session: SessionSummary) => boolean,
+): LinkedSessionTree {
+  const roots: SessionSummary[] = [];
+  const mutableChildren = new Map<string, SessionSummary[]>();
+
+  const visit = (session: SessionSummary, visibleParentId?: string): void => {
+    const included = include(session);
+    const nextVisibleParentId = included ? session.id : visibleParentId;
+    if (included) {
+      if (visibleParentId) {
+        const children = mutableChildren.get(visibleParentId) ?? [];
+        children.push(session);
+        mutableChildren.set(visibleParentId, children);
+      } else {
+        roots.push(session);
+      }
+    }
+    for (const child of tree.childrenByParentId.get(session.id) ?? []) {
+      visit(child, nextVisibleParentId);
+    }
+  };
+
+  for (const root of tree.roots) visit(root);
+  return { roots, childrenByParentId: mutableChildren };
+}
+
+function linkedParentChainContainsCycle(
+  startSessionId: string,
+  sessionsById: ReadonlyMap<string, SessionSummary>,
+  linkedParentId: (session: SessionSummary) => string | undefined,
+): boolean {
+  const visited = new Set<string>();
+  let sessionId: string | undefined = startSessionId;
+  while (sessionId) {
+    if (visited.has(sessionId)) return true;
+    visited.add(sessionId);
+    const session = sessionsById.get(sessionId);
+    if (!session) return false;
+    const parentSessionId = linkedParentId(session);
+    if (!parentSessionId || !sessionsById.has(parentSessionId)) return false;
+    sessionId = parentSessionId;
+  }
+  return false;
+}
+
 function isSessionLineageId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -443,26 +564,11 @@ export type StoredMessage =
   | TurnStateMessage
   | SystemNoteMessage;
 
-export interface UserMessage {
+export interface UserMessage extends MessageContent {
   type: 'user';
   id: string;
   turnId: string;
   ts: number;
-  /**
-   * Model-facing turn text (and the default human-facing text). May be a
-   * composed envelope when the client injected content such as explicit
-   * skill instructions; see `displayText`.
-   */
-  text: string;
-  /**
-   * Human-facing text when it differs from `text`. Presentation layers
-   * (transcript, rewind, previews, search) should prefer this. Absent on
-   * legacy rows and on turns where the model text is what the user typed.
-   */
-  displayText?: string;
-  attachments?: AttachmentRef[];
-  /** Inline quoted excerpts carried into this message; rendered as chips. */
-  quotes?: QuoteRef[];
   /** Non-user trigger source (automation fire). Lets the chat mark turns the
    *  user did not hand-type. Mirrors TurnOrigin in runtime-inputs. */
   origin?: { kind: 'automation'; automationId: string };
@@ -483,6 +589,8 @@ export interface AssistantMessage {
     text: string;
     /** Anthropic signed thinking for replay. */
     signature?: string;
+    /** Provider-owned replay metadata that must survive missing-ledger recovery. */
+    providerOptions?: Record<string, unknown>;
   };
   /**
    * First-observed order of visible content inside this assistant step.
@@ -510,6 +618,8 @@ export interface ToolCallMessage {
   displayName?: string;
   intent?: string;
   args: unknown;
+  /** Provider-owned opaque call metadata retained for recovery backfill. */
+  providerOptions?: Record<string, unknown>;
   /**
    * Assistant step this call belongs to (equals the step's AssistantMessage
    * id, stamped from the same source as ToolStartEvent.stepId). Optional for
@@ -572,6 +682,7 @@ export interface TokenUsageMessage {
   cacheCreation?: number;
   costUsd?: number;
   systemPromptHash?: string;
+  contextRemaining?: number;
   prefixHash?: string;
   prefixChangeReason?: PrefixChangeReason;
   requestShapeHash?: string;
@@ -643,7 +754,7 @@ const ASSISTANT_MESSAGE_SHAPE = defineObjectShape<AssistantMessage>()(
 );
 const TOOL_CALL_MESSAGE_SHAPE = defineObjectShape<ToolCallMessage>()(
   ['type', 'id', 'turnId', 'ts', 'toolName', 'args'],
-  ['activityKind', 'displayName', 'intent', 'stepId'],
+  ['activityKind', 'displayName', 'intent', 'providerOptions', 'stepId'],
 );
 const TOOL_RESULT_MESSAGE_SHAPE = defineObjectShape<ToolResultMessage>()(
   ['type', 'id', 'turnId', 'ts', 'toolUseId', 'isError', 'content'],
@@ -668,6 +779,7 @@ const TOKEN_USAGE_MESSAGE_SHAPE = defineObjectShape<TokenUsageMessage>()(
     'cacheCreation',
     'costUsd',
     'systemPromptHash',
+    'contextRemaining',
     'prefixHash',
     'prefixChangeReason',
     'requestShapeHash',
@@ -695,7 +807,10 @@ const SYSTEM_NOTE_MESSAGE_SHAPE = defineObjectShape<SystemNoteMessage>()(
   ['turnId', 'data'],
 );
 type AssistantThinking = NonNullable<AssistantMessage['thinking']>;
-const ASSISTANT_THINKING_SHAPE = defineObjectShape<AssistantThinking>()(['text'], ['signature']);
+const ASSISTANT_THINKING_SHAPE = defineObjectShape<AssistantThinking>()(
+  ['text'],
+  ['signature', 'providerOptions'],
+);
 type AutomationOrigin = NonNullable<UserMessage['origin']>;
 const AUTOMATION_ORIGIN_SHAPE = defineObjectShape<AutomationOrigin>()(['kind', 'automationId'], []);
 
@@ -730,13 +845,19 @@ function decodeStoredMessage(
       if (
         hasExactShape(message, USER_MESSAGE_SHAPE) &&
         hasMessageEnvelope(message, true) &&
-        typeof message.text === 'string' &&
-        isOptionalString(message.displayText) &&
-        (message.attachments === undefined ||
-          (Array.isArray(message.attachments) && message.attachments.every(isAttachmentRef))) &&
         (message.origin === undefined || isAutomationOrigin(message.origin))
-      )
-        return message as unknown as UserMessage;
+      ) {
+        const { displayText, attachments, quotes, origin, ...envelope } = message;
+        try {
+          return {
+            ...envelope,
+            ...decodeMessageContent({ text: message.text, displayText, attachments, quotes }),
+            ...(origin !== undefined ? { origin } : {}),
+          } as unknown as UserMessage;
+        } catch {
+          break;
+        }
+      }
       break;
     case 'assistant':
       if (
@@ -763,6 +884,7 @@ function decodeStoredMessage(
           (TOOL_ACTIVITY_KINDS as readonly unknown[]).includes(message.activityKind)) &&
         isOptionalString(message.displayName) &&
         isOptionalString(message.intent) &&
+        (message.providerOptions === undefined || isRecord(message.providerOptions)) &&
         isOptionalString(message.stepId)
       )
         return message as unknown as ToolCallMessage;
@@ -850,7 +972,8 @@ function isAssistantThinking(value: unknown): value is AssistantThinking {
     isRecord(value) &&
     hasExactShape(value, ASSISTANT_THINKING_SHAPE) &&
     typeof value.text === 'string' &&
-    isOptionalString(value.signature)
+    isOptionalString(value.signature) &&
+    (value.providerOptions === undefined || isRecord(value.providerOptions))
   );
 }
 

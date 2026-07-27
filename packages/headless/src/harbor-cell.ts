@@ -38,7 +38,9 @@ import {
   buildHarborCellOutput,
   combineInvocations,
   countRuntimeSteps,
+  selectHarborCellTokenSummary,
   validateHarborCellOutput,
+  validateHarborCellTokenSummary,
   type HarborCellContextBudgetPolicySnapshot,
   type HarborCellDeadlineSettlement,
   type HarborCellExecutionIdentity,
@@ -81,6 +83,7 @@ import {
   buildHarborCellAiSdkTools,
   createHarborCellLocalToolExecutor,
 } from './harbor-cell-tool-executor.js';
+import { createProviderEnvFetch, type ProviderEnvFetch } from './provider-env-fetch.js';
 
 // The Harbor cell orchestration module keeps `#harbor-cell` (and './harbor-cell.js')
 // as the stable public surface. After the sink-file split the moved symbols live in
@@ -325,6 +328,7 @@ export async function runHarborCellWithStorage(
     systemPromptMode: prompt.mode,
     systemPromptHash: prompt.systemPromptHash,
     pricingProfile: input.pricingProfile ?? 'unconfigured',
+    agentTools: config.agentTools === true,
   };
   await writeHarborCellExecutionIdentity(input.outputDir, executionIdentity);
 
@@ -334,7 +338,7 @@ export async function runHarborCellWithStorage(
     runStore: agentRunStore,
     runtimeEventStore,
     backends,
-    ...(input.realBackendIsolation?.toolExecutor
+    ...(config.agentTools && input.realBackendIsolation?.toolExecutor
       ? {
           childTools: buildChildAgentTools(
             buildIsolatedHeadlessTools(input.realBackendIsolation.toolExecutor),
@@ -492,6 +496,7 @@ export async function writeHarborCellExecutionIdentity(
   executionIdentity: HarborCellExecutionIdentity,
 ): Promise<void> {
   await mkdir(outputDir, { recursive: true });
+  await rm(join(outputDir, HARBOR_CELL_USAGE_CHECKPOINT_FILENAME), { force: true });
   await writeHarborCellArtifact(
     join(outputDir, HARBOR_CELL_EXECUTION_IDENTITY_FILENAME),
     `${JSON.stringify(executionIdentity, null, 2)}\n`,
@@ -505,7 +510,7 @@ export async function writeHarborCellArtifacts(
   const runtimeEventsPath = join(input.outputDir, HARBOR_CELL_RUNTIME_EVENTS_FILENAME);
   const outputPath = join(input.outputDir, HARBOR_CELL_OUTPUT_FILENAME);
   await writeHarborCellArtifact(runtimeEventsPath, runtimeEventsJsonl(input.invocation));
-  const output = validateHarborCellOutput(
+  const rawOutput = validateHarborCellOutput(
     buildHarborCellOutput({
       invocation: input.invocation,
       runtimeEventsPath,
@@ -519,8 +524,26 @@ export async function writeHarborCellArtifacts(
         : {}),
     }),
   );
+  const usageCheckpoint = await readHarborCellUsageCheckpoint(input.outputDir);
+  const tokenSummary = selectHarborCellTokenSummary(rawOutput.tokenSummary, usageCheckpoint);
+  const output =
+    tokenSummary && tokenSummary !== rawOutput.tokenSummary
+      ? { ...rawOutput, tokenSummary }
+      : rawOutput;
   await writeHarborCellArtifact(outputPath, `${JSON.stringify(output, null, 2)}\n`);
   return { output, outputPath, runtimeEventsPath };
+}
+
+async function readHarborCellUsageCheckpoint(
+  outputDir: string,
+): Promise<NonNullable<HarborCellOutput['tokenSummary']> | null> {
+  try {
+    return validateHarborCellTokenSummary(
+      JSON.parse(await readFile(join(outputDir, HARBOR_CELL_USAGE_CHECKPOINT_FILENAME), 'utf8')),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export async function writeHarborTaskRunTrace(input: {
@@ -567,9 +590,11 @@ export async function runHarborCellFromEnv(
   const maxSteps = harborCellMaxStepsFromEnv(resolvedEnv);
   const settleAfterMs = harborCellSoftTimeoutMsFromEnv(resolvedEnv);
   const reasoningEffort = reasoningEffortFromEnv(resolvedEnv.MAKA_REASONING_EFFORT);
+  const agentTools = booleanEnv(resolvedEnv.MAKA_AGENT_TOOLS, 'MAKA_AGENT_TOOLS') ?? false;
   const baseConfig = {
     id: resolvedEnv.MAKA_CONFIG_ID ?? 'harbor-cell',
     backend,
+    agentTools,
     ...(reasoningEffort ? { thinkingLevel: reasoningEffort } : {}),
     ...(resolvedEnv.MAKA_SYSTEM_PROMPT !== undefined
       ? { systemPrompt: resolvedEnv.MAKA_SYSTEM_PROMPT }
@@ -578,6 +603,7 @@ export async function runHarborCellFromEnv(
   };
   let config: Config;
   let registerBackends = options.registerBackends;
+  let providerEnvFetch: ProviderEnvFetch | undefined;
 
   switch (backend) {
     case 'ai-sdk': {
@@ -590,15 +616,19 @@ export async function runHarborCellFromEnv(
         llmConnectionSlug: resolvedEnv.MAKA_LLM_CONNECTION_SLUG ?? modelSpec.provider,
         model: modelSpec.model,
       };
-      registerBackends ??= buildAiSdkCellBackendRegistration({
-        provider: modelSpec.provider,
-        model: modelSpec.model,
-        env: resolvedEnv,
-        now,
-        newId,
-        ...(maxSteps !== undefined ? { maxSteps } : {}),
-        recordUsageCheckpoint: (usage) => writeHarborCellUsageCheckpoint(outputDir, usage),
-      });
+      if (!registerBackends) {
+        providerEnvFetch = createProviderEnvFetch(resolvedEnv);
+        registerBackends = buildAiSdkCellBackendRegistration({
+          provider: modelSpec.provider,
+          model: modelSpec.model,
+          env: resolvedEnv,
+          now,
+          newId,
+          ...(providerEnvFetch ? { fetch: providerEnvFetch.fetch } : {}),
+          ...(maxSteps !== undefined ? { maxSteps } : {}),
+          recordUsageCheckpoint: (usage) => writeHarborCellUsageCheckpoint(outputDir, usage),
+        });
+      }
       break;
     }
     case 'pi-agent': {
@@ -644,30 +674,34 @@ export async function runHarborCellFromEnv(
       break;
   }
 
-  return await runHarborCell({
-    config,
-    instruction: await instructionFromEnv(resolvedEnv),
-    cwd: resolvedEnv.MAKA_WORKDIR ?? process.cwd(),
-    outputDir,
-    storageRoot,
-    pricingProfile: resolvedEnv.MAKA_TRIAL_PRICING_SOURCE ?? 'unconfigured',
-    ...(contextBudgetPolicy ? { contextBudgetPolicy } : {}),
-    ...(continuationPolicy ? { continuationPolicy } : {}),
-    ...(taskLedgerExperimentPolicy ? { taskToolSummaryEnabled: true } : {}),
-    ...(settleAfterMs !== undefined ? { settleAfterMs } : {}),
-    ...(registerBackends ? { registerBackends } : {}),
-    ...(backendNeedsIsolation(backend)
-      ? {
-          realBackendIsolation: {
-            kind: 'external',
-            label: 'Harbor task container',
-            toolExecutor: createHarborCellLocalToolExecutor(resolvedEnv),
-          },
-        }
-      : {}),
-    ...(options.now ? { now: options.now } : {}),
-    ...(options.newId ? { newId: options.newId } : {}),
-  });
+  try {
+    return await runHarborCell({
+      config,
+      instruction: await instructionFromEnv(resolvedEnv),
+      cwd: resolvedEnv.MAKA_WORKDIR ?? process.cwd(),
+      outputDir,
+      storageRoot,
+      pricingProfile: resolvedEnv.MAKA_TRIAL_PRICING_SOURCE ?? 'unconfigured',
+      ...(contextBudgetPolicy ? { contextBudgetPolicy } : {}),
+      ...(continuationPolicy ? { continuationPolicy } : {}),
+      ...(taskLedgerExperimentPolicy ? { taskToolSummaryEnabled: true } : {}),
+      ...(settleAfterMs !== undefined ? { settleAfterMs } : {}),
+      ...(registerBackends ? { registerBackends } : {}),
+      ...(backendNeedsIsolation(backend)
+        ? {
+            realBackendIsolation: {
+              kind: 'external',
+              label: 'Harbor task container',
+              toolExecutor: createHarborCellLocalToolExecutor(resolvedEnv),
+            },
+          }
+        : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.newId ? { newId: options.newId } : {}),
+    });
+  } finally {
+    await providerEnvFetch?.close();
+  }
 }
 
 export function reasoningEffortFromEnv(
@@ -832,6 +866,7 @@ export function buildAiSdkCellBackendRegistration(input: {
   env: RunHarborCellEnv;
   now: () => number;
   newId: () => string;
+  fetch?: typeof globalThis.fetch;
   maxSteps?: number;
   recordUsageCheckpoint?: (usage: HarborCellUsageCheckpoint) => void | Promise<void>;
 }): NonNullable<RunHarborCellInput['registerBackends']> {
@@ -863,6 +898,8 @@ export function buildAiSdkCellBackendRegistration(input: {
   const taskLedgerExperimentStore = taskLedgerExperimentPolicy
     ? createInMemoryTaskLedgerExperimentStore({ now: input.now, newId: input.newId })
     : undefined;
+  const backendUsageCheckpoints = new Map<symbol, HarborCellUsageCheckpoint>();
+  let usageCheckpointQueue = Promise.resolve();
   return (registry, context) => {
     if (!context.toolExecutor) {
       throw new Error('Harbor ai-sdk backend requires an isolated tool executor');
@@ -874,12 +911,16 @@ export function buildAiSdkCellBackendRegistration(input: {
       synthesisCacheEnabled,
     );
     registry.register('ai-sdk', (ctx) => {
+      const backendUsageKey = Symbol('harbor-cell-backend-usage');
       const subscriptionFetch = buildSubscriptionModelFetch({
         connection,
         sessionId: ctx.sessionId,
         modelId: input.model,
+        ...(input.fetch ? { fetchFn: input.fetch } : {}),
       });
+      const providerFetch = subscriptionFetch ?? input.fetch;
       const hostTools = buildHarborCellAiSdkTools(context.toolExecutor!, {
+        agentTools: context.config.agentTools,
         ...(context.heavyTaskEvidence ? { heavyTaskEvidence: context.heavyTaskEvidence } : {}),
         ...(context.heavyTaskProgress ? { heavyTaskProgress: context.heavyTaskProgress } : {}),
         ...(context.heavyTaskSelfCheck ? { heavyTaskSelfCheck: context.heavyTaskSelfCheck } : {}),
@@ -901,7 +942,7 @@ export function buildAiSdkCellBackendRegistration(input: {
         modelFactory: (modelInput) =>
           getAIModel({
             ...modelInput,
-            ...(subscriptionFetch ? { fetch: subscriptionFetch } : {}),
+            ...(providerFetch ? { fetch: providerFetch } : {}),
           }),
         tools,
         toolAvailability: ctx.tools
@@ -990,8 +1031,21 @@ export function buildAiSdkCellBackendRegistration(input: {
           : {}),
         recordActiveFullCompactBlock: ctx.recordActiveFullCompactBlock,
         recordSemanticCompactBlock: ctx.recordSemanticCompactBlock,
+        loadTurnRuntimeEvents: ctx.loadTurnRuntimeEvents,
+        allowMidTurnHistoryCompaction: ctx.allowMidTurnHistoryCompaction,
         ...(input.recordUsageCheckpoint
-          ? { recordUsageCheckpoint: input.recordUsageCheckpoint }
+          ? {
+              recordUsageCheckpoint: (usage: HarborCellUsageCheckpoint) => {
+                const update = usageCheckpointQueue.then(async () => {
+                  backendUsageCheckpoints.set(backendUsageKey, usage);
+                  await input.recordUsageCheckpoint!(
+                    aggregateHarborCellUsageCheckpoints(backendUsageCheckpoints.values()),
+                  );
+                });
+                usageCheckpointQueue = update.catch(() => {});
+                return update;
+              },
+            }
           : {}),
       });
     });
@@ -999,6 +1053,37 @@ export function buildAiSdkCellBackendRegistration(input: {
 }
 
 export const buildHarborAiSdkBackendRegistration = buildAiSdkCellBackendRegistration;
+
+function aggregateHarborCellUsageCheckpoints(
+  checkpoints: Iterable<HarborCellUsageCheckpoint>,
+): HarborCellUsageCheckpoint {
+  let aggregate: HarborCellUsageCheckpoint | undefined;
+  for (const checkpoint of checkpoints) {
+    if (!aggregate) {
+      aggregate = { ...checkpoint };
+      continue;
+    }
+    aggregate = {
+      inputTokens: aggregate.inputTokens + checkpoint.inputTokens,
+      outputTokens: aggregate.outputTokens + checkpoint.outputTokens,
+      cacheHitInputTokens: aggregate.cacheHitInputTokens + checkpoint.cacheHitInputTokens,
+      cacheMissInputTokens: aggregate.cacheMissInputTokens + checkpoint.cacheMissInputTokens,
+      cacheMissInputSource:
+        aggregate.cacheMissInputSource === 'explicit' ||
+        checkpoint.cacheMissInputSource === 'explicit'
+          ? 'explicit'
+          : 'derived',
+      cacheWriteInputTokens: aggregate.cacheWriteInputTokens + checkpoint.cacheWriteInputTokens,
+      reasoningTokens: aggregate.reasoningTokens + checkpoint.reasoningTokens,
+      totalTokens: aggregate.totalTokens + checkpoint.totalTokens,
+      ...(aggregate.costUsd !== undefined && checkpoint.costUsd !== undefined
+        ? { costUsd: aggregate.costUsd + checkpoint.costUsd }
+        : {}),
+    };
+  }
+  if (!aggregate) throw new Error('cannot aggregate an empty Harbor usage checkpoint set');
+  return aggregate;
+}
 
 export async function writeHarborCellUsageCheckpoint(
   outputDir: string,

@@ -30,6 +30,7 @@ export const AGENT_TOOL_NAMES = [
   AGENT_LIST_TOOL_NAME,
   AGENT_OUTPUT_TOOL_NAME,
 ] as const;
+const CHILD_RECOVERY_TOOL_NAMES = ['ArchiveRead'] as const;
 export const CHILD_AGENT_TOOL_NAMES = [
   ...new Set(
     BUILTIN_AGENT_DEFINITIONS.filter(
@@ -58,6 +59,15 @@ export function buildChildAgentTools(tools: readonly MakaTool[]): MakaTool[] {
       seen.add(tool.name);
       out.push(tool);
     }
+  }
+  // Runtime recovery tools are capability-dependent and must follow a child
+  // whenever the host provides them. Otherwise a child can receive an archive
+  // placeholder that explicitly names ArchiveRead without having that tool.
+  for (const name of CHILD_RECOVERY_TOOL_NAMES) {
+    const tool = tools.find((candidate) => candidate.name === name);
+    if (!tool || seen.has(name)) continue;
+    seen.add(name);
+    out.push(tool);
   }
   for (const name of AGENT_TEAM_CHILD_TOOL_NAMES) {
     const tool = tools.find((candidate) => candidate.name === name);
@@ -99,14 +109,19 @@ export function buildSubagentSpawnTool(deps: { taskLedger?: TaskLedgerStore } = 
           .describe(
             'Requested child workspace isolation. Worktree profiles fail closed until a worktree child executor is available.',
           ),
-        task_id: z
-          .string()
-          .min(1)
-          .max(TASK_ID_MAX_CHARS)
-          .refine(isSafeTaskId)
-          .optional()
-          .describe('Existing task UUID or short key to bind to this child run.'),
+        ...(deps.taskLedger
+          ? {
+              task_id: z
+                .string()
+                .min(1)
+                .max(TASK_ID_MAX_CHARS)
+                .refine(isSafeTaskId)
+                .optional()
+                .describe('Existing task UUID or short key to bind to this child run.'),
+            }
+          : {}),
       })
+      .strict()
       .superRefine((input, ctx) => {
         const definition = requireBuiltinAgentDefinitionByProfile(input.profile);
         const requestedWriteBack = input.write_back ?? definition.contract.defaultWriteBack;

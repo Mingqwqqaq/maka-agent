@@ -43,10 +43,12 @@ import {
   noRealConnectionReasonFromError,
   noRealConnectionSetupDescription,
 } from './model-connection-errors.js';
+import { readSettledMessages, type RefreshMessagesOptions } from './session-message-settlement.js';
+
+export type { RefreshMessagesOptions };
 
 const USER_MESSAGE_VISIBLE_TIMEOUT_MS = 1_200;
 const USER_MESSAGE_VISIBLE_POLL_MS = 40;
-const COMMITTED_ASSISTANT_SETTLE_DELAYS_MS = [120, 360] as const;
 
 type ComposerImportOwner = {
   sessionId: string | undefined;
@@ -73,46 +75,6 @@ type ToastApi = {
   error(title: string, description?: string): void;
   info(title: string, description?: string): void;
 };
-
-export interface RefreshMessagesOptions {
-  requiredAssistantMessageId?: string;
-}
-
-function hasAssistantMessage(messages: readonly StoredMessage[], messageId: string): boolean {
-  return messages.some((message) => message.type === 'assistant' && message.id === messageId);
-}
-
-async function readMessagesForRefresh(
-  sessionId: string,
-  options: RefreshMessagesOptions = {},
-): Promise<{ messages: StoredMessage[]; settled: boolean }> {
-  const requiredMessageId = options.requiredAssistantMessageId;
-  if (!requiredMessageId) {
-    return {
-      messages: await window.maka.sessions.readMessages(sessionId),
-      settled: true,
-    };
-  }
-
-  let lastError: unknown;
-  let lastMessages: StoredMessage[] | undefined;
-  for (let attempt = 0; attempt <= COMMITTED_ASSISTANT_SETTLE_DELAYS_MS.length; attempt += 1) {
-    try {
-      const messages = await window.maka.sessions.readMessages(sessionId);
-      if (hasAssistantMessage(messages, requiredMessageId)) {
-        return { messages, settled: true };
-      }
-      lastMessages = messages;
-    } catch (error) {
-      lastError = error;
-    }
-    const delayMs = COMMITTED_ASSISTANT_SETTLE_DELAYS_MS[attempt];
-    if (delayMs === undefined) break;
-    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-  }
-  if (lastMessages) return { messages: lastMessages, settled: false };
-  throw lastError;
-}
 
 export interface AppShellChatActions {
   send(
@@ -157,6 +119,10 @@ export function createAppShellChatActions(deps: {
     setPendingBySession: BooleanRecordUpdater,
   ) => void;
   isNewChatSendSurfaceActive: (owner: ComposerImportOwner) => boolean;
+  /** The shell's one answer to "is this owner still the surface the user is
+   *  looking at". Both halves matter — the section AND the session id — which
+   *  is why the send path asks it instead of comparing the id itself. */
+  isShellSurfaceOwnerActive: (owner: ComposerImportOwner) => boolean;
   markSessionReadLocally: (sessionId: string, readMessages: readonly StoredMessage[]) => void;
   /** #646: optimistically flip the session's status to 'running' at send() so the
    * "正在处理…" gate opens before the runtime's status round-trip lands. */
@@ -187,6 +153,7 @@ export function createAppShellChatActions(deps: {
     captureComposerImportOwner,
     clearPendingSessionAction,
     isNewChatSendSurfaceActive,
+    isShellSurfaceOwnerActive,
     markSessionReadLocally,
     markSessionRunningOptimistic,
     messageRetryPendingRef,
@@ -290,10 +257,31 @@ export function createAppShellChatActions(deps: {
     const skillIds = options.skillIds;
     const quotes = options.quotes;
     const initialSessionId = activeIdRef.current;
-    const newChatOwner = initialSessionId ? null : captureComposerImportOwner();
+    const sendOwner = captureComposerImportOwner();
+    const newChatOwner = initialSessionId ? null : sendOwner;
     let optimisticSessionId: string | undefined;
     let optimisticTurnId: string | undefined;
     let restoreOptimisticStatus: (() => void) | undefined;
+    // #1433: the composer creates the session BEFORE it sends, so a first
+    // send that never lands has to take the session with it. Set the moment
+    // creation succeeds, cleared the moment the send does — while it holds a
+    // value, the session exists but has nothing in it. `sessions:send` both
+    // returns `{ ok: false }` (a blocked Skill) and throws (Skill discovery,
+    // project-context resolution), so tracking it in one place is what keeps
+    // the two exits from drifting apart; the deleted `quick-chat.ts` cleaned
+    // up on throw and nothing replaced that half.
+    let unsentSessionId: string | undefined;
+    const discardUnsentSession = async () => {
+      if (!unsentSessionId) return;
+      const sessionId = unsentSessionId;
+      unsentSessionId = undefined;
+      try {
+        await window.maka.sessions.remove(sessionId);
+        await refreshSessions();
+      } catch {
+        // Best-effort: a failed cleanup must not replace the real error.
+      }
+    };
     try {
       const turnId = crypto.randomUUID();
       if (!initialSessionId) {
@@ -312,6 +300,7 @@ export function createAppShellChatActions(deps: {
           collaborationMode: newChatCollaborationMode,
           orchestrationMode: newChatOrchestrationMode,
         });
+        unsentSessionId = session.id;
         upsertSessionSummary(session);
         optimisticSessionId = session.id;
         optimisticTurnId = turnId;
@@ -334,10 +323,10 @@ export function createAppShellChatActions(deps: {
           disarmTurnActive(session.id, turnId);
           restoreOptimisticStatus?.();
           restoreOptimisticStatus = undefined;
-          await window.maka.sessions.remove(session.id);
-          await refreshSessions();
+          await discardUnsentSession();
           return false;
         }
+        unsentSessionId = undefined;
         if (newChatOwner && isNewChatSendSurfaceActive(newChatOwner)) {
           showSkillInvocationFeedback(uiLocale, toastApi, sendResult.skillInvocation);
         }
@@ -398,6 +387,7 @@ export function createAppShellChatActions(deps: {
       await refreshMessagesUntilTurn(sessionId, turnId);
       return true;
     } catch (error) {
+      await discardUnsentSession();
       if (optimisticSessionId && optimisticTurnId) {
         removeOptimisticUserMessage(optimisticSessionId, optimisticTurnId);
       }
@@ -408,9 +398,22 @@ export function createAppShellChatActions(deps: {
       // running dot / blocked permission-mode toggle.
       if (optimisticSessionId && optimisticTurnId) disarmTurnActive(optimisticSessionId, optimisticTurnId);
       restoreOptimisticStatus?.();
+      // Which surface is allowed to hear about this failure. The id alone is
+      // not it: `selectNavigation` never clears `activeId` (nav-selection.ts),
+      // so a user who left for 扩展 → 技能 mid-flight still "is" session A by
+      // that comparison — and the readiness branch below ends in
+      // `openSettingsSection('models')` (app-shell.tsx), which NAVIGATES. That
+      // is the same gap #1433 fixed one file over in the quick-entry path, and
+      // it was reachable here because this line re-derived the rule from an id
+      // instead of asking the shell. One owner for the question, one answer.
+      //
+      // The owner MOVES on an optimistic create: the send began on the new-chat
+      // surface and the app is now on the session it just made, so the id is
+      // taken from the flight and only the section comes from the capture.
       const feedbackSessionId = optimisticSessionId ?? initialSessionId;
       const sendStillOwnsCurrentSurface =
-        (feedbackSessionId !== undefined && activeIdRef.current === feedbackSessionId) ||
+        (feedbackSessionId !== undefined &&
+          isShellSurfaceOwnerActive({ ...sendOwner, sessionId: feedbackSessionId })) ||
         (newChatOwner !== null && isNewChatSendSurfaceActive(newChatOwner));
       if (!sendStillOwnsCurrentSurface) return false;
       if (isNoRealConnectionError(error)) {
@@ -467,7 +470,7 @@ export function createAppShellChatActions(deps: {
 
   async function refreshMessages(sessionId: string, options: RefreshMessagesOptions = {}): Promise<boolean> {
     try {
-      const result = await readMessagesForRefresh(sessionId, options);
+      const result = await readSettledMessages(sessionId, options);
       const next = result.messages;
       if (activeIdRef.current === sessionId) {
         markSessionReadLocally(sessionId, next);

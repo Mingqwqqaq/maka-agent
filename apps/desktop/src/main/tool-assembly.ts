@@ -67,6 +67,7 @@ export interface DesktopToolAssemblyDeps {
   settingsStore: SettingsStore;
   shellRuns: ShellRunProcessManager;
   snapshotReadImage: ToolArtifactPersistence['snapshotReadImage'];
+  readArchivedToolResultResource: ToolArtifactPersistence['readArchivedToolResultResource'];
   getWorkspacePrivacyContext: () => Promise<WorkspacePrivacyContext>;
   resolveDesktopSkillHost: HostCapabilitiesResolver;
 }
@@ -94,6 +95,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
     settingsStore,
     shellRuns,
     snapshotReadImage,
+    readArchivedToolResultResource,
     getWorkspacePrivacyContext,
     resolveDesktopSkillHost,
   } = deps;
@@ -207,6 +209,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
     ...buildDesktopBuiltinTools({
       shellRuns,
       runtimeResources: shellRuns,
+      archiveResources: { readArchivedToolResultResource },
       backgroundTasks: shellRuns,
       ptyControls: shellRuns,
       snapshotImage: snapshotReadImage,
@@ -280,6 +283,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
   // maka://runtime/background-tasks/<id> are not part of their tool surface.
   const childAgentTools = buildChildAgentTools([
     ...buildDesktopBuiltinTools({
+      archiveResources: { readArchivedToolResultResource },
       snapshotImage: snapshotReadImage,
       ...(sandboxManager ? { sandboxManager } : {}),
       ...(filesystemWorker ? {

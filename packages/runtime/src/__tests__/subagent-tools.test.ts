@@ -11,6 +11,7 @@ import type {
   TaskOwner,
 } from '@maka/core';
 import type { SessionEvent } from '@maka/core/events';
+import { zodSchema } from 'ai';
 import { buildBuiltinTools } from '../builtin-tools.js';
 import { PermissionEngine } from '../permission-engine.js';
 import {
@@ -63,6 +64,43 @@ describe('subagent tools', () => {
       AGENT_LIST_TOOL_NAME,
       AGENT_OUTPUT_TOOL_NAME,
     ]);
+  });
+
+  test('agent_spawn advertises task_id only when task binding is available', async () => {
+    const advertisedProperties = async (tool: MakaTool) => {
+      const schema = (await zodSchema(tool.parameters as never).jsonSchema) as {
+        properties?: Record<string, unknown>;
+      };
+      return schema.properties ?? {};
+    };
+
+    expect(Object.keys(await advertisedProperties(buildSubagentSpawnTool()))).toEqual([
+      'profile',
+      'task',
+      'write_back',
+      'isolation',
+    ]);
+    expect(
+      Object.keys(
+        await advertisedProperties(
+          buildSubagentSpawnTool({ taskLedger: taskLedgerStub(undefined, []) }),
+        ),
+      ),
+    ).toEqual(['profile', 'task', 'write_back', 'isolation', 'task_id']);
+  });
+
+  test('agent_spawn rejects task_id when task binding is unavailable', () => {
+    const schema = buildSubagentSpawnTool().parameters as {
+      safeParse(input: unknown): { success: boolean };
+    };
+
+    expect(
+      schema.safeParse({
+        profile: LOCAL_READ_AGENT_PROFILE,
+        task: 'Inspect the repo.',
+        task_id: 'T1',
+      }).success,
+    ).toBe(false);
   });
 
   test('built-in catalog exposes local-read without shell, web, nested, or write tools', () => {
@@ -361,6 +399,19 @@ describe('subagent tools', () => {
     expect(tools.some((tool) => tool.name === 'Bash')).toBe(false);
     expect(tools.some((tool) => tool.name === 'Write')).toBe(false);
     expect(tools.some((tool) => tool.name === 'Edit')).toBe(false);
+  });
+
+  test('keeps host-provided ArchiveRead available for child recovery', () => {
+    const archiveRead = testCatalogTool('ArchiveRead', 'read');
+    const tools = buildChildAgentTools([
+      testCatalogTool('Read', 'read'),
+      testCatalogTool('Glob', 'read'),
+      testCatalogTool('Grep', 'read'),
+      testCatalogTool('WebSearch', 'web_read'),
+      archiveRead,
+    ]);
+
+    expect(tools.find((tool) => tool.name === 'ArchiveRead')).toBe(archiveRead);
   });
 
   test('child agent toolset enforces explore-mode read-only behavior without prompting', async () => {
@@ -690,21 +741,20 @@ describe('subagent tools', () => {
       },
     });
     const tool = buildSubagentSpawnTool({ taskLedger: taskLedgerStub(task, calls) });
-    const execute = runtime.wrapToolExecute(tool, 'parent-turn', {
-      push: (event) => events.push(event),
-    });
-
-    const pending = execute(
-      {
-        profile: LOCAL_READ_AGENT_PROFILE,
-        task: 'Inspect the runtime tests.',
-        task_id: task.key,
-      },
-      {
+    const pending = runtime
+      .settleToolCall({
+        tool,
+        turnId: 'parent-turn',
         toolCallId: 'tool-agent-spawn-denied',
+        input: {
+          profile: LOCAL_READ_AGENT_PROFILE,
+          task: 'Inspect the runtime tests.',
+          task_id: task.key,
+        },
         abortSignal: new AbortController().signal,
-      },
-    );
+        eventSink: { push: (event) => events.push(event) },
+      })
+      .then((settlement) => settlement.result);
     await waitFor(() => events.some((event) => event.type === 'permission_request'));
     const request = events.find(
       (event): event is Extract<SessionEvent, { type: 'permission_request' }> =>
@@ -1144,12 +1194,16 @@ async function runTool(
 ): Promise<unknown> {
   const tool = tools.get(name);
   if (!tool) throw new Error(`Missing child tool ${name}`);
-  return await runtime.wrapToolExecute(tool, 'child-turn', {
-    push: (event) => events.push(event),
-  })(args, {
-    toolCallId: `tool-${name}-${typeof args === 'object' && args && 'command' in args ? (args as { command: string }).command : 'read'}`,
-    abortSignal: new AbortController().signal,
-  });
+  return (
+    await runtime.settleToolCall({
+      tool,
+      turnId: 'child-turn',
+      toolCallId: `tool-${name}-${typeof args === 'object' && args && 'command' in args ? (args as { command: string }).command : 'read'}`,
+      input: args,
+      abortSignal: new AbortController().signal,
+      eventSink: { push: (event) => events.push(event) },
+    })
+  ).result;
 }
 
 function testCatalogTool(name: string, categoryHint: MakaTool['categoryHint']): MakaTool {

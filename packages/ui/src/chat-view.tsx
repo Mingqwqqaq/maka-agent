@@ -32,6 +32,7 @@ import { Message } from './primitives/chat.js';
 import { EmptyState } from './empty-state.js';
 import {
   ModelContinuingIndicator,
+  ModelProviderRetryIndicator,
   ModelProcessingIndicator,
   TurnView,
   type ReadAttachmentBytes,
@@ -204,6 +205,13 @@ export function ChatView(props: {
    * don't compose quotes.
    */
   onQuoteSelection?(input: { text: string; turnId?: string }): void;
+  /**
+   * Codex/Cursor-style "ask in side panel": when set, selecting text in the
+   * transcript surfaces a second floating action that hands the excerpt (+ its
+   * turn) to the desktop app, which opens a read-only companion side panel
+   * seeded with the quote. Omitted by hosts that don't support the side panel.
+   */
+  onAskAboutSelection?(input: { text: string; turnId?: string }): void;
 }) {
   const copy = getConversationCopy(useUiLocale()).chat;
   // chat + storedTools survive for the empty-state and streaming-bubble
@@ -343,7 +351,7 @@ export function ChatView(props: {
   });
   const { quote: selectionQuote, clear: clearSelectionQuote } = useMessageSelectionQuote(
     scrollRef,
-    Boolean(props.onQuoteSelection),
+    Boolean(props.onQuoteSelection || props.onAskAboutSelection),
   );
 
   if (!props.activeSession) {
@@ -509,6 +517,7 @@ export function ChatView(props: {
                           onStreamingSettled: props.onStreamingSettled,
                           processingIndicator: props.processingIndicator,
                           continuingIndicator: props.continuingIndicator,
+                          providerRetry: props.liveTurn?.providerRetry,
                         }
                       : undefined
                   }
@@ -529,8 +538,14 @@ export function ChatView(props: {
             <section className="maka-turn" data-live-streaming="true">
               <Message variant="assistant" className="group/answer">
                 <div className="flex flex-col gap-2">
-                  {props.processingIndicator && <ModelProcessingIndicator />}
-                  {props.continuingIndicator && !props.processingIndicator && <ModelContinuingIndicator />}
+                  {props.liveTurn?.providerRetry ? (
+                    <ModelProviderRetryIndicator retry={props.liveTurn.providerRetry} />
+                  ) : (
+                    <>
+                      {props.processingIndicator && <ModelProcessingIndicator />}
+                      {props.continuingIndicator && !props.processingIndicator && <ModelContinuingIndicator />}
+                    </>
+                  )}
                 </div>
                 <div aria-hidden="true" className="mt-0.5 h-8" />
               </Message>
@@ -556,28 +571,51 @@ export function ChatView(props: {
             <ArrowDown size={16} aria-hidden="true" />
           </BaseButton>
         )}
-        {selectionQuote && props.onQuoteSelection ? (
-          <button
-            type="button"
-            className="maka-quote-action"
+        {selectionQuote && (props.onQuoteSelection || props.onAskAboutSelection) ? (
+          <div
+            className="maka-quote-actions"
             style={{
               top: `${Math.max(8, selectionQuote.rect.top - 42)}px`,
               left: `${selectionQuote.rect.left + selectionQuote.rect.width / 2}px`,
             }}
-            // Keep the live selection alive while clicking the action.
+            // Keep the live selection alive while clicking an action.
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              props.onQuoteSelection?.({
-                text: selectionQuote.text,
-                ...(selectionQuote.turnId ? { turnId: selectionQuote.turnId } : {}),
-              });
-              clearSelectionQuote();
-              window.getSelection()?.removeAllRanges();
-            }}
           >
-            <TextQuote size={14} aria-hidden="true" />
-            {copy.quoteSelection}
-          </button>
+            {props.onQuoteSelection ? (
+              <button
+                type="button"
+                className="maka-quote-action"
+                onClick={() => {
+                  props.onQuoteSelection?.({
+                    text: selectionQuote.text,
+                    ...(selectionQuote.turnId ? { turnId: selectionQuote.turnId } : {}),
+                  });
+                  clearSelectionQuote();
+                  window.getSelection()?.removeAllRanges();
+                }}
+              >
+                <TextQuote size={14} aria-hidden="true" />
+                {copy.quoteSelection}
+              </button>
+            ) : null}
+            {props.onAskAboutSelection ? (
+              <button
+                type="button"
+                className="maka-quote-action"
+                onClick={() => {
+                  props.onAskAboutSelection?.({
+                    text: selectionQuote.text,
+                    ...(selectionQuote.turnId ? { turnId: selectionQuote.turnId } : {}),
+                  });
+                  clearSelectionQuote();
+                  window.getSelection()?.removeAllRanges();
+                }}
+              >
+                <TextQuote size={14} aria-hidden="true" />
+                {copy.askInSidePanel}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </main>

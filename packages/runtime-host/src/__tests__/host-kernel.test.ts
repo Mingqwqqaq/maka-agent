@@ -40,6 +40,7 @@ import {
   type RuntimeHostCandidateOptions,
   type RuntimeHostCandidateResult,
 } from '../server/index.js';
+import { createUnavailableDomainOperationHandlers } from '../server/operation-dispatcher.js';
 import { FramedTransport, RuntimeHostTransportError } from '../transport/framed-transport.js';
 import {
   prepareStorageRootControlDirectory,
@@ -131,9 +132,15 @@ describe('non-serving Runtime Host kernel', () => {
           await factoryReleased;
           return {
             handlers: {
+              ...createUnavailableDomainOperationHandlers(),
               'turn.start': unavailable,
               'turn.query': unavailable,
               'turn.stop': unavailable,
+              'turn.message.submit': unavailable,
+              'queue.retract': unavailable,
+              'turn.interrupt': unavailable,
+              'subscription.open': unavailable,
+              'subscription.close': unavailable,
             },
             async recover() {},
             async close() {},
@@ -826,7 +833,11 @@ describe('non-serving Runtime Host kernel', () => {
         await transport.write({
           requestId: 'blocked-turn-start',
           operation: 'turn.start',
-          input: { sessionId: 'session', turnId: 'turn', text: 'block forever' },
+          input: {
+            sessionId: 'session',
+            turnId: 'turn',
+            content: { text: 'block forever' },
+          },
         });
         await blocked;
         const shutdownRequested = waitForUncooperativeHostMessage(child, 'shutdown-requested');

@@ -79,30 +79,23 @@ import type {
   UsageSummaryV2,
 } from '@maka/core/usage-stats/types';
 import type { TestProxyInput } from '@maka/core/settings/network-settings';
-import type { Result } from '@maka/core/settings/result';
-import type { CreateSessionInput } from '@maka/core';
+import type { Result } from '@maka/core/result';
+import type { CreateSessionRequestInput } from '@maka/core';
 import type {
   McpConfigFile,
   McpServerConfig,
   McpServerStatus,
   McpTestResult,
 } from '@maka/core/mcp';
-import type { BotStatus, SkillInvocationResult, WechatBridgeQrCodeResult } from '@maka/runtime';
+import type { BotStatus, WechatBridgeQrCodeResult } from '@maka/runtime';
 import type { BundledSkillCatalogEntry, ManagedSkillSourceEntry, ManagedSkillUpdatePreview, SkillEntry, SkillGovernanceDetails } from '@maka/ui';
 import type { ConfigCategory } from '@maka/storage';
 import type {
   OnboardingMilestone,
   OnboardingMilestoneId,
   OnboardingState,
-  QuickChatMode,
 } from '@maka/core';
 
-// PR110b: shared union used by `quickChat:start`. Renderer pattern-
-// matches on `ok` + `reason` to route to the correct UI surface.
-//
-// @xuan PR110b review: success branch is `{ ok: true; sessionId }`
-// only. No turn / message anchor — PR110c will add `firstTurnId` if
-// needed.
 export interface ExpertTeamMemberSummary {
   id: string;
   name: string;
@@ -120,13 +113,6 @@ export type ExpertTeamStartResult =
   | { ok: false; reason: 'unknown_team'; teamId: string }
   | { ok: false; reason: 'setup_required'; state: OnboardingState }
   | { ok: false; reason: 'workspace_unavailable' }
-  | { ok: false; reason: 'send_failed'; message: string };
-
-export type QuickChatResult =
-  | { ok: true; sessionId: string; skillInvocation?: SkillInvocationResult }
-  | { ok: false; reason: 'setup_required'; state: OnboardingState }
-  | { ok: false; reason: 'workspace_unavailable' }
-  | { ok: false; reason: 'skill_invocation_failed'; skillInvocation: SkillInvocationResult }
   | { ok: false; reason: 'send_failed'; message: string };
 
 export interface OnboardingSnapshot {
@@ -186,7 +172,7 @@ export interface MakaBridge {
   };
   sessions: {
     list(filter?: SessionListFilter): Promise<SessionSummary[]>;
-    create(input?: Partial<CreateSessionInput>): Promise<SessionSummary>;
+    create(input?: CreateSessionRequestInput): Promise<SessionSummary>;
     send(
       sessionId: string,
       command:
@@ -336,9 +322,6 @@ export interface MakaBridge {
       status: 'completed' | 'skipped',
     ): Promise<OnboardingSnapshot>;
     clearMilestone(id: OnboardingMilestoneId): Promise<OnboardingSnapshot>;
-  };
-  quickChat: {
-    start(input?: { prompt?: string; mode?: QuickChatMode; skillIds?: string[] }): Promise<QuickChatResult>;
   };
   expertTeam: {
     list(): Promise<{ teams: ExpertTeamSummary[] }>;
@@ -673,7 +656,14 @@ export interface MakaBridge {
   };
   skills: {
     list(): Promise<SkillEntry[]>;
-    listInvocable(sessionId?: string): Promise<import('@maka/runtime').InvocableSkillEntry[]>;
+    listInvocable(
+      sessionId?: string,
+      newSessionContext?: {
+        llmConnectionSlug?: string;
+        model?: string;
+        collaborationMode?: 'agent' | 'plan';
+      },
+    ): Promise<import('@maka/runtime').InvocableSkillEntry[]>;
     catalog: {
       list(): Promise<BundledSkillCatalogEntry[]>;
       install(id: string): Promise<

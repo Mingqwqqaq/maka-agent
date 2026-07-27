@@ -25,6 +25,13 @@
   gap: 0;
   border: var(--border-width-hairline) solid oklch(from var(--foreground) l c h / 0.08);
   overflow: hidden;
+  /* #1362: the card is the query container for the row-stacking rules at the
+     bottom of this file. Rows respond to the width the card actually has —
+     the settings content column is narrower than the window by the nav
+     sidebar, so viewport @media blocks systematically fire too late/early
+     (the #1361 540px and #1364 900px lessons). Same mechanism as the
+     permission dialog's inline-size container in permission-dialog.css. */
+  container: settings-rows / inline-size;
 }
 
 /* Label/value row: title + hint stack on the left, value or a single
@@ -85,6 +92,28 @@
   transition: background var(--duration-base) var(--ease-out-strong);
 }
 
+/* #1362: the label stack is a flex item; without min-width:0 its intrinsic
+   min-content (the widest unbreakable run) sets the row's minimum and the
+   card clips at narrow widths instead of letting the text wrap. */
+.settingsFormRow > div:first-child {
+  min-width: 0;
+}
+
+/* #1363 review: a row whose control side is more than a bare switch (e.g.
+   Memory's status Chip + switch) groups them into one cluster, so the
+   stacked layout keeps them on one line together. The internal gap matches
+   the row gap, so the wide layout is pixel-identical to the former loose
+   siblings. */
+.settingsFormRowControlCluster {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  /* No min-width:0 here — the cluster's floor is its widest nowrap chip;
+     shrinking below that bleeds the chip out of the box. The LABEL side
+     owns the squeeze (it has min-width:0 and wraps). */
+}
+
 /* Detail audit round 3: vertical variant for full-width controls (the
    personalization tone textarea) living inside the shared card rows. */
 .settingsFormRow[data-orient="vertical"] {
@@ -107,7 +136,10 @@
 
 /* === typography ========================================================= */
 
-/* Row titles — one tier for BOTH row kinds. */
+/* Row titles — one tier for BOTH row kinds. No `white-space: nowrap` here:
+   the label column has a fixed 150px minimum, so a nowrap title longer than
+   the column bled into the value column instead of wrapping (#1362; the
+   nowrap never affected titles that fit). */
 .settingsRow strong,
 .settingsFormRow strong {
   display: block;
@@ -115,10 +147,10 @@
   font-size: var(--font-size-heading);
   font-weight: var(--font-weight-medium);
   line-height: var(--leading-snug);
-}
-
-.settingsRow strong {
-  white-space: nowrap;
+  /* Last resort for unbreakable runs (product names like "Claude", env-var
+     tokens) on a squeezed label column: break inside the word rather than
+     bleed past the card. No effect while the title fits. */
+  overflow-wrap: anywhere;
 }
 
 /* Field labels — one tier BELOW row titles so the proxy grid's 代理协议 /
@@ -142,6 +174,8 @@
   color: var(--muted-foreground);
   font-size: var(--font-size-base);
   line-height: var(--leading-normal);
+  /* Hints carry paths and URLs — same last-resort break as the titles. */
+  overflow-wrap: anywhere;
 }
 
 .settingsRow > span {
@@ -183,6 +217,13 @@
    cap); keying off the row makes the contract local and obvious. */
 .settingsRow[data-control-width="compact"] > input,
 .settingsRow[data-control-width="compact"] > .settingsTimeInput {
+  /* `width: auto` over the Input primitive's `w-full`: a 140px flat cap
+     stretched the box to 140px while `08:00` + the picker glyph only ink
+     ~80px, leaving a ~60px dead strip inside the field's right edge. The
+     field now hugs its content and stays pinned to the same right rail as
+     the switch rows above it; 140px remains the ceiling for the wider
+     compact controls that share this bucket. */
+  width: auto;
   max-width: 140px;
   justify-self: end;
 }
@@ -197,6 +238,28 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+/* #1362: non-row children of a rows card — the proxy sub-form's grids,
+   bypass field, info alert, and action row — sat flush against the card
+   edge while every sibling row is inset 24px. One horizontal inset for
+   everything inside a card. */
+.settingsRows > .settingsFormGrid,
+.settingsRows > .settingsField,
+.settingsRows > .settingsActionRow,
+.settingsRows > [data-slot="alert"] {
+  margin: var(--space-4) var(--space-6);
+}
+
+/* The Alert primitive carries `w-full`; with horizontal margins that is
+   wider than the card. The stretched grid-item width (auto) is the right
+   one here. */
+.settingsRows > [data-slot="alert"] {
+  width: auto;
+}
+
+.settingsRows > .settingsFormGrid + .settingsFormRow {
+  border-top: var(--border-width-hairline) solid oklch(from var(--foreground) l c h / 0.06);
 }
 
 .settingsFormGridProxy {
@@ -288,5 +351,72 @@
   .settingsField input,
   .settingsField textarea {
     transition: none !important;
+  }
+}
+
+/* === narrow-card row stacking (#1362) =================================== */
+
+/* THE row-wrapping decision for every form-row page (#1303 tracking):
+   below 460px of CARD width — not viewport width — label/control rows
+   stack vertically. 460px is the app's one container breakpoint (shared
+   with permission-dialog.css) and sits just above the widest one-line
+   row minimum (150px label floor + gap + a ~180px intrinsic-width input
+   + 48px row padding ≈ 394px), with margin for the select triggers'
+   320px cap to stay usable. Switch rows are the exception: a switch is
+   ~40px wide and always fits beside its label — stacking it reads as a
+   detached orphan, so those rows keep two columns and let the label wrap. */
+@container settings-rows (max-width: 460px) {
+  .settingsRow {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-2-5);
+  }
+
+  /* #1363 review: the exception applies only when the switch is the row's
+     ONLY control (label + switch, nothing else). A three-part row — e.g.
+     Memory's label + status Chip + switch — held horizontal would crush
+     the label to a char-per-line sliver, so it stacks like any other row.
+     `:not(input)` spares Base UI Switch's hidden sibling checkbox, which
+     is a real third child on every switch row. */
+  .settingsRow:has(> [role="switch"]):not(:has(> :nth-child(3):not(input))) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  /* Values and controls sit under their label now; right-alignment against
+     the card edge would detach them from it. */
+  .settingsRow > span {
+    text-align: left;
+  }
+
+  .settingsRow[data-control-width="compact"] > input,
+  .settingsRow[data-control-width="compact"] > .settingsTimeInput,
+  .settingsRow[data-control-width="select"] > .settingsSelectTrigger {
+    justify-self: start;
+  }
+
+  .settingsFormRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2-5);
+  }
+
+  .settingsFormRow:has(> [role="switch"]):not(:has(> :nth-child(3):not(input))) {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-5);
+  }
+
+  .settingsFormGrid,
+  .settingsFormGridProxy {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The Button primitive is `shrink-0` with a fixed height; on a squeezed
+     card an action button wider than the row would bleed past the card
+     edge. Let it shrink and let the label wrap, keeping the primitive's
+     32px as a floor. */
+  .settingsActionRow > [data-slot="button"] {
+    flex-shrink: 1;
+    height: auto;
+    min-height: 2rem;
   }
 }

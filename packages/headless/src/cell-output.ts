@@ -19,6 +19,75 @@ export interface HarborCellTokenSummary {
   pricingSource: 'runtime';
 }
 
+/** Prefer a child-inclusive cumulative checkpoint only when it safely extends
+ * every counter in an existing final summary; a larger total alone is insufficient. */
+export function selectHarborCellTokenSummary(
+  current: HarborCellTokenSummary | undefined,
+  checkpoint: HarborCellTokenSummary | null,
+): HarborCellTokenSummary | undefined {
+  if (!checkpoint) return current;
+  if (!current) return checkpoint;
+  if (
+    !isConsistentCumulativeTokenSummary(current) ||
+    !isConsistentCumulativeTokenSummary(checkpoint)
+  ) {
+    return current;
+  }
+  if (
+    current.cacheMissInputSource === 'explicit' &&
+    checkpoint.cacheMissInputSource !== 'explicit'
+  ) {
+    return current;
+  }
+  const currentCounts = [
+    current.input,
+    current.output,
+    current.cachedInput,
+    current.cacheHitInput,
+    current.cacheMissInput,
+    current.cacheWriteInput,
+    current.reasoning,
+    current.total,
+    current.costUsd,
+  ];
+  const checkpointCounts = [
+    checkpoint.input,
+    checkpoint.output,
+    checkpoint.cachedInput,
+    checkpoint.cacheHitInput,
+    checkpoint.cacheMissInput,
+    checkpoint.cacheWriteInput,
+    checkpoint.reasoning,
+    checkpoint.total,
+    checkpoint.costUsd,
+  ];
+  return checkpointCounts.every((value, index) => value >= currentCounts[index]!) &&
+    checkpointCounts.some((value, index) => value > currentCounts[index]!)
+    ? checkpoint
+    : current;
+}
+
+function isConsistentCumulativeTokenSummary(summary: HarborCellTokenSummary): boolean {
+  const counts = [
+    summary.input,
+    summary.output,
+    summary.cachedInput,
+    summary.cacheHitInput,
+    summary.cacheMissInput,
+    summary.cacheWriteInput,
+    summary.reasoning,
+    summary.total,
+    summary.costUsd,
+  ];
+  return (
+    counts.every((value) => Number.isFinite(value) && value >= 0) &&
+    summary.cachedInput === summary.cacheHitInput &&
+    summary.input === summary.cacheHitInput + summary.cacheMissInput + summary.cacheWriteInput &&
+    summary.total === summary.input + summary.output &&
+    summary.reasoning <= summary.output
+  );
+}
+
 export interface HarborCellContextBudgetSummary {
   diagnosticEvents: number;
   enabledEvents: number;
@@ -67,6 +136,8 @@ export interface HarborCellExecutionIdentity {
   systemPromptMode?: HeadlessSystemPromptMode;
   systemPromptHash: string;
   pricingProfile: string;
+  /** Present on artifacts written after Headless Agent tool gating was introduced. */
+  agentTools?: boolean;
 }
 
 export interface HarborCellDeadlineSettlement {
@@ -314,6 +385,9 @@ export function validateHarborCellExecutionIdentity(value: unknown): HarborCellE
       : {}),
     systemPromptHash: requireString(value.systemPromptHash, 'executionIdentity.systemPromptHash'),
     pricingProfile: requireString(value.pricingProfile, 'executionIdentity.pricingProfile'),
+    ...('agentTools' in value
+      ? { agentTools: requireBoolean(value.agentTools, 'executionIdentity.agentTools') }
+      : {}),
   };
 }
 

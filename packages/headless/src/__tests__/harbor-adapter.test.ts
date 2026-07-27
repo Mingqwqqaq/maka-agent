@@ -8,6 +8,7 @@ import { describe, test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { HARBOR_CELL_CONTEXT_ENV_KEYS, resolveHarborCellAiSdkEnv } from '../harbor-cell.js';
+import { isBudgetExhaustedTrialException } from '../harbor-task-runner.js';
 
 const repoRoot = resolve(fileURLToPath(new URL('../../../..', import.meta.url)));
 const execFileAsync = promisify(execFile);
@@ -81,12 +82,22 @@ describe('Harbor adapter contract', () => {
       /economy_task_mode = True if economy_task_flag is True else economy_task_env == "true"/,
     );
     assert.match(source, /"MAKA_ECONOMY_TASK_MODE": "true" if economy_task_mode else "false"/);
+    assert.match(source, /"MAKA_AGENT_TOOLS"/);
     assert.doesNotMatch(
       source,
       /"MAKA_ECONOMY_TASK_MODE": "true" if self\._resolved_flags\.get\("economy_task_mode"\) else "false"/,
     );
     assert.doesNotMatch(source, /and raw else None/);
     assert.doesNotMatch(source, /MAKA_INSTRUCTION_EOF/);
+  });
+
+  test('maka_agent.py emits a host-cell timeout recognized as budget exhaustion', async () => {
+    const source = await readRepoFile('packages/headless/harbor/maka_agent.py');
+    const template = source.match(/f"(Maka host cell exceeded [^"]+)"/)?.[1];
+    assert.ok(template, 'host-cell timeout message template');
+    const message = template.replace('{self._cell_timeout_sec()}', '1800');
+
+    assert.equal(isBudgetExhaustedTrialException(`RuntimeError: ${message}`), true);
   });
 
   test('headless Harbor text files do not contain hidden or unexpected control characters', async () => {
@@ -383,18 +394,22 @@ describe('Harbor adapter contract', () => {
     }
   });
 
-  test('maka_agent.py task-run host mode preserves the heavy-task / autonomous bridge contract', async () => {
+  test('maka_agent.py preserves plain Harbor host task-run and Pier container task-run contracts', async () => {
     const source = await readRepoFile('packages/headless/harbor/maka_agent.py');
 
-    // Mode switch: default cell, opt-in task-run host bridge.
+    // Mode switch: default cell, opt-in task-run.
     assert.match(source, /MAKA_HARBOR_MODE/);
     assert.match(source, /def _harbor_mode\(self\) -> str:/);
     assert.match(source, /if self\._harbor_mode\(\) == "task-run":/);
+    assert.match(source, /async def _run_task_run_container\(/);
     assert.match(source, /async def _run_task_run_host\(/);
-    // Spawns the headless CLI in task-run + harbor-http isolation on the host.
+    // Plain Harbor keeps its host bridge; Pier runs the same task-run in the
+    // task container with the pinned runtime and local isolation.
     assert.match(source, /dist" \/ "cli\.js"/);
     assert.match(source, /"--mode",\s*\n\s*"task-run",/);
-    assert.match(source, /"--isolation",\s*\n\s*"harbor-http",/);
+    assert.match(source, /isolation: str = "harbor-http"/);
+    assert.match(source, /isolation="harbor-local"/);
+    assert.match(source, /_MAKA_NODE_TOOLCHAIN_NODE/);
     assert.match(source, /"--include-events"/);
     // autonomous / heavy-task derivation ported verbatim from the fork.
     assert.match(
@@ -419,6 +434,9 @@ describe('Harbor adapter contract', () => {
     // A non-zero runner subprocess is flagged as an infra failure inside the
     // executor scope so teardown reclaims orphaned scoped background processes.
     assert.match(source, /executor\.mark_reclaim_scoped_processes\(\)/);
+    // A scored deadline preserves services from completed commands for the
+    // post-exit verifier while still reclaiming commands that remain active.
+    assert.match(source, /executor\.mark_reclaim_active_commands\(\)/);
     // The bridged tool exec is a bare container exec (real exit code returned as
     // a 200), not exec_as_agent (which raises on non-zero and injects agent env).
     assert.match(source, /self\._environment\.exec\(\s*\n\s*command=_scoped_command\(/);
@@ -633,6 +651,9 @@ describe('Harbor adapter contract', () => {
     assert.match(source, /loadHarnessOracleRegistrySnapshot/);
     assert.match(source, /resolveHarnessOracleAnnotations/);
     assert.match(source, /taskIds: TERMINAL_BENCH_2_1_TASK_IDS/);
+    assert.match(source, /createPierProviderProxyHub/);
+    assert.match(source, /providerProxyHub/);
+    assert.match(source, /\.finally\(\(\) => providerProxyHub\?\.close\(\)\)/);
     assert.doesNotMatch(source, /ensureHarnessOracleQualification/);
     assert.doesNotMatch(source, /createHarborOracleQualifier/);
     assert.doesNotMatch(source, /qualification\.selectedTaskIds/);
@@ -1116,6 +1137,7 @@ function pierPython(): string | null {
 function pythonBridgeContractScript(root: string): string {
   return String.raw`
 import asyncio
+import concurrent.futures
 import contextlib
 import json
 import os
@@ -1273,7 +1295,7 @@ async def fix3_infra_failure_reclaims_scoped_processes():
     assert preserved is None, "clean exit killed a verifier-visible scoped process"
 
 
-async def fix4_deadline_reclaims_all_scoped_commands():
+async def fix4_deadline_reclaims_only_active_commands():
     with tempfile.TemporaryDirectory() as tmp:
         agent = MakaAgent(Path(tmp))
         env = BlockingLocalShellEnv()
@@ -1299,15 +1321,14 @@ async def fix4_deadline_reclaims_all_scoped_commands():
                     {"command": "sleep 30"},
                 ))
                 await asyncio.wait_for(env.active_started.wait(), timeout=2)
-                server.mark_reclaim_scoped_processes()
+                server.mark_reclaim_active_commands()
             await request
             assert env.active_process is not None and env.active_process.returncode is not None, (
                 "deadline teardown left an active bridged command running"
             )
-            deadline = time.time() + 2
-            while service.poll() is None and time.time() < deadline:
-                time.sleep(0.02)
-            assert service.poll() is not None, "deadline teardown left a completed background command running"
+            assert service.poll() is None, (
+                "deadline teardown killed a completed verifier-visible service"
+            )
         finally:
             if request is not None and not request.done():
                 request.cancel()
@@ -1321,6 +1342,25 @@ async def fix4_deadline_reclaims_all_scoped_commands():
                 for path in scope_dir.glob("*"):
                     path.unlink()
                 scope_dir.rmdir()
+
+
+async def fix4b_deadline_ignores_done_but_still_mapped_commands():
+    with tempfile.TemporaryDirectory() as tmp:
+        server = m._ToolExecutorServer(MakaAgent(Path(tmp)), LocalShellEnv())
+        completed = concurrent.futures.Future()
+        completed.set_result(None)
+        server._futures.add(completed)
+        server._future_command_ids[completed] = "completed-command"
+        cleanup_calls = []
+
+        async def capture_cleanup(command_ids):
+            cleanup_calls.append(command_ids)
+            return None
+
+        server._cleanup_processes = capture_cleanup
+        server.mark_reclaim_active_commands()
+        await server.__aexit__(None, None, None)
+        assert cleanup_calls == [[]], cleanup_calls
 
 
 class TimedOutLocalShellEnv:
@@ -1460,7 +1500,8 @@ async def fix6_cleanup_failure_is_not_reported_as_a_typed_timeout():
 asyncio.run(fix1_bridge_exec_contract())
 asyncio.run(fix2_workdir_probe_falls_back())
 asyncio.run(fix3_infra_failure_reclaims_scoped_processes())
-asyncio.run(fix4_deadline_reclaims_all_scoped_commands())
+asyncio.run(fix4_deadline_reclaims_only_active_commands())
+asyncio.run(fix4b_deadline_ignores_done_but_still_mapped_commands())
 asyncio.run(fix5_timed_out_command_is_reclaimed_immediately())
 asyncio.run(fix6_cleanup_failure_is_not_reported_as_a_typed_timeout())
 print("bridge-contract ok")
@@ -1520,6 +1561,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import types
 from pathlib import Path
 
@@ -1544,7 +1586,9 @@ class BaseInstalledAgent:
         self.logger = types.SimpleNamespace(debug=lambda *args, **kwargs: None)
 
     def _get_env(self, key):
-        return self._extra_env.get(key)
+        if key in self._extra_env:
+            return self._extra_env[key]
+        return os.environ.get(key)
 
     def version(self):
         return "test"
@@ -1780,6 +1824,180 @@ finally:
     scope_dir.rmdir()
 
 with tempfile.TemporaryDirectory() as tmp:
+    class ContainerTaskRunEnvironment:
+        session_id = "deep-swe-task"
+
+        def __init__(self):
+            self.agent_dir_ready = False
+            self.uploads = []
+            self.downloads = []
+            self.download_dirs = []
+
+        async def upload_file(self, local, remote):
+            assert self.agent_dir_ready, "instruction uploaded before /logs/agent exists"
+            self.uploads.append((str(local), str(remote)))
+
+        async def download_file(self, remote, local):
+            self.downloads.append(str(remote))
+            path = Path(local)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if str(remote).endswith("/maka-cell-output.json"):
+                path.write_text(json.dumps({
+                    "schemaVersion": 1,
+                    "status": "completed",
+                    "runtimeEventsPath": "/logs/agent/runtime-events.jsonl",
+                    "promptHash": "sha256:test",
+                    "toolSummary": {
+                        "providerVisibleToolCount": 6,
+                        "actualToolCalls": 0,
+                        "actualToolNames": [],
+                        "actualToolCallCounts": {},
+                    },
+                    "steps": 1,
+                    "durationMs": 1,
+                    "startedAt": 1,
+                    "finishedAt": 2,
+                    "runtimeRefs": {
+                        "invocationId": "inv",
+                        "sessionId": "session",
+                        "runId": "run",
+                        "turnId": "turn",
+                    },
+                }), encoding="utf-8")
+            else:
+                path.write_text("", encoding="utf-8")
+
+        async def download_dir(self, remote, local):
+            self.download_dirs.append(str(remote))
+            Path(local).mkdir(parents=True, exist_ok=True)
+
+    class ContainerTaskRunAgent(MakaAgent):
+        def __init__(self, logs_dir, **kwargs):
+            super().__init__(logs_dir, **kwargs)
+            self.container_execs = []
+
+        async def exec_as_agent(self, environment, command, **kwargs):
+            self.container_execs.append((command, kwargs))
+            if command == "mkdir -p /logs/agent":
+                environment.agent_dir_ready = True
+            return types.SimpleNamespace(stdout="", stderr="", return_code=0)
+
+    async def forbidden_host_task_run(*args, **kwargs):
+        raise AssertionError("Pier task-run used the host bridge")
+
+    class FakeNetworkAllowlist:
+        def __init__(self, domains=None):
+            self.domains = domains or []
+
+    original_network_allowlist = maka_agent_mod._NetworkAllowlist
+    maka_agent_mod._NetworkAllowlist = FakeNetworkAllowlist
+    os.environ["MAKA_PROVIDER_PROXY_URL"] = "http://host.docker.internal:443"
+    os.environ["MAKA_PROVIDER_PROXY_TOKEN"] = "ephemeral-token"
+    try:
+        container_agent = ContainerTaskRunAgent(Path(tmp), extra_env={
+            "MAKA_BACKEND": "ai-sdk",
+            "MAKA_HARBOR_MODE": "task-run",
+            "MAKA_NODE_TOOLCHAIN_FINGERPRINT": "sha256:test-node",
+            "MAKA_CELL_TIMEOUT_SEC": "7200",
+        })
+        container_agent._resolved_flags = {
+            "maka_repo": "/opt/maka-agent",
+            "backend": "ai-sdk",
+        }
+        container_agent._run_task_run_host = forbidden_host_task_run
+        container_environment = ContainerTaskRunEnvironment()
+        container_context = AgentContext()
+        assert container_agent.network_allowlist().domains == ["host.docker.internal"]
+        assert container_agent.get_version_command() == "/opt/maka-node-toolchain/bin/node --version"
+        asyncio.run(
+            container_agent.run(
+                "finish the task",
+                container_environment,
+                container_context,
+            )
+        )
+    finally:
+        maka_agent_mod._NetworkAllowlist = original_network_allowlist
+
+    assert len(container_agent.container_execs) == 2, container_agent.container_execs
+    assert container_agent.container_execs[0][0] == "mkdir -p /logs/agent"
+    container_command, container_kwargs = container_agent.container_execs[1]
+    assert "/opt/maka-node-toolchain/bin/node" in container_command, container_command
+    assert "/opt/maka-agent/packages/headless/dist/cli.js" in container_command, container_command
+    assert "--mode task-run" in container_command, container_command
+    assert "--isolation harbor-local" in container_command, container_command
+    assert "harbor-http" not in container_command, container_command
+    container_env = container_kwargs["env"]
+    assert container_env["MAKA_HOST_BASE_URL"] == "http://host.docker.internal:443", container_env
+    assert container_env["MAKA_HOST_API_KEY"] == "ephemeral-token", container_env
+    assert container_env["NODE_USE_ENV_PROXY"] == "1", container_env
+    assert "MAKA_PROVIDER_PROXY_URL" not in container_env, container_env
+    assert "MAKA_PROVIDER_PROXY_TOKEN" not in container_env, container_env
+    assert "MAKA_HARBOR_TOOL_EXECUTOR_URL" not in container_env, container_env
+    assert "MAKA_HARBOR_TOOL_EXECUTOR_TOKEN" not in container_env, container_env
+    assert container_env["MAKA_OUTPUT_DIR"] == "/logs/agent/maka-task-run", container_env
+    assert container_env["MAKA_CELL_ARTIFACT_DIR"] == "/logs/agent", container_env
+    assert container_env["MAKA_STORAGE_ROOT"] == "/logs/agent/maka-task-run/runs", container_env
+    assert container_kwargs["timeout_sec"] == 7200, container_kwargs
+    assert "/logs/agent/maka-task-run" in container_environment.download_dirs
+    assert "/logs/agent/maka-cell-output.json" in container_environment.downloads
+    assert json.loads(
+        Path(container_context.metadata["maka_cell_output"]).read_text(encoding="utf-8")
+    )["status"] == "completed"
+
+    pier_agent = ContainerTaskRunAgent(Path(tmp), extra_env={
+        "MAKA_BACKEND": "ai-sdk",
+        "MAKA_HARBOR_MODE": "task-run",
+        "MAKA_NODE_TOOLCHAIN_FINGERPRINT": "sha256:test-node",
+        "MAKA_CELL_TIMEOUT_SEC": "1800",
+        "MAKA_CELL_SETTLEMENT_GRACE_SEC": "60",
+        "MAKA_AGENT_PHASE_TIMEOUT_SEC": "1860",
+    })
+    pier_agent._resolved_flags = {
+        "maka_repo": "/opt/maka-agent",
+        "backend": "ai-sdk",
+    }
+    pier_agent._run_task_run_host = forbidden_host_task_run
+    pier_environment = ContainerTaskRunEnvironment()
+    pier_context = AgentContext()
+    deadline_started_at_ms = int(time.time() * 1000)
+    maka_agent_mod._NetworkAllowlist = FakeNetworkAllowlist
+    try:
+        asyncio.run(
+            pier_agent.run(
+                "finish the task",
+                pier_environment,
+                pier_context,
+            )
+        )
+    finally:
+        maka_agent_mod._NetworkAllowlist = original_network_allowlist
+    deadline_finished_at_ms = int(time.time() * 1000)
+    pier_command, pier_kwargs = pier_agent.container_execs[1]
+    pier_env = pier_kwargs["env"]
+    model_deadline_at_ms = int(pier_env["MAKA_CELL_DEADLINE_AT_MS"])
+    assert deadline_started_at_ms + 1800000 <= model_deadline_at_ms
+    assert model_deadline_at_ms <= deadline_finished_at_ms + 1800000
+    assert "MAKA_CELL_SOFT_TIMEOUT_MS" not in pier_env, pier_env
+    assert 1859 < pier_kwargs["timeout_sec"] <= 1860, pier_kwargs
+
+    container_install_agent = ContainerTaskRunAgent(Path(tmp), extra_env={
+        "MAKA_BACKEND": "fake",
+        "MAKA_HARBOR_MODE": "task-run",
+        "MAKA_NODE_TOOLCHAIN_FINGERPRINT": "sha256:test-node",
+    })
+    container_install_agent._resolved_flags = {"backend": "fake"}
+    maka_agent_mod._NetworkAllowlist = FakeNetworkAllowlist
+    try:
+        asyncio.run(container_install_agent.install(ContainerTaskRunEnvironment()))
+    finally:
+        maka_agent_mod._NetworkAllowlist = original_network_allowlist
+    install_command, install_kwargs = container_install_agent.container_execs[0]
+    assert "sha256sum --check checksums.sha256" in install_command, install_command
+    assert "/opt/maka-node-toolchain/manifest.json" in install_command, install_command
+    assert "/opt/maka-agent/packages/headless/dist/cli.js" in install_command, install_command
+    assert install_kwargs["env"]["MAKA_EXPECTED_TOOLCHAIN_FINGERPRINT"] == "sha256:test-node"
+
     install_agent = MakaAgent(Path(tmp))
     install_agent._resolved_flags = {"maka_repo": "/opt/maka-agent"}
     fake_environment = types.SimpleNamespace(root_commands=[], agent_commands=[])
@@ -2136,6 +2354,12 @@ with tempfile.TemporaryDirectory() as tmp:
     economy_env_with_default_flag = economy_env_with_default_flag_agent._cell_env(Path("/logs/agent/instruction.txt"))
     assert economy_env_with_default_flag["MAKA_ECONOMY_TASK_MODE"] == "true", economy_env_with_default_flag
 
+    agent_tools_env = MakaAgent(Path(tmp), extra_env={
+        "MAKA_BACKEND": "fake",
+        "MAKA_AGENT_TOOLS": "true",
+    })._cell_env(Path("/logs/agent/instruction.txt"))
+    assert agent_tools_env["MAKA_AGENT_TOOLS"] == "true", agent_tools_env
+
     # Host-side LLM mode must not forward provider secrets into the task-cell env.
     host_agent = MakaAgent(Path(tmp), extra_env={
         "MAKA_HOST_API_KEY_FILE": "/host/secrets/deepseek-key",
@@ -2155,6 +2379,7 @@ with tempfile.TemporaryDirectory() as tmp:
             self.url = "http://127.0.0.1:4321"
             self.token = "tool-token"
             self.reclaim_scoped_processes = False
+            self.reclaim_active_commands = False
             self.instances.append(self)
 
         async def __aenter__(self):
@@ -2165,6 +2390,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
         def mark_reclaim_scoped_processes(self):
             self.reclaim_scoped_processes = True
+
+        def mark_reclaim_active_commands(self):
+            self.reclaim_active_commands = True
 
     class FakeHostProcess:
         pid = 123
@@ -2316,7 +2544,8 @@ with tempfile.TemporaryDirectory() as tmp:
             )
         )
         assert captured_host_process["kwargs"]["env"]["MAKA_CELL_SOFT_TIMEOUT_MS"] == "50000"
-        assert FakeToolExecutor.instances[-1].reclaim_scoped_processes
+        assert FakeToolExecutor.instances[-1].reclaim_active_commands
+        assert not FakeToolExecutor.instances[-1].reclaim_scoped_processes
 
         captured_host_process.clear()
         captured_host_process.update(host_cell_process)
@@ -2332,9 +2561,10 @@ with tempfile.TemporaryDirectory() as tmp:
 
         asyncio.create_subprocess_exec = fake_deadline_subprocess_exec
         asyncio.run(host_process_agent._run_host_cell(host_process_environment, Path(tmp) / "instruction.txt"))
-        assert FakeToolExecutor.instances[-1].reclaim_scoped_processes, (
-            "a settled deadline must freeze the workspace by reclaiming every scoped process"
+        assert FakeToolExecutor.instances[-1].reclaim_active_commands, (
+            "a settled deadline must reclaim commands still active at the cutoff"
         )
+        assert not FakeToolExecutor.instances[-1].reclaim_scoped_processes
 
         class CancelledHostProcess:
             def __init__(self):
@@ -2693,6 +2923,7 @@ try:
         cell = json.loads((Path(tmp) / "maka-cell-output.json").read_text(encoding="utf-8"))
         assert cell["executionIdentity"]["model"] == "glm-5.2", cell
         assert cell["executionIdentity"]["reasoningEffort"] == "max", cell
+        assert cell["executionIdentity"]["agentTools"] is False, cell
         assert cell["tokenSummary"]["cachedInput"] == 40, cell
         assert cell["tokenSummary"]["input"] == 110, cell
         assert cell["tokenSummary"]["output"] == 25, cell
@@ -2901,6 +3132,7 @@ with tempfile.TemporaryDirectory() as tmp:
     cell = json.loads((logs / "maka-cell-output.json").read_text(encoding="utf-8"))
     assert cell["executionIdentity"]["model"] == "k3", cell
     assert cell["executionIdentity"]["reasoningEffort"] == "max", cell
+    assert cell["executionIdentity"]["agentTools"] is False, cell
     assert cell["runtimeRefs"]["sessionId"] == "session-1", cell
     assert cell["toolSummary"]["actualToolCallCounts"] == {"Shell": 1}, cell
     assert "tokenSummary" not in cell, cell
@@ -3068,6 +3300,9 @@ class Codex:
         self._version = version
         self.model_name = model_name
         self.parent_calls = []
+        # Real harbor/pier bases set self.logger in __init__; the adapter's
+        # best-effort log hydration logs through it.
+        self.logger = types.SimpleNamespace(debug=lambda *args, **kwargs: None)
 
     def _get_env(self, key):
         return self._extra_env.get(key) or os.environ.get(key)
@@ -3253,6 +3488,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert cell["status"] == "completed", cell
     assert cell["executionIdentity"]["model"] == "gpt-5.6-sol", cell
     assert cell["executionIdentity"]["reasoningEffort"] == "max", cell
+    assert cell["executionIdentity"]["agentTools"] is False, cell
     assert cell["runtimeRefs"]["sessionId"] == "thread-1", cell
     assert cell["tokenSummary"]["input"] == 100, cell
     assert cell["tokenSummary"]["cachedInput"] == 40, cell
@@ -3612,6 +3848,24 @@ class FakeEnvironment:
             self.trial_paths.test_stdout_path.write_text("E: Failed to fetch https://deb.example.invalid/pkg.deb 502 Bad Gateway", encoding="utf-8")
             self.trial_paths.reward_text_path.write_text("0\n", encoding="utf-8")
             return types.SimpleNamespace(return_code=0, stdout="", stderr="")
+        if outcome == "infra_pytest_escaped_newline_with_fail_reward":
+            self.trial_paths.test_stdout_path.write_text(
+                "E       assert 'TEST PASSED' in 'Err:1 http://archive.ubuntu.com/ubuntu noble InRelease\\n"
+                "  502  Bad Gateway [IP: 198.18.0.119 80]\\nErr:2 http://security.ubuntu.com/ubuntu noble-security InRelease\\n'\n"
+                "E        +  where ... = CompletedProcess(args=['bash', '/tests/verify.sh'], returncode=0).stdout",
+                encoding="utf-8",
+            )
+            self.trial_paths.reward_text_path.write_text("0\n", encoding="utf-8")
+            return types.SimpleNamespace(return_code=0, stdout="", stderr="")
+        if outcome == "infra_pytest_real_newline_with_fail_reward":
+            self.trial_paths.test_stdout_path.write_text(
+                "E       assert 'TEST PASSED' in 'Err:1 http://archive.ubuntu.com/ubuntu noble InRelease\n"
+                "  502  Bad Gateway [IP: 198.18.0.119 80]\nErr:2 http://security.ubuntu.com/ubuntu noble-security InRelease\n'\n"
+                "E        +  where ... = CompletedProcess(args=['bash', '/tests/verify.sh'], returncode=0).stdout",
+                encoding="utf-8",
+            )
+            self.trial_paths.reward_text_path.write_text("0\n", encoding="utf-8")
+            return types.SimpleNamespace(return_code=0, stdout="", stderr="")
         if outcome == "infra_curl_ssl_with_fail_reward":
             self.trial_paths.test_stdout_path.write_text(
                 "curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to astral.sh:443\n"
@@ -3625,8 +3879,11 @@ class FakeEnvironment:
             self.trial_paths.test_stdout_path.write_text("APT warning: Failed to fetch optional archive", encoding="utf-8")
             self.trial_paths.reward_text_path.write_text("1\n", encoding="utf-8")
             return types.SimpleNamespace(return_code=0, stdout="", stderr="")
-        if outcome == "warning_with_fail_reward":
-            self.trial_paths.test_stdout_path.write_text("assertion expected: 502 Bad Gateway", encoding="utf-8")
+        if outcome == "candidate_assertion_mentions_apt_502":
+            self.trial_paths.test_stdout_path.write_text(
+                "E       assert 'Err:1 http://archive.ubuntu.com/ubuntu noble InRelease expected status: 502 Bad Gateway' == 'success'",
+                encoding="utf-8",
+            )
             self.trial_paths.reward_text_path.write_text("0\n", encoding="utf-8")
             return types.SimpleNamespace(return_code=0, stdout="", stderr="")
         if outcome == "timeout":
@@ -3676,6 +3933,18 @@ assert outcome["outcome"] == "passed", outcome
 assert [item["classification"] for item in outcome["attempts"]] == ["infra_setup_failed", "passed"], outcome
 assert len([command for command in commands if "timeout --signal=KILL" in command]) == 2, commands
 
+result, outcome, commands = asyncio.run(run_case(["infra_pytest_escaped_newline_with_fail_reward", "pass"]))
+assert result.rewards == {"reward": 1.0}, result.rewards
+assert outcome["outcome"] == "passed", outcome
+assert [item["classification"] for item in outcome["attempts"]] == ["infra_setup_failed", "passed"], outcome
+assert len([command for command in commands if "timeout --signal=KILL" in command]) == 2, commands
+
+result, outcome, commands = asyncio.run(run_case(["infra_pytest_real_newline_with_fail_reward", "pass"]))
+assert result.rewards == {"reward": 1.0}, result.rewards
+assert outcome["outcome"] == "passed", outcome
+assert [item["classification"] for item in outcome["attempts"]] == ["infra_setup_failed", "passed"], outcome
+assert len([command for command in commands if "timeout --signal=KILL" in command]) == 2, commands
+
 result, outcome, commands = asyncio.run(run_case(["infra_curl_ssl_with_fail_reward", "pass"]))
 assert result.rewards == {"reward": 1.0}, result.rewards
 assert outcome["outcome"] == "passed", outcome
@@ -3700,7 +3969,7 @@ assert outcome["outcome"] == "passed", outcome
 assert [item["classification"] for item in outcome["attempts"]] == ["passed"], outcome
 assert len([command for command in commands if "timeout --signal=KILL" in command]) == 1, commands
 
-result, outcome, commands = asyncio.run(run_case(["warning_with_fail_reward"]))
+result, outcome, commands = asyncio.run(run_case(["candidate_assertion_mentions_apt_502"]))
 assert result.rewards == {"reward": 0.0}, result.rewards
 assert outcome["outcome"] == "failed", outcome
 assert [item["classification"] for item in outcome["attempts"]] == ["failed"], outcome

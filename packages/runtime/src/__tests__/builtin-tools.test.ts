@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, openSync } from 'node:fs';
 import {
   access,
@@ -26,6 +27,7 @@ import { assertAdditionalPermissionProposal } from '../additional-permissions.js
 import { SandboxManager } from '../sandbox/sandbox-manager.js';
 import { LinuxBubblewrapBackend } from '../sandbox/linux-sandbox.js';
 import { MacosSeatbeltBackend } from '../sandbox/macos-seatbelt.js';
+import { SandboxCommandError } from '../sandbox/errors.js';
 import { sandboxEscalationCommandHash } from '../sandbox-escalation.js';
 import type { ShellRunLauncher } from '../shell-tools.js';
 import {
@@ -115,6 +117,47 @@ describe('builtin Read capabilities', () => {
 
     assert.doesNotMatch(textOnly.description, /image/);
     assert.match(withImages.description, /image/);
+  });
+});
+
+describe('builtin ArchiveRead capabilities', () => {
+  test('is present only with a host reader and preserves the invoking session', async () => {
+    const body = JSON.stringify({ kind: 'agent_swarm', items: [] });
+    const bodySha256 = createHash('sha256').update(body).digest('hex');
+    const artifactId = `tool-result-archive-${'a'.repeat(32)}`;
+    const seen: unknown[] = [];
+    const withoutReader = buildBuiltinTools().find((tool) => tool.name === 'ArchiveRead');
+    const archiveRead = buildBuiltinTools({
+      archiveResources: {
+        readArchivedToolResultResource(input) {
+          seen.push(input);
+          return { ok: true, serializedResult: body };
+        },
+      },
+    }).find((tool) => tool.name === 'ArchiveRead');
+    if (!archiveRead) throw new Error('ArchiveRead tool missing');
+
+    assert.equal(withoutReader, undefined);
+    assert.equal(archiveRead.permissionRequired, false);
+    assert.equal(archiveRead.activityKind, 'read');
+    const result = await archiveRead.impl(
+      {
+        ref: `maka://archive/${artifactId}?sha256=${bodySha256}&bytes=${Buffer.byteLength(body)}`,
+        operation: 'inspect',
+      },
+      {
+        sessionId: 'session-1',
+        runId: 'run-1',
+        turnId: 'turn-1',
+        cwd: '/workspace',
+        toolCallId: 'tool-1',
+        abortSignal: new AbortController().signal,
+        emitOutput: () => {},
+      },
+    );
+
+    assert.equal((result as { operation: string }).operation, 'inspect');
+    assert.equal((seen[0] as { sessionId: string }).sessionId, 'session-1');
   });
 });
 
@@ -1449,6 +1492,53 @@ describe('builtin Bash streaming output', () => {
     expect(err?.code).toBe(124);
     expect(err?.stdout).toBe('out-before');
     expect(err?.stderr).toBe('err-before');
+  });
+});
+
+describe('builtin Bash sandbox denial classification', () => {
+  test('throws SandboxCommandError when a sandboxed command emits a denial message', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'maka-bash-sandbox-denial-'));
+    try {
+      const executor = fakeExecutor({
+        exec: async () => ({
+          exitCode: 1,
+          stdout: '',
+          stderr: 'Operation not permitted',
+          timedOut: false,
+          aborted: false,
+        }),
+      });
+      const bash = buildBuiltinTools({
+        executor,
+        permissionProfile: createWorkspaceWritePermissionProfile(),
+        sandboxManager: new SandboxManager([new MacosSeatbeltBackend()]),
+        sandboxPlatform: 'darwin',
+      }).find((candidate) => candidate.name === 'Bash');
+      if (!bash) throw new Error('Bash tool missing');
+
+      let err: unknown = null;
+      try {
+        await bash.impl(
+          { command: 'rm -rf /', timeout_ms: 5_000 },
+          {
+            sessionId: 'session-1',
+            turnId: 'turn-1',
+            cwd,
+            toolCallId: 'tool-1',
+            abortSignal: new AbortController().signal,
+            emitOutput: () => {},
+          },
+        );
+      } catch (e: unknown) {
+        err = e;
+      }
+
+      assert.ok(err instanceof SandboxCommandError, 'expected a SandboxCommandError');
+      assert.equal((err as SandboxCommandError).reason, 'sandbox_denial');
+      assert.equal((err as SandboxCommandError).recoverable, true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1,6 +1,7 @@
 {
   "name": "@maka/core",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Pure types for Maka — events, session, permission, connections.",
   "type": "module",
   "private": true,
@@ -9,6 +10,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./runtime-event": "./dist/runtime-event.js",
+    "./runtime-policy": "./dist/runtime-policy.js",
     "./execution-evidence": "./dist/execution-evidence.js",
     "./events": "./dist/events.js",
     "./session": "./dist/session.js",
@@ -39,6 +41,8 @@
     "./bot-platform-hints": "./dist/bot-platform-hints.js",
     "./plan-reminders": "./dist/plan-reminders.js",
     "./agent-mailbox": "./dist/agent-mailbox.js",
+    "./agent-graph-control": "./dist/agent-graph-control.js",
+    "./agent-graph-schedule": "./dist/agent-graph-schedule.js",
     "./task-ledger": "./dist/task-ledger.js",
     "./foreign-session": "./dist/foreign-session.js",
     "./deep-research-run": "./dist/deep-research-run.js",
@@ -56,6 +60,7 @@
     "./text-file-import": "./dist/text-file-import.js",
     "./redaction": "./dist/redaction.js",
     "./display-redaction": "./dist/display-redaction.js",
+    "./result": "./dist/result.js",
     "./settings": "./dist/settings.js",
     "./mcp": "./dist/mcp.js",
     "./settings/network-settings": "./dist/settings/network-settings.js",

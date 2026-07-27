@@ -1,6 +1,7 @@
 import { Markdown } from '@earendil-works/pi-tui';
 import type {
   AnyPermissionRequestEvent,
+  ProviderRetryEvent,
   UserQuestionRequestEvent,
   SessionEvent,
   ToolOutputStream,
@@ -96,6 +97,8 @@ export interface MakaPiTranscriptState {
    * Rendered in the pending bar alongside the mirror.
    */
   pendingFallback: Array<{ text: string; enqueue: 'steer' | 'queue' }>;
+  /** Current non-durable provider retry progress for the activity strip. */
+  providerRetry?: ProviderRetryEvent;
 }
 
 export type MakaPiPendingInteraction = AnyPermissionRequestEvent | UserQuestionRequestEvent;
@@ -184,6 +187,7 @@ export interface MakaPiTranscriptMetadata {
   modelContextWindow?: number;
   /** Elapsed milliseconds of the running agent turn, for the activity strip. */
   turnElapsedMs?: number;
+  providerRetry?: ProviderRetryEvent;
 }
 
 export function createMakaPiTranscriptState(): MakaPiTranscriptState {
@@ -212,6 +216,7 @@ function accumulateUsage(
     cacheWriteInput?: number;
     cacheCreation?: number;
     cacheMissInput?: number;
+    contextRemaining?: number;
   },
 ): void {
   usage.costUsd += msg.costUsd ?? 0;
@@ -219,6 +224,7 @@ function accumulateUsage(
   const write = msg.cacheWriteInput ?? msg.cacheCreation ?? 0;
   usage.cacheHitInput += hit;
   usage.cacheMissInput += msg.cacheMissInput ?? Math.max(0, (msg.input ?? 0) - hit - write);
+  usage.contextRemaining = msg.contextRemaining;
 }
 
 export function appendUserPrompt(state: MakaPiTranscriptState, text: string): void {
@@ -466,6 +472,18 @@ export function applyMakaSessionEventToTranscript(
   state: MakaPiTranscriptState,
   event: SessionEvent,
 ): void {
+  if (
+    event.type === 'text_delta' ||
+    event.type === 'text_complete' ||
+    event.type === 'thinking_delta' ||
+    event.type === 'thinking_complete' ||
+    event.type === 'tool_start' ||
+    event.type === 'error' ||
+    event.type === 'abort' ||
+    event.type === 'complete'
+  ) {
+    state.providerRetry = undefined;
+  }
   switch (event.type) {
     case 'text_delta':
       state.sawTextDeltaMessageIds.add(event.messageId);
@@ -675,7 +693,7 @@ export function applyMakaSessionEventToTranscript(
 
     case 'steering_message':
       // A user interjection injected mid-turn; render it in place as a user turn.
-      appendUserPrompt(state, event.text);
+      appendUserPrompt(state, event.content.displayText ?? event.content.text);
       break;
 
     case 'queue_update':
@@ -684,9 +702,12 @@ export function applyMakaSessionEventToTranscript(
       state.followup = [...event.followup];
       break;
 
+    case 'provider_retry':
+      state.providerRetry = event;
+      break;
+
     case 'token_usage': {
       accumulateUsage(state.usage, event);
-      state.usage.contextRemaining = event.contextRemaining;
       const notice = contextBudgetOutcomeNotice(event.contextBudget);
       if (notice) {
         state.entries.push({
@@ -1300,6 +1321,14 @@ export function renderMakaPiActivityStrip(
   width: number,
 ): string {
   const safeWidth = Math.max(1, width);
+  if (metadata.providerRetry) {
+    const retry = metadata.providerRetry;
+    const text =
+      retry.phase === 'scheduled'
+        ? `Retrying in ${Math.max(1, Math.ceil(retry.delayMs / 1_000))}s (${retry.attempt}/${retry.maxAttempts})`
+        : `Retrying (${retry.attempt}/${retry.maxAttempts})`;
+    return fitLine(ansi.dim(text), safeWidth);
+  }
   if (metadata.turnElapsedMs === undefined) return '';
   const seconds = Math.floor(metadata.turnElapsedMs / 1000);
   return fitLine(ansi.dim(`Working… ${seconds}s`), safeWidth);

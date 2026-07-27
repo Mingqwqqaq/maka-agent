@@ -113,7 +113,7 @@ export function backfillRuntimeEventsFromStoredMessages(
           actions: { stateDelta: recoveryState(now, message) },
           refs: { storedMessageId: message.id },
         });
-        if (message.thinking && message.thinking.text.length > 0) {
+        if (message.thinking) {
           events.push({
             ...base,
             id: newId(),
@@ -124,6 +124,9 @@ export function backfillRuntimeEventsFromStoredMessages(
               text: message.thinking.text,
               ...(message.thinking.signature !== undefined
                 ? { signature: message.thinking.signature }
+                : {}),
+              ...(message.thinking.providerOptions !== undefined
+                ? { providerOptions: structuredClone(message.thinking.providerOptions) }
                 : {}),
             },
             actions: { stateDelta: recoveryState(now, message) },
@@ -143,6 +146,9 @@ export function backfillRuntimeEventsFromStoredMessages(
             id: message.id,
             name: message.toolName,
             args: message.args,
+            ...(message.providerOptions !== undefined
+              ? { providerOptions: structuredClone(message.providerOptions) }
+              : {}),
           },
           actions: {
             stateDelta: {
@@ -248,7 +254,12 @@ export function backfillRuntimeEventsFromStoredMessages(
             stateDelta: recoveryState(now, message),
             tokenUsage: tokenUsageFromMessage(message),
           },
-          refs: { storedMessageId: message.id },
+          refs: {
+            storedMessageId: message.id,
+            ...(message.providerRequestTraceId !== undefined
+              ? { providerRequestTraceId: message.providerRequestTraceId }
+              : {}),
+          },
         });
         break;
 
@@ -417,9 +428,13 @@ function tokenUsageFromMessage(
     ...(message.reasoning !== undefined ? { reasoning: message.reasoning } : {}),
     ...(message.total !== undefined ? { total: message.total } : {}),
     ...(message.rawFinishReason !== undefined ? { rawFinishReason: message.rawFinishReason } : {}),
+    ...(message.runtimeSteps !== undefined ? { runtimeSteps: message.runtimeSteps } : {}),
     ...(message.cacheRead !== undefined ? { cacheRead: message.cacheRead } : {}),
     ...(message.cacheCreation !== undefined ? { cacheCreation: message.cacheCreation } : {}),
     ...(message.costUsd !== undefined ? { costUsd: message.costUsd } : {}),
+    ...(message.contextRemaining !== undefined
+      ? { contextRemaining: message.contextRemaining }
+      : {}),
     ...(message.systemPromptHash !== undefined
       ? { systemPromptHash: message.systemPromptHash }
       : {}),

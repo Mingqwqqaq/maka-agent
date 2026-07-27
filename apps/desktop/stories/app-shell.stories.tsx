@@ -3,11 +3,13 @@ import { useState, type ReactNode } from 'react';
 import type { ComponentProps } from 'react';
 import type { SessionSummary, StoredMessage } from '@maka/core';
 import { ChatView, Composer, SessionListPanel } from '@maka/ui';
-import type { ChatModelChoice } from '@maka/ui';
+import type { ChatModelChoice, SessionViewMode } from '@maka/ui';
 import { AppShellTopbarActions, AppShellWorkspaceTopActions } from '../src/renderer/app-shell-chrome-actions';
-import { OnboardingHero } from '../src/renderer/OnboardingHero';
 
 const NOW = Date.UTC(2026, 6, 1, 9, 30, 0);
+
+// Fidelity convention (#1433): every story below names the real app path
+// that reaches it. See apps/desktop/stories/FIDELITY.md.
 
 const meta = {
   title: 'Product/Shell Child Composition',
@@ -22,7 +24,7 @@ type Story = StoryObj<typeof meta>;
 type ChatViewProps = ComponentProps<typeof ChatView>;
 type ComposerProps = ComponentProps<typeof Composer>;
 type SessionListPanelProps = ComponentProps<typeof SessionListPanel>;
-type StatusGroup = NonNullable<SessionListPanelProps['statusGroups']>[number];
+type SessionGroup = NonNullable<SessionListPanelProps['groups']>[number];
 
 const noop = () => undefined;
 
@@ -74,13 +76,6 @@ const sidebarSessions: SessionSummary[] = [
   makeSession({ id: 'session-review', name: '已完成的 smoke 回归', status: 'done', lastMessageAt: NOW - 3 * 60 * 60_000 }),
 ];
 
-const statusGroups: StatusGroup[] = [
-  { id: 'running', label: '进行中', sessions: sidebarSessions.filter((s) => s.status === 'running'), collapsible: false, defaultExpanded: true },
-  { id: 'waiting_for_user', label: '等待你', sessions: sidebarSessions.filter((s) => s.status === 'waiting_for_user'), collapsible: false, defaultExpanded: true },
-  { id: 'active', label: '最近', sessions: sidebarSessions.filter((s) => s.status === 'active'), collapsible: false, defaultExpanded: true },
-  { id: 'done', label: '已完成', sessions: sidebarSessions.filter((s) => s.status === 'done'), collapsible: true, defaultExpanded: false },
-];
-
 const sidebarRowActions: NonNullable<SessionListPanelProps['rowActions']> = {
   onToggleFlag: noop,
   onArchive: noop,
@@ -130,7 +125,18 @@ const baseComposerProps: ComposerProps = {
   modelChoices,
   permissionMode: 'ask',
   onPermissionModeChange: noop,
-	  workspacePicker: {
+  // Fidelity: production app-shell always wires these (app-shell.tsx
+  // ~1851-1960), so the daily composer renders the ＋ menu, the Plan
+  // switch, and the Swarm switch. Omitting them here understated the
+  // persistent element count in every shell story. expertTeams stays
+  // empty — most users have none configured; the ＋ menu shows just the
+  // attachment item then, as it does for them.
+  onPickAttachments: noop,
+  planModeActive: false,
+  onPlanModeChange: noop,
+  swarmModeActive: false,
+  onSwarmModeChange: noop,
+  workspacePicker: {
 	    label: 'maka-agent',
 	    branch: 'opencode/storybook-surface-coverage',
 	    onOpen: noop,
@@ -138,10 +144,10 @@ const baseComposerProps: ComposerProps = {
 	  },
 };
 
-function ShellFrame(props: { children: ReactNode }) {
+function ShellFrame(props: { children: ReactNode; motionEnabled?: boolean }) {
   return (
     <div
-      data-maka-e2e-fixture="true"
+      data-maka-e2e-fixture={props.motionEnabled ? undefined : 'true'}
       style={{ background: 'var(--surface-canvas)', height: '100%', minHeight: 640 }}
     >
       {props.children}
@@ -155,20 +161,47 @@ function ShellFrame(props: { children: ReactNode }) {
 // layout shifts, this story may drift — it owns its own 2-col scaffold.
 function ComposedShell(props: {
   sidebarCollapsed?: boolean;
+  /**
+   * The ONE active-session scenario. ComposedShell projects it across the
+   * sidebar row, the chat header, and the composer, so the three regions
+   * can never disagree about what state the active session is in (review
+   * P2: stories used to patch each region independently and drifted).
+   * `streaming` additionally marks the active session as live-streaming
+   * and flips the composer into its streaming state.
+   */
+  session?: {
+    status?: SessionSummary['status'];
+    blockedReason?: SessionSummary['blockedReason'];
+    streaming?: boolean;
+  };
   chat?: Partial<ChatViewProps>;
   composer?: Partial<ComposerProps>;
   detailChildren?: ReactNode;
+  motionEnabled?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(props.sidebarCollapsed ?? false);
-  const sidebarWidth = collapsed ? 0 : 260;
+  const [viewMode, setViewMode] = useState<SessionViewMode>('conversation');
+  const sidebarWidth = 260;
+  const sessions = sidebarSessions.map((s) =>
+    s.id === activeSession.id && (props.session?.status || props.session?.blockedReason)
+      ? { ...s, status: props.session.status ?? s.status, blockedReason: props.session.blockedReason ?? s.blockedReason }
+      : s,
+  );
+  const active = sessions.find((s) => s.id === activeSession.id) ?? activeSession;
+  const streamingIds = new Set(
+    props.session?.streaming ? ['session-running', active.id] : ['session-running'],
+  );
+  const projectGroups: SessionGroup[] = [
+    { id: 'project:maka-agent', label: 'maka-agent', sessions },
+  ];
 
   return (
-    <ShellFrame>
+    <ShellFrame motionEnabled={props.motionEnabled}>
       <div
         className="app maka-shell-2col agents-layout-body"
         data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
         style={{
-          ['--maka-session-list-width' as string]: `${sidebarWidth}px`,
+          ['--maka-session-list-expanded-width' as string]: `${sidebarWidth}px`,
           ['--maka-resize-handle-width' as string]: '0px',
           height: '100%',
         }}
@@ -180,22 +213,32 @@ function ComposedShell(props: {
           onExpandSidebar={() => setCollapsed(false)}
           onCreateSession={noop}
         />
-        {!collapsed && (
-          <div className="maka-panel maka-panel-list maka-floating-panel">
-            <SessionListPanel
-              selection={{ section: 'sessions', filter: 'chats' }}
-              sessions={sidebarSessions}
-              activeId={activeSession.id}
-              statusGroups={statusGroups}
-              streamingSessionIds={new Set(['session-running'])}
-              onSelect={noop}
-              onSelectSession={noop}
-              onOpenSettings={noop}
-              onNew={noop}
-              rowActions={sidebarRowActions}
-            />
-          </div>
-        )}
+        {/* Grid is 3 columns (sidebar / handle / detail): the handle must
+            always render or the detail panel falls into the 0px handle
+            column. When collapsed, keep the sidebar mounted (production
+            hides it via the data-sidebar-state CSS) so auto-placement
+            stays aligned. */}
+        <div
+          className="maka-panel maka-panel-list maka-floating-panel"
+          aria-hidden={collapsed ? 'true' : undefined}
+          inert={collapsed ? true : undefined}
+        >
+          <SessionListPanel
+            selection={{ section: 'sessions', filter: 'chats' }}
+            sessions={sessions}
+            activeId={active.id}
+            groups={viewMode === 'project' ? projectGroups : undefined}
+            streamingSessionIds={streamingIds}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            onSelect={noop}
+            onSelectSession={noop}
+            onOpenSettings={noop}
+            onNew={noop}
+            rowActions={sidebarRowActions}
+          />
+        </div>
+        <div className="maka-resize-handle" aria-hidden="true" />
         <div
           className="maka-panel maka-panel-detail maka-floating-panel agents-content-area agents-parchment-paper-surface"
           data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
@@ -213,9 +256,14 @@ function ComposedShell(props: {
           />
           {props.detailChildren ?? (
             <div style={{ display: 'flex', minHeight: 0, width: '100%', flexDirection: 'column', flex: 1 }}>
-              <ChatView {...baseChatProps} {...props.chat} />
+              <ChatView {...baseChatProps} activeSession={active} {...props.chat} />
               <div style={{ padding: '0 24px 24px' }}>
-                <Composer {...baseComposerProps} {...props.composer} />
+                <Composer
+                  {...baseComposerProps}
+                  activeSession={active}
+                  streaming={props.session?.streaming ?? false}
+                  {...props.composer}
+                />
               </div>
             </div>
           )}
@@ -225,17 +273,31 @@ function ComposedShell(props: {
   );
 }
 
+// Real path: returning user with session history → open a session that has
+// messages (sidebar expanded, composer ready).
 export const DefaultLayout: Story = {
   render: () => <ComposedShell />,
 };
 
+// Real path: same as DefaultLayout after the user collapses the sidebar
+// (topbar toggle).
 export const CollapsedSidebar: Story = {
   render: () => <ComposedShell sidebarCollapsed />,
 };
 
+// Real path: returning user opens any session → toggle the topbar sidebar
+// control. This interaction-only companion keeps real transition durations
+// without weakening deterministic screenshot states elsewhere.
+export const SidebarMotion: Story = {
+  render: () => <ComposedShell motionEnabled />,
+};
+
+// Real path: send a message → the turn is streaming (composer shows the
+// stop button and the streaming hint).
 export const StreamingTurn: Story = {
   render: () => (
     <ComposedShell
+      session={{ status: 'running', streaming: true }}
       chat={{
         messages: [
           user('msg-s-1', 'turn-s', 3, '顶层布局的 story 怎么做最稳？'),
@@ -249,40 +311,52 @@ export const StreamingTurn: Story = {
           }],
         },
       }}
-      composer={{ streaming: true }}
     />
   ),
 };
 
+// Real path: the agent calls a tool that needs approval → session enters
+// waiting_for_user, composer is disabled, the permission-mode picker is
+// locked with an explanatory reason.
 export const WaitingForPermission: Story = {
   render: () => (
     <ComposedShell
-      chat={{
-        activeSession: { ...activeSession, status: 'waiting_for_user', blockedReason: 'permission_required' },
-      }}
+      session={{ status: 'waiting_for_user', blockedReason: 'permission_required' }}
       composer={{
         disabled: true,
-        activeSession: { ...activeSession, status: 'waiting_for_user', blockedReason: 'permission_required' },
         permissionModeDisabledReason: '当前有工具调用正在等待确认，处理后再切换权限模式。',
       }}
     />
   ),
 };
 
+// Real path: enable Plan mode (＋ menu) → while the mode is on, the composer
+// shows a quiet Plan indicator next to the permission select (#1433).
+export const PlanModeActive: Story = {
+  render: () => <ComposedShell composer={{ planModeActive: true }} />,
+};
+
+// Real path: enable Swarm mode (＋ menu) → while the mode is on, the composer
+// shows the same direct-close indicator as Plan beside the permission select.
+export const SwarmModeActive: Story = {
+  render: () => <ComposedShell composer={{ swarmModeActive: true }} />,
+};
+
+// Real path: any user with onboarding finished → start a new chat, or open a
+// session with no messages yet. This is the ONLY empty home: ChatView falls
+// back to its built-in EmptyChatHero (greeting + composer). Do NOT render
+// OnboardingHero here — #1433 narrowed the hero's gate to unfinished setup, so
+// a configured user with zero sessions now lands on this same empty chat, not
+// on a first-run screen. The setup states are covered by Product/Onboarding;
+// presenting one of them as the empty home makes every comparison against this
+// story wrong.
+//
+// Scope: the chat surface, not the whole shell. ComposedShell always projects
+// one active session across the sidebar, header and composer so those three
+// cannot disagree, so what this story shows is the empty chat WITH history
+// present. The zero-session shell differs only in the sidebar; a story for it
+// would mean making the active session optional throughout ComposedShell, and
+// nothing renders differently in the detail pane.
 export const EmptyHome: Story = {
-  render: () => (
-    <ComposedShell
-      sidebarCollapsed
-      detailChildren={
-        <div style={{ margin: '0 auto', maxWidth: 720, padding: '48px 32px', width: '100%' }}>
-          <OnboardingHero
-            state={{ kind: 'ready_empty', defaultConnectionSlug: 'anthropic-main', defaultModel: 'claude-sonnet-4-5' }}
-            onOpenSettings={noop}
-            onBrowseProviders={noop}
-            onQuickChatSubmit={async () => true}
-          />
-        </div>
-      }
-    />
-  ),
+  render: () => <ComposedShell chat={{ messages: [] }} />,
 };

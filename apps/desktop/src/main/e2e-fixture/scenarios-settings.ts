@@ -37,6 +37,24 @@ export async function writeSettings(
     settings.usage.range = 'all';
     settings.usage.showDetails = true;
   }
+  // Settings → 联网搜索: a configured Tavily key so the live-query controls
+  // are enabled. The query itself is answered by the typed fixture in
+  // `main/web-search-e2e-fixture.ts` — no network round-trip in e2e.
+  if (scenario === 'settings-search') {
+    settings.webSearch = {
+      ...settings.webSearch,
+      enabled: true,
+      providers: {
+        ...settings.webSearch.providers,
+        tavily: {
+          ...settings.webSearch.providers.tavily,
+          apiKey: 'e2e-tavily-fixture-key',
+          credentialSource: 'saved',
+          credentialStatus: 'valid',
+        },
+      },
+    };
+  }
   await writeJson(join(workspaceRoot, 'settings.json'), settings);
 }
 
@@ -225,8 +243,21 @@ export async function writePlanReminders(workspaceRoot: string, now: number): Pr
       createdAt: now - 3.5 * 60 * 60_000,
       updatedAt: now - 35 * 60_000,
       nextRunAt: Date.UTC(2026, 11, 21, 2, 0, 0),
-      runs: [],
-      runCount: 0,
+      lastRun: {
+        id: 'visual-plan-run-weekly-review',
+        at: now - 35 * 60_000,
+        status: 'triggered',
+        message: '已生成本周竞品动态摘要',
+      },
+      runs: [
+        {
+          id: 'visual-plan-run-weekly-review',
+          at: now - 35 * 60_000,
+          status: 'triggered',
+          message: '已生成本周竞品动态摘要',
+        },
+      ],
+      runCount: 1,
     },
     {
       id: 'visual-plan-reminder-completed',

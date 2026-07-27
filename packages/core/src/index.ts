@@ -12,6 +12,9 @@ export * from './collaboration.js';
 export * from './orchestration.js';
 export * from './swarm-command.js';
 export * from './plan.js';
+export * from './agent-graph-control.js';
+export * from './agent-graph-schedule.js';
+export * from './runtime-policy.js';
 
 // events.ts
 export type {
@@ -46,12 +49,17 @@ export type {
   SteeringMessageEvent,
   QueueUpdateEvent,
   QueueEnqueueOutcome,
+  ProviderRetryEvent,
+  ProviderRetryScheduledEvent,
+  ProviderRetryStartedEvent,
+  ProviderRetryReason,
   ErrorEvent,
   CompleteEvent,
   AbortEvent,
   StorageRef,
   AttachmentRef,
   QuoteRef,
+  MessageContent,
   AttachmentIngestItem,
   CompleteStopReason,
   ContextBudgetExhaustedDetail,
@@ -64,7 +72,15 @@ export type {
   UserQuestionResult,
 } from './user-question.js';
 export {
+  decodeMessageContent,
   failureClassFromCompleteStopReason,
+  isAttachmentRef,
+  isCanonicalAttachmentRef,
+  isCanonicalStorageRef,
+  isMessageContent,
+  isStorageRef,
+  messageContentsEqual,
+  normalizeMessageContent,
   TOOL_ACTIVITY_KINDS,
   TOOL_OUTPUT_DELTA_MAX_CHARS,
   TOOL_OUTPUT_STREAMS,
@@ -161,6 +177,8 @@ export { DurableStoreWriteError } from './runtime-event-store.js';
 export type {
   SessionHeader,
   SessionSummary,
+  LinkedSessionTree,
+  LinkedSessionTreeProjectionOptions,
   SessionChangedEvent,
   SessionChangedReason,
   SessionStatus,
@@ -192,6 +210,8 @@ export {
   SUBAGENT_SESSION_SPAWN_SCHEMA_VERSION,
   TURN_STATUSES,
   childSessionsForParent,
+  filterLinkedSessionTree,
+  projectLinkedSessionTree,
   STEP_LIMIT_NOTICE_TEXT,
   deriveTurnRecords,
   isSessionStatus,
@@ -223,6 +243,7 @@ export type {
   AgentRunInputSummary,
   AgentRunStatus,
   AgentRunStore,
+  RootExecutionDescriptor,
 } from './agent-run.js';
 export {
   AGENT_RUN_STATUSES,
@@ -526,6 +547,7 @@ export type {
   BranchFromTurnInput,
   ChildAgentTurnInput,
   CreateSessionInput,
+  CreateSessionRequestInput,
   RegenerateTurnInput,
   ReviseBeforeTurnInput,
   TurnOrchestration,
@@ -535,6 +557,7 @@ export type {
 
 export {
   collapseSessionRevisions,
+  projectRevisionLinkedSessionTree,
   revisionFamilySessionIds,
   sessionRevisionFamilyId,
   visibleSessionRevisionMembers,
@@ -1502,7 +1525,7 @@ export {
 } from './web-search.js';
 
 // explore-agent.ts — read-only deep research session profile.
-export type { QuickChatMode } from './explore-agent.js';
+export type { SessionStartMode } from './explore-agent.js';
 export {
   DEEP_RESEARCH_EVIDENCE_CHECKLIST,
   DEEP_RESEARCH_IMPLEMENTATION_PROMPT_MAX_CHARS,
@@ -1512,12 +1535,9 @@ export {
   DEEP_RESEARCH_SCOPE_OPTIONS,
   DEEP_RESEARCH_STARTER_PROMPTS,
   DEEP_RESEARCH_WORKFLOW_STEPS,
-  QUICK_CHAT_MODES,
   buildDeepResearchSystemPromptFragment,
   buildDeepResearchImplementationPrompt,
   isDeepResearchSession,
-  isQuickChatMode,
-  normalizeQuickChatMode,
 } from './explore-agent.js';
 
 // expert-team.ts — expert-team session labels.

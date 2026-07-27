@@ -34,6 +34,7 @@ import {
 } from '@maka/core/task-ledger';
 import { chainWrite } from './write-queue.js';
 import { assertSafeSessionId } from './session-store.js';
+import { registerTaskLedgerCanonicalReader } from './task-ledger-store-internal.js';
 
 export type { TaskLedgerStore } from '@maka/core/task-ledger';
 
@@ -48,6 +49,10 @@ class FileTaskLedgerStore implements TaskLedgerStore {
 
   constructor(workspaceRoot: string) {
     this.sessionsRoot = join(workspaceRoot, 'sessions');
+    registerTaskLedgerCanonicalReader(this, {
+      list: (sessionId, options) => this.#listCanonical(sessionId, options),
+      get: (sessionId, id, options) => this.#getCanonical(sessionId, id, options),
+    });
   }
 
   async list(sessionId: string, options: TaskLedgerListOptions = {}): Promise<Task[]> {
@@ -65,6 +70,23 @@ class FileTaskLedgerStore implements TaskLedgerStore {
       throw new Error('Task id must be a stable token (alphanumeric plus . _ : -, max 64 chars)');
     const tasks = await this.list(sessionId, options);
     return findTaskByRef(tasks, id);
+  }
+
+  async #listCanonical(sessionId: string, options: TaskLedgerListOptions = {}): Promise<Task[]> {
+    assertSafeSessionId(sessionId);
+    const { tasks } = await this.readForMutateWithSource(sessionId);
+    return this.applyListOptions(tasks, options);
+  }
+
+  async #getCanonical(
+    sessionId: string,
+    id: string,
+    options: TaskLedgerListOptions = {},
+  ): Promise<Task | undefined> {
+    assertSafeSessionId(sessionId);
+    if (!isSafeTaskId(id))
+      throw new Error('Task id must be a stable token (alphanumeric plus . _ : -, max 64 chars)');
+    return findTaskByRef(await this.#listCanonical(sessionId, options), id);
   }
 
   subscribe(listener: (event: TaskLedgerChangedEvent) => void): () => void {

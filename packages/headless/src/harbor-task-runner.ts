@@ -12,6 +12,7 @@ import {
 import type { ThinkingLevel } from '@maka/core/model-thinking';
 import { fetchGitHubCopilotModels, isSupportedGitHubCopilotAccountToken } from '@maka/runtime';
 import {
+  selectHarborCellTokenSummary,
   validateHarborCellExecutionIdentity,
   validateHarborCellOutput,
   validateHarborCellTokenSummary,
@@ -209,6 +210,7 @@ const EXPERIMENT_IDENTITY_ENV_KEYS = new Set([
   'MAKA_MODEL',
   'MAKA_PROVIDER',
   'MAKA_LLM_CONNECTION_SLUG',
+  'MAKA_AGENT_TOOLS',
   'MAKA_REASONING_EFFORT',
   'MAKA_OPENCODE_VARIANT',
   'MAKA_SYSTEM_PROMPT',
@@ -375,11 +377,19 @@ export function createHarborTaskRunner(options: HarborTaskRunnerOptions): TaskRu
       }
       const reward = await readReward(rewardPath, resultPath, input.task.id);
       const rawCell = await readCellOutput(cellOutputPath, input.task.id);
+      const usageCheckpoint = await readOptionalTokenSummary(
+        join(trialDir, TRIAL_USAGE_CHECKPOINT),
+      );
+      const selectedUsage = selectHarborCellTokenSummary(rawCell.tokenSummary, usageCheckpoint);
+      const checkpointedCell =
+        selectedUsage && selectedUsage !== rawCell.tokenSummary
+          ? { ...rawCell, tokenSummary: selectedUsage }
+          : rawCell;
       const cell =
-        rawCell.tokenSummary || !providerUsage || !runnerOptions.pricing
-          ? rawCell
+        checkpointedCell.tokenSummary || !providerUsage || !runnerOptions.pricing
+          ? checkpointedCell
           : {
-              ...rawCell,
+              ...checkpointedCell,
               tokenSummary: providerTokenSummary(providerUsage, runnerOptions.pricing),
             };
       const verifierStdout = await readOptionalText(join(trialDir, TRIAL_VERIFIER_STDOUT));
@@ -671,8 +681,21 @@ export async function readTimedOutTrialArtifacts(
   mode: 'cell' | 'task-run',
 ) {
   const cell = await readOptionalCellOutput(join(trialDir, TRIAL_CELL_OUTPUT), taskId);
-  if (cell)
-    return cellArtifactRefs(cell, join(trialDir, TRIAL_RUNTIME_EVENTS), trialDir, agent, mode);
+  if (cell) {
+    const usageCheckpoint = await readOptionalTokenSummary(join(trialDir, TRIAL_USAGE_CHECKPOINT));
+    const selectedUsage = selectHarborCellTokenSummary(cell.tokenSummary, usageCheckpoint);
+    const recoveredCell =
+      selectedUsage && selectedUsage !== cell.tokenSummary
+        ? { ...cell, tokenSummary: selectedUsage }
+        : cell;
+    return cellArtifactRefs(
+      recoveredCell,
+      join(trialDir, TRIAL_RUNTIME_EVENTS),
+      trialDir,
+      agent,
+      mode,
+    );
+  }
   const [executionIdentity, tokenSummary] = await Promise.all([
     readOptionalExecutionIdentity(join(trialDir, TRIAL_EXECUTION_IDENTITY)),
     readOptionalTokenSummary(join(trialDir, TRIAL_USAGE_CHECKPOINT)),
@@ -937,6 +960,7 @@ export function buildHarborJobConfig(
     MAKA_MODEL: makaModel,
     MAKA_PROVIDER: provider,
     MAKA_LLM_CONNECTION_SLUG: provider,
+    MAKA_AGENT_TOOLS: input.config.agentTools === true ? 'true' : 'false',
     // Verbatim — the controller hashes exactly these bytes and verifies the round-trip.
     MAKA_SYSTEM_PROMPT: input.systemPrompt,
   };
