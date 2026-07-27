@@ -222,6 +222,42 @@ describe('buildBubblewrapArgv', () => {
     assert.equal(hasTriple(argv, '--bind', '/outside/new.txt', '/outside/new.txt'), false);
   });
 
+  it('binds pinned exact-write files through inherited descriptors', () => {
+    const request = workspaceRequest({
+      type: 'managed',
+      name: 'custom',
+      fileSystem: {
+        kind: 'restricted',
+        entries: [{ kind: 'path', access: 'write', path: '/outside/new.txt', match: 'exact' }],
+      },
+      network: { kind: 'restricted' },
+    });
+    const command = {
+      ...request.command,
+      pathContext: {
+        ...request.command.pathContext,
+        pinnedWritableFiles: [{ path: '/outside/new.txt', fd: 4, sourceFd: 27 }],
+      },
+    } as SandboxTransformRequest['command'];
+    const backend = new LinuxBubblewrapBackend({
+      capability: { available: true, bwrapPath: '/usr/bin/bwrap' },
+    });
+
+    const argv = buildBubblewrapArgv({ bwrapPath: '/usr/bin/bwrap', command });
+    assert.ok(hasTriple(argv, '--bind', '/proc/self/fd/4', '/outside/new.txt'));
+    assert.equal(hasTriple(argv, '--bind', '/outside/new.txt', '/outside/new.txt'), false);
+
+    const transformed = backend.transform({ platform: 'linux', command });
+    assert.equal(transformed.ok, true);
+    if (!transformed.ok) throw new Error('Linux transform failed');
+    assert.deepEqual(
+      transformed.exec.fdInputs?.find(
+        (input) => (input as { sourceFd?: number }).sourceFd !== undefined,
+      ),
+      { fd: 4, sourceFd: 27 },
+    );
+  });
+
   it('materializes an otherwise-unmounted worker cwd without exposing its contents', () => {
     const profile: PermissionProfile = {
       type: 'managed',
@@ -305,7 +341,8 @@ describe('LinuxBubblewrapBackend', () => {
       assert.equal(result.exec.argv[0], '/usr/bin/bwrap');
       assert.deepEqual(result.exec.argv.slice(-3), ['/bin/sh', '-lc', 'echo hi']);
       assert.equal(result.exec.fdInputs?.[0]?.fd, 3);
-      assert.ok((result.exec.fdInputs?.[0]?.data.byteLength ?? 0) > 0);
+      const seccompInput = result.exec.fdInputs?.[0];
+      assert.ok(seccompInput && 'data' in seccompInput && seccompInput.data.byteLength > 0);
     }
   });
 

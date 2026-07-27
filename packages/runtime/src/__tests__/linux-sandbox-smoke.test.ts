@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, renameSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +18,7 @@ import { LinuxBubblewrapBackend, linuxExecutableRoots } from '../sandbox/linux-s
 import { detectLinuxSandboxCapability } from '../sandbox/linux-capability.js';
 import { SandboxManager } from '../sandbox/sandbox-manager.js';
 import { runProcessWithBoundedTail } from '../shell-exec.js';
-import { buildBuiltinTools } from '../builtin-tools.js';
+import { buildBuiltinTools, openMissingExactWriteTarget } from '../builtin-tools.js';
 
 const capability = detectLinuxSandboxCapability();
 const requireLinuxSandboxSmoke = process.env.MAKA_REQUIRE_LINUX_SANDBOX_SMOKE === '1';
@@ -107,6 +108,31 @@ describe('Linux sandbox smoke', () => {
     await assert.rejects(() =>
       readFile(join(workspace, 'packages', 'pkg', '.git', 'config'), 'utf8'),
     );
+  });
+
+  test('missing exact-write creation fails closed when its pinned parent moves', {
+    skip: skipReason,
+  }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'maka-linux-parent-pin-'));
+    const parent = join(root, 'approved');
+    const movedParent = join(root, 'moved');
+    const target = join(parent, 'target.txt');
+    await mkdir(parent);
+
+    try {
+      assert.throws(
+        () =>
+          openMissingExactWriteTarget(target, () => {
+            renameSync(parent, movedParent);
+            mkdirSync(parent);
+          }),
+        /parent changed after pinning/i,
+      );
+      await assert.rejects(() => stat(target));
+      await assert.rejects(() => stat(join(movedParent, 'target.txt')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('shell-launched Node uses runtime roots and the seccomp socket filter', {

@@ -11,6 +11,7 @@ import {
   closeSync,
   constants,
   fstatSync,
+  futimesSync,
   lstatSync,
   openSync,
   realpathSync,
@@ -94,6 +95,8 @@ export interface BuildBuiltinToolsOptions {
   filesystemWorker?: Pick<FilesystemWorkerClient, 'execute'>;
   /** Enable inferred one-call path expansion for filesystem tools. */
   enableFileToolAdditionalPermissions?: boolean;
+  /** Host-surface gate for Edit. Defaults to enabled. */
+  includeEdit?: boolean;
   /** Test/embedding override. Production callers use the current process platform. */
   sandboxPlatform?: SandboxPlatform;
   snapshotImage?: (input: {
@@ -262,7 +265,7 @@ export function buildBuiltinTools(options: BuildBuiltinToolsOptions = {}): MakaT
     ...(options.backgroundTasks ? [buildStopBackgroundTaskTool(options.backgroundTasks)] : []),
     ...(options.ptyControls ? [buildWriteStdinTool(options.ptyControls)] : []),
   ];
-  return [
+  const tools: MakaTool[] = [
     ...bashTools,
     ...backgroundTools,
     {
@@ -684,6 +687,7 @@ export function buildBuiltinTools(options: BuildBuiltinToolsOptions = {}): MakaT
       },
     },
   ];
+  return tools.filter((tool) => options.includeEdit !== false || tool.name !== 'Edit');
 }
 
 interface ExecutorBashSandboxOptions {
@@ -763,35 +767,41 @@ function buildExecutorBashTool(
             ctx,
           )
         : undefined;
-      const result = await executor.exec({
-        command,
-        cwd: transformed?.cwd ?? cwd,
-        ...(transformed?.argv ? { argv: transformed.argv } : {}),
-        ...(transformed?.env ? { env: transformed.env } : {}),
-        ...(transformed?.fdInputs ? { fdInputs: transformed.fdInputs } : {}),
-        timeoutMs: timeout,
-        ...(abortSignal ? { abortSignal } : {}),
-        emitOutput,
-        shell,
-      });
-      const executionResult = {
-        ...result,
-        ...(transformed?.sandboxType ? { sandboxType: transformed.sandboxType } : {}),
-        ...(transformed?.profileName ? { profileName: transformed.profileName } : {}),
-        sandboxed:
-          transformed?.sandboxType === 'macos-seatbelt' || transformed?.sandboxType === 'linux',
-      };
-      if (executionResult.timedOut)
-        throw terminalError(`Command timed out after ${timeout}ms`, executionResult, 124);
-      if (executionResult.aborted) throw terminalError('Command aborted', executionResult, 130);
-      if (executionResult.exitCode !== 0) {
-        throw terminalError(
-          `Command failed with exit code ${executionResult.exitCode}`,
-          executionResult,
-          executionResult.exitCode,
-        );
+      let successful = false;
+      try {
+        const result = await executor.exec({
+          command,
+          cwd: transformed?.cwd ?? cwd,
+          ...(transformed?.argv ? { argv: transformed.argv } : {}),
+          ...(transformed?.env ? { env: transformed.env } : {}),
+          ...(transformed?.fdInputs ? { fdInputs: transformed.fdInputs } : {}),
+          timeoutMs: timeout,
+          ...(abortSignal ? { abortSignal } : {}),
+          emitOutput,
+          shell,
+        });
+        const executionResult = {
+          ...result,
+          ...(transformed?.sandboxType ? { sandboxType: transformed.sandboxType } : {}),
+          ...(transformed?.profileName ? { profileName: transformed.profileName } : {}),
+          sandboxed:
+            transformed?.sandboxType === 'macos-seatbelt' || transformed?.sandboxType === 'linux',
+        };
+        if (executionResult.timedOut)
+          throw terminalError(`Command timed out after ${timeout}ms`, executionResult, 124);
+        if (executionResult.aborted) throw terminalError('Command aborted', executionResult, 130);
+        if (executionResult.exitCode !== 0) {
+          throw terminalError(
+            `Command failed with exit code ${executionResult.exitCode}`,
+            executionResult,
+            executionResult.exitCode,
+          );
+        }
+        successful = true;
+        return shapeTerminalResult({ cwd, command, result: executionResult });
+      } finally {
+        transformed?.onCompletion?.({ successful });
       }
-      return shapeTerminalResult({ cwd, command, result: executionResult });
     },
   };
 }
@@ -831,6 +841,7 @@ function sandboxCommand(
       fdInputs?: readonly ChildFdInput[];
       sandboxType?: SandboxType;
       profileName?: string;
+      onCompletion?: (outcome: { successful: boolean }) => void;
     }
   | undefined {
   const cwd = canonicalExistingPath(ctx.cwd);
@@ -896,6 +907,7 @@ function sandboxCommand(
       message: 'An approved exact write target could not be prepared safely.',
     });
   }
+  const onCompletion = preparedExactWriteCompletion(preparedTargets);
 
   let result: ReturnType<SandboxManager['transform']>;
   try {
@@ -922,6 +934,16 @@ function sandboxCommand(
                   execPath: process.execPath,
                   path: env.PATH,
                 }),
+                ...(preparedTargets.length > 0
+                  ? {
+                      pinnedWritableFiles: preparedTargets.map((target) => ({
+                        path: target.path,
+                        fd: target.childFd,
+                        sourceFd: target.sourceFd,
+                        releaseSource: target.releaseSource,
+                      })),
+                    }
+                  : {}),
               }
             : {}),
         },
@@ -930,11 +952,11 @@ function sandboxCommand(
       ...(escalationGrant ? { preference: 'forbid' as const } : {}),
     });
   } catch (error) {
-    rollbackPreparedExactWriteTargets(preparedTargets);
+    onCompletion?.({ successful: false });
     throw error;
   }
   if (!result.ok) {
-    rollbackPreparedExactWriteTargets(preparedTargets);
+    onCompletion?.({ successful: false });
     throw new SandboxCommandError({
       domain,
       stage: 'transform',
@@ -952,13 +974,19 @@ function sandboxCommand(
     ...(result.exec.fdInputs ? { fdInputs: result.exec.fdInputs } : {}),
     sandboxType: result.exec.sandboxType,
     profileName: result.exec.effectiveProfile.name ?? result.exec.effectiveProfile.type,
+    ...(onCompletion ? { onCompletion } : {}),
   };
 }
 
 interface PreparedExactWriteTarget {
   readonly path: string;
-  readonly device: number;
-  readonly inode: number;
+  readonly sourceFd: number;
+  readonly releaseSource: () => void;
+  readonly childFd: number;
+  readonly device: bigint;
+  readonly inode: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
 }
 
 function prepareLinuxBashExactWriteTargets(
@@ -982,41 +1010,95 @@ function prepareLinuxBashExactWriteTargets(
       ) {
         continue;
       }
-      if (realpathSync(dirname(target.enforcementPath)) !== dirname(target.enforcementPath)) {
-        throw new Error('Exact write target parent changed.');
-      }
-      const fd = openSync(
-        target.enforcementPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
-        0o666,
-      );
+      const fd = openMissingExactWriteTarget(target.enforcementPath);
+      let sourceOpen = true;
+      const releaseSource = () => {
+        if (!sourceOpen) return;
+        sourceOpen = false;
+        closeSync(fd);
+      };
       try {
-        const metadata = fstatSync(fd);
+        // A deliberately old marker distinguishes a successful no-op from an
+        // intentional empty write, which updates mtime/ctime even at size zero.
+        futimesSync(fd, 1, 1);
+        const metadata = fstatSync(fd, { bigint: true });
         prepared.push({
           path: target.enforcementPath,
+          sourceFd: fd,
+          releaseSource,
+          childFd: 4 + prepared.length,
           device: metadata.dev,
           inode: metadata.ino,
+          mtimeNs: metadata.mtimeNs,
+          ctimeNs: metadata.ctimeNs,
         });
-      } finally {
-        closeSync(fd);
+      } catch (error) {
+        releaseSource();
+        throw error;
       }
     }
     return prepared;
   } catch (error) {
-    rollbackPreparedExactWriteTargets(prepared);
+    completePreparedExactWriteTargets(prepared);
     throw error;
   }
 }
 
-function rollbackPreparedExactWriteTargets(targets: readonly PreparedExactWriteTarget[]): void {
+/** @internal Exported for the Linux parent-swap regression test. */
+export function openMissingExactWriteTarget(path: string, afterParentPinned?: () => void): number {
+  const parent = dirname(path);
+  if (realpathSync(parent) !== parent) throw new Error('Exact write target parent changed.');
+
+  const createFlags =
+    constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0);
+  if (process.platform !== 'linux') return openSync(path, createFlags, 0o666);
+
+  const linuxConstants = constants as typeof constants & { O_PATH?: number };
+  const parentFlags =
+    (linuxConstants.O_PATH ?? constants.O_RDONLY) |
+    (constants.O_DIRECTORY ?? 0) |
+    (constants.O_NOFOLLOW ?? 0);
+  const parentFd = openSync(parent, parentFlags);
+  try {
+    const pinnedParent = `/proc/self/fd/${parentFd}`;
+    afterParentPinned?.();
+    if (realpathSync(pinnedParent) !== parent) {
+      throw new Error('Exact write target parent changed after pinning.');
+    }
+    return openSync(`${pinnedParent}/${basename(path)}`, createFlags, 0o666);
+  } finally {
+    closeSync(parentFd);
+  }
+}
+
+function preparedExactWriteCompletion(
+  targets: readonly PreparedExactWriteTarget[],
+): ((outcome: { successful: boolean }) => void) | undefined {
+  if (targets.length === 0) return undefined;
+  let completed = false;
+  return () => {
+    if (completed) return;
+    completed = true;
+    completePreparedExactWriteTargets(targets);
+  };
+}
+
+function completePreparedExactWriteTargets(targets: readonly PreparedExactWriteTarget[]): void {
   for (const target of targets) {
     try {
-      const metadata = lstatSync(target.path);
+      target.releaseSource();
+    } catch {
+      // Launch cleanup is best effort; the close-once owner prevents fd-number reuse bugs.
+    }
+    try {
+      const metadata = lstatSync(target.path, { bigint: true });
+      const untouched = metadata.mtimeNs === target.mtimeNs && metadata.ctimeNs === target.ctimeNs;
       if (
         metadata.isFile() &&
         metadata.dev === target.device &&
         metadata.ino === target.inode &&
-        metadata.size === 0
+        metadata.size === 0n &&
+        untouched
       ) {
         unlinkSync(target.path);
       }

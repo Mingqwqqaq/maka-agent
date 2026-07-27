@@ -87,6 +87,42 @@ describe('Bash tool shell is threaded through to execution, not just the descrip
     await tool.impl({ command: 'echo hi', run_in_background: true }, fakeToolContext());
     assert.deepEqual((captured[0] as { shell?: unknown }).shell, pwshPlan);
   });
+
+  test('managed completion callback remains exactly-once when the launcher settles it', async () => {
+    let completionCount = 0;
+    const controller: ShellRunLauncher = {
+      async runForegroundBash(input) {
+        input.onCompletion?.({ successful: true });
+        return {
+          kind: 'terminal',
+          cwd: input.cwd,
+          cmd: input.command,
+          status: 'completed',
+          exitCode: 0,
+          output: {
+            mode: 'pipes',
+            stdout: '',
+            stderr: '',
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            redacted: false,
+          },
+        };
+      },
+      runBackgroundBash: () => Promise.reject(new Error('not used')),
+    };
+    const tool = buildManagedBashTool(controller, {
+      transformCommand: ({ ctx }) => ({
+        cwd: ctx.cwd,
+        onCompletion: () => {
+          completionCount += 1;
+        },
+      }),
+    });
+
+    await tool.impl({ command: 'true' }, fakeToolContext());
+    assert.equal(completionCount, 1);
+  });
 });
 
 function fakeToolContext() {

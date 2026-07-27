@@ -133,6 +133,17 @@ export class LinuxBubblewrapBackend implements SandboxBackend {
       );
     }
 
+    const pinnedFdInputs = command.pathContext.pinnedWritableFiles?.map(
+      ({ fd, sourceFd, releaseSource }) => ({
+        fd,
+        sourceFd,
+        ...(releaseSource ? { releaseSource } : {}),
+      }),
+    );
+    const fdInputs = [
+      ...(seccompFilter ? [{ fd: 3, data: seccompFilter }] : []),
+      ...(pinnedFdInputs ?? []),
+    ];
     return {
       ok: true,
       exec: {
@@ -141,7 +152,7 @@ export class LinuxBubblewrapBackend implements SandboxBackend {
           command,
           protectedMetadataPaths: nestedProtectedPaths,
         }),
-        ...(seccompFilter ? { fdInputs: [{ fd: 3, data: seccompFilter }] } : {}),
+        ...(fdInputs.length > 0 ? { fdInputs } : {}),
         cwd: command.cwd,
         env: command.env,
         sandboxType: 'linux',
@@ -199,6 +210,22 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
   );
   const profileReadableRoots = removeRootsCoveredBy(roots.readableRoots, runtimeWritableRoots);
   const profileWritableRoots = removeRootsCoveredBy(roots.writableRoots, runtimeWritableRoots);
+  const pinnedWritableFiles = new Map(
+    (command.pathContext.pinnedWritableFiles ?? []).map((entry) => [entry.path, entry] as const),
+  );
+  for (const entry of pinnedWritableFiles.values()) {
+    if (!profileWritableRoots.includes(entry.path)) {
+      throw new Error(`Pinned writable file is not an effective writable root: ${entry.path}`);
+    }
+    if (
+      !Number.isInteger(entry.fd) ||
+      entry.fd < 3 ||
+      !Number.isInteger(entry.sourceFd) ||
+      entry.sourceFd < 0
+    ) {
+      throw new Error(`Pinned writable file has invalid descriptors: ${entry.path}`);
+    }
+  }
   const requiredRuntimeRoots = removeNestedRoots(
     [
       ...(command.pathContext.runtimeReadableRoots ?? []),
@@ -258,7 +285,10 @@ export function buildBubblewrapArgv(input: BuildBubblewrapArgvInput): readonly s
     argv.push('--dir', command.cwd);
   }
   for (const root of profileReadableRoots) argv.push('--ro-bind', root, root);
-  for (const root of profileWritableRoots) argv.push('--bind', root, root);
+  for (const root of profileWritableRoots) {
+    const pinned = pinnedWritableFiles.get(root);
+    argv.push('--bind', pinned ? `/proc/self/fd/${pinned.fd}` : root, root);
+  }
 
   for (const root of roots.protectedWritableRoots) {
     for (const name of roots.protectedMetadataNames) {

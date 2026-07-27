@@ -3,7 +3,6 @@ import {
   buildAgentTeamChildTools,
   buildAgentTeamLeadTools,
   buildAskUserQuestionTool,
-  buildBuiltinTools,
   buildChildAgentTools,
   buildDeferredToolGroupsFromCatalog,
   buildHostCapabilitiesFromBinding,
@@ -47,6 +46,7 @@ import type { createMainTaskLedgerWiring } from './task-ledger-wiring.js';
 import type { createMainAutomationWiring } from './automation-wiring.js';
 import type { createMainGoalWiring } from './goal-wiring.js';
 import type { ToolArtifactPersistence } from './tool-artifact-persistence.js';
+import { buildDesktopBuiltinTools } from './desktop-builtin-tools.js';
 
 type TaskLedgerWiring = ReturnType<typeof createMainTaskLedgerWiring>;
 type AutomationWiring = ReturnType<typeof createMainAutomationWiring>;
@@ -204,7 +204,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
   // the shared catalog ∩ this binding (#1099 S2). Skill listing uses the same host.
   const toolsBeforeSkill: MakaTool[] = [
     buildAskUserQuestionTool(),
-    ...buildBuiltinTools({
+    ...buildDesktopBuiltinTools({
       shellRuns,
       runtimeResources: shellRuns,
       backgroundTasks: shellRuns,
@@ -279,7 +279,7 @@ export function assembleDesktopTools(deps: DesktopToolAssemblyDeps) {
   // Child agents stay file-only for local reads; parent runtime refs such as
   // maka://runtime/background-tasks/<id> are not part of their tool surface.
   const childAgentTools = buildChildAgentTools([
-    ...buildBuiltinTools({
+    ...buildDesktopBuiltinTools({
       snapshotImage: snapshotReadImage,
       ...(sandboxManager ? { sandboxManager } : {}),
       ...(filesystemWorker ? {

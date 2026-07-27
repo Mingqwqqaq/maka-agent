@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { buildDesktopBuiltinTools } from '../desktop-builtin-tools.js';
 import { test } from 'node:test';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../../../');
@@ -23,11 +24,10 @@ test('CLI and Desktop create the filesystem worker only when the builtin sandbox
   }
 });
 
-test('Desktop exposes every worker-backed file tool, including Edit', async () => {
-  const source = await readFile(
-    resolve(REPO_ROOT, 'apps/desktop/src/main/tool-assembly.ts'),
-    'utf8',
-  );
+test('Desktop exposes Edit only when a filesystem worker is available', () => {
+  const withoutWorker = buildDesktopBuiltinTools({});
+  const withWorker = buildDesktopBuiltinTools({ filesystemWorker: {} as never });
 
-  assert.doesNotMatch(source, /\.filter\(\(tool:\s*MakaTool\)\s*=>\s*tool\.name\s*!==\s*'Edit'\)/);
+  assert.equal(withoutWorker.some((tool) => tool.name === 'Edit'), false);
+  assert.equal(withWorker.some((tool) => tool.name === 'Edit'), true);
 });

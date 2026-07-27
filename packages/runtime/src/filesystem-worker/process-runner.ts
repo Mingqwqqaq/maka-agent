@@ -1,7 +1,12 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
-import { buildSpawnStdio, type ChildFdInput, writeChildFdInputs } from '../child-fd-input.js';
+import {
+  buildSpawnStdio,
+  closeChildFdSources,
+  type ChildFdInput,
+  writeChildFdInputs,
+} from '../child-fd-input.js';
 import {
   DEFAULT_PROCESS_TERMINATION_GRACE_MS,
   terminateChildProcessTree,
@@ -44,13 +49,18 @@ export async function runFilesystemWorkerProcess(
 ): Promise<FilesystemWorkerProcessRunResult> {
   const program = input.argv[0];
   if (!program) throw new Error('Filesystem worker argv must include a program.');
-  const child = spawn(program, input.argv.slice(1), {
-    cwd: input.cwd,
-    env: input.env as NodeJS.ProcessEnv,
-    shell: false,
-    stdio: buildSpawnStdio(input.fdInputs, 'pipe'),
-    detached: process.platform !== 'win32',
-  }) as WorkerChildProcess;
+  let child: WorkerChildProcess;
+  try {
+    child = spawn(program, input.argv.slice(1), {
+      cwd: input.cwd,
+      env: input.env as NodeJS.ProcessEnv,
+      shell: false,
+      stdio: buildSpawnStdio(input.fdInputs, 'pipe'),
+      detached: process.platform !== 'win32',
+    }) as WorkerChildProcess;
+  } finally {
+    closeChildFdSources(input.fdInputs);
+  }
   return await observeWorker(child, input);
 }
 
