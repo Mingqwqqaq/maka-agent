@@ -252,6 +252,54 @@ describe('single live-turn handoff', () => {
     assert.equal(publications, 2);
   });
 
+  it('flushes replayed deltas before the activation snapshot is captured', () => {
+    const liveTurns = createStateSetter<Record<string, LiveTurnProjection>>({
+      'session-1': armLiveTurn('turn-1'),
+    });
+    const liveTurnBySessionRef = { current: liveTurns.get() };
+    const interactions = createStateSetter<InteractionQueues>({});
+    const frames: Array<() => void> = [];
+    let publications = 0;
+    const handlers = createAppShellSessionEventHandlers({
+      uiLocale: 'zh',
+      activeIdRef: { current: 'session-1' },
+      liveTurnBySessionRef,
+      refreshMessages: async () => true,
+      refreshSessions: async () => [],
+      setLiveTurnBySession: (updater) => {
+        publications += 1;
+        liveTurns.set(updater);
+        liveTurnBySessionRef.current = liveTurns.get();
+      },
+      setInteractionBySession: interactions.set,
+      showModelSetupToast: () => {},
+      toastApi: { error: () => {} },
+      scheduleFrame: (callback) => { frames.push(callback); },
+    });
+
+    for (const [index, text] of ['background output ', 'accumulated while away'].entries()) {
+      handlers.handleEvent('session-1', {
+        type: 'text_delta',
+        id: `event-${index}`,
+        turnId: 'turn-1',
+        messageId: 'assistant-1',
+        ts: index,
+        text,
+      });
+    }
+    assert.equal(publications, 0);
+
+    handlers.flushDisplayEvents('session-1');
+    assert.equal(publications, 1);
+    assert.equal(
+      liveTurns.get()['session-1']?.steps[0]?.text?.text,
+      'background output accumulated while away',
+    );
+
+    frames.shift()?.();
+    assert.equal(publications, 1);
+  });
+
   it('shares pending display events across handler replacement', () => {
     const liveTurns = createStateSetter<Record<string, LiveTurnProjection>>({
       'session-1': armLiveTurn('turn-1'),
