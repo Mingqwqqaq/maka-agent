@@ -95,10 +95,15 @@ export function applyThinkingDelta(
   const copy = getSharedUiCopy(options.locale ?? 'zh').stream;
   const truncatedHeadMarker = copy.thinkingHeadTruncated;
   const truncatedChunkMarker = copy.thinkingChunkTruncated;
-  const redactionState = options.redactionState ?? createStreamingDisplayRedactionState({
-    maxRecoveryChars: maxTotal + 1,
-    recovery: 'tail',
-  });
+  const previousText = prev ?? '';
+  const redactionState = options.redactionState ?? appendStreamingDisplayRedaction(
+    '',
+    previousText,
+    createStreamingDisplayRedactionState({
+      maxRecoveryChars: maxTotal + 1,
+      recovery: 'tail',
+    }),
+  ).state;
 
   // Defensive guard: a non-string `rawDelta` is a runtime contract
   // violation. Drop it silently rather than coerce to '' and claim
@@ -122,7 +127,7 @@ export function applyThinkingDelta(
   // L2: per-delta cap. Tail-keep with marker prepended.
   let deltaTruncated = false;
   const rawAppended = appendStreamingDisplayRedaction(
-    prev ?? '',
+    previousText,
     rawDelta,
     redactionState,
   );
