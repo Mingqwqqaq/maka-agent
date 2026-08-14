@@ -141,7 +141,10 @@ import { createAppShellDailyReviewBridge } from './app-shell-daily-review-bridge
 import { useAppShellModuleData } from './use-module-data';
 import { useKeepSystemAwake } from './use-keep-system-awake';
 import { useAppShellProjectContext } from './use-project-context';
-import { createAppShellSessionEventHandlers } from './app-shell-session-events';
+import {
+  createAppShellSessionDisplayBatch,
+  createAppShellSessionEventHandlers,
+} from './app-shell-session-events';
 import { createAppShellE2eFixtureActions } from './app-shell-e2e-fixture';
 import {
   createAppShellChatActions,
@@ -1245,6 +1248,9 @@ function AppShellContent({
   const planConversationItems = (planMode.state?.proposals ?? []).map((proposal) => ({
     id: proposal.proposalId,
     afterTurnId: proposal.turnId,
+    renderWhenAnchorMissing:
+      proposal.status === 'pending_approval'
+      && proposal.proposalId === planMode.state?.latestProposalId,
     content: <PlanProposalCard proposal={proposal} planMode={planMode} />,
   }));
   const activeMessageLoading = Boolean(activeId && messageLoadPending);
@@ -2179,6 +2185,7 @@ function AppShellContent({
     toastApi,
   });
 
+  const [sessionDisplayBatch] = useState(createAppShellSessionDisplayBatch);
   const { handleEvent, reconcilePersistedMessages, settleAssistantStreaming } = useStableActions(createAppShellSessionEventHandlers, {
     uiLocale,
     activeIdRef,
@@ -2187,6 +2194,7 @@ function AppShellContent({
     refreshSessions,
     setLiveTurnBySession,
     setInteractionBySession,
+    displayBatch: sessionDisplayBatch,
     onInteractionChanged: markInteractionChanged,
     onExecutionBoundaryChanged: reloadActiveExecutionBoundary,
     showModelSetupToast,
