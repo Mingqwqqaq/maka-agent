@@ -126,6 +126,21 @@ describe('streaming display redaction', () => {
     assert.deepEqual(Object.keys(pending.state).sort(), ['pendingChars', 'settledChars']);
   });
 
+  it('fails closed when a stateless bootstrap follows a redaction marker', () => {
+    const source = `ghp_${'a'.repeat(40)}`;
+    const previousText = redactSecrets(source);
+    const continued = appendStreamingDisplayRedaction(previousText, 'suffix');
+    assert.equal(continued.text, previousText);
+    assert.equal(continued.redacted, true);
+
+    const terminated = appendStreamingDisplayRedaction(
+      continued.text,
+      ' done',
+      continued.state,
+    );
+    assert.equal(terminated.text, redactSecrets(`${source}suffix done`));
+  });
+
   it('redacts cross-delta secrets before per-delta and total truncation', () => {
     for (const apply of [applyAssistantDelta, applyThinkingDelta]) {
       const initialState = createStreamingDisplayRedactionState();

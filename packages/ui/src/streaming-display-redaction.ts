@@ -46,6 +46,7 @@ export interface StreamingDisplayRedactionOptions {
 }
 
 const DEFAULT_MAX_RECOVERY_CHARS = Number.POSITIVE_INFINITY;
+const STATELESS_REDACTED_TAIL_TERMINATOR = /[\s"'<>&]/;
 
 const PRIVATE_STATE = new WeakMap<
   StreamingDisplayRedactionState,
@@ -71,8 +72,10 @@ export interface StreamingDisplayRedactionResult {
  * Append one raw stream delta while remaining exactly equivalent to applying
  * `redactSecrets` to every complete source prefix.
  *
- * `previousText` is only used to bootstrap legacy/direct callers that do not
- * yet carry state. Stream owners should pass the returned state on every call.
+ * Stream owners must pass the returned `state` on every call for exact
+ * differential equivalence. A legacy/direct caller without state is rescanned
+ * while its display is lossless; a trailing `<redacted>` marker instead fails
+ * closed until a clear terminator because its original source is unavailable.
  */
 export function appendStreamingDisplayRedaction(
   previousText: string,
@@ -80,13 +83,15 @@ export function appendStreamingDisplayRedaction(
   state?: StreamingDisplayRedactionState,
 ): StreamingDisplayRedactionResult {
   const privateState = state === undefined ? undefined : PRIVATE_STATE.get(state);
-  const settledText = privateState?.settledText ?? '';
+  const statelessRedactedTail = privateState === undefined && previousText.endsWith('<redacted>');
+  const settledText = privateState?.settledText ?? (statelessRedactedTail ? previousText : '');
   const maxRecoveryChars = privateState?.maxRecoveryChars ?? DEFAULT_MAX_RECOVERY_CHARS;
   const recovery = privateState?.recovery ?? 'head';
-  let previousPendingRaw = privateState?.pendingRaw ?? previousText;
+  let previousPendingRaw = privateState?.pendingRaw ?? (statelessRedactedTail ? '' : previousText);
   let overflow = privateState?.overflow;
   let delta = rawDelta;
-  let continuationTerminator = privateState?.continuationTerminator;
+  let continuationTerminator = privateState?.continuationTerminator
+    ?? (statelessRedactedTail ? STATELESS_REDACTED_TAIL_TERMINATOR : undefined);
   if (continuationTerminator !== undefined) {
     const terminatorIndex = delta.search(continuationTerminator);
     if (terminatorIndex < 0) {
