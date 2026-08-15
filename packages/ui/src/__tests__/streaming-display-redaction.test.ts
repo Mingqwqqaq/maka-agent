@@ -243,6 +243,9 @@ describe('streaming display redaction', () => {
   });
 
   it('bounds reversible provider and opaque tokens, then recovers existing cap semantics', () => {
+    const maxTotalChars = 64;
+    const maxRecoveryChars = maxTotalChars + 1;
+    const representativeTokenChars = 128;
     for (const [apply, complete] of [
       [applyAssistantDelta, applyAssistantComplete],
       [applyThinkingDelta, applyThinkingComplete],
@@ -254,7 +257,7 @@ describe('streaming display redaction', () => {
       ]) {
         const compacted = apply('', input, {
           maxDeltaChars: 2_000,
-          maxTotalChars: 64,
+          maxTotalChars,
           locale: 'en',
         });
         assert.equal(compacted.text, redactSecrets(input));
@@ -262,22 +265,45 @@ describe('streaming display redaction', () => {
         assert.ok(
           compacted.redactionState.pendingChars
             + compacted.redactionState.settledChars
-          <= 2 * (64 + 1) + 128,
+          <= 2 * maxRecoveryChars + representativeTokenChars,
         );
 
         const invalidatingCharacter = input.startsWith('ghp_') ? '_' : 'g';
         const invalidated = apply(compacted.text, invalidatingCharacter, {
           maxDeltaChars: 2_000,
-          maxTotalChars: 64,
+          maxTotalChars,
           redactionState: compacted.redactionState,
           locale: 'en',
         });
         assert.equal(
           invalidated.text,
-          complete(input + invalidatingCharacter, { maxTotalChars: 64, locale: 'en' }).text,
+          complete(input + invalidatingCharacter, { maxTotalChars, locale: 'en' }).text,
         );
       }
     }
+  });
+
+  it('recovers reversible token invalidation after thinking tail truncation', () => {
+    const maxTotalChars = 64;
+    const source = `${'safe-prefix '.repeat(20)}ghp_${'a'.repeat(1_000)}`;
+    const first = applyThinkingDelta('', source, {
+      maxDeltaChars: source.length,
+      maxTotalChars,
+      locale: 'en',
+    });
+    assert.equal(first.truncated, true);
+    assert.ok(first.redactionState);
+
+    const invalidated = applyThinkingDelta(first.text, '_', {
+      maxDeltaChars: source.length,
+      maxTotalChars,
+      redactionState: first.redactionState,
+      locale: 'en',
+    });
+    assert.equal(
+      invalidated.text,
+      applyThinkingComplete(`${source}_`, { maxTotalChars, locale: 'en' }).text,
+    );
   });
 
   it('continues thinking after a per-delta truncation below the total cap', () => {

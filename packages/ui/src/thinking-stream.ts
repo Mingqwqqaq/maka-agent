@@ -96,14 +96,6 @@ export function applyThinkingDelta(
   const truncatedHeadMarker = copy.thinkingHeadTruncated;
   const truncatedChunkMarker = copy.thinkingChunkTruncated;
   const previousText = prev ?? '';
-  const redactionState = options.redactionState ?? appendStreamingDisplayRedaction(
-    '',
-    previousText,
-    createStreamingDisplayRedactionState({
-      maxRecoveryChars: maxTotal + 1,
-      recovery: 'tail',
-    }),
-  ).state;
 
   // Defensive guard: a non-string `rawDelta` is a runtime contract
   // violation. Drop it silently rather than coerce to '' and claim
@@ -119,6 +111,15 @@ export function applyThinkingDelta(
     };
   }
 
+  const redactionState = options.redactionState ?? appendStreamingDisplayRedaction(
+    '',
+    previousText,
+    createStreamingDisplayRedactionState({
+      maxRecoveryChars: maxTotal + 1,
+      recovery: 'tail',
+    }),
+  ).state;
+
   // Oversize deltas retain redact-before-truncate. Normal deltas remain raw
   // until the line-aware append so every streamed prefix can match the oracle.
   const redactedDelta = redactSecrets(rawDelta);
@@ -133,7 +134,7 @@ export function applyThinkingDelta(
   );
   const appended = redactedDelta.length > maxDelta
     ? truncateStreamingDisplayAppend(
-        prev ?? '',
+        previousText,
         rawAppended,
         maxDelta,
         truncatedChunkMarker,

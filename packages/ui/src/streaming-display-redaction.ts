@@ -110,11 +110,10 @@ export function appendStreamingDisplayRedaction(
       compactedToken: overflow.compactedToken,
       continuationChars: overflow.continuationChars,
     };
-    const representative = previousPendingRaw + delta;
     if (reversibleInvalidated(delta, overflow.continuationChars)) {
       previousPendingRaw = recovery === 'head'
         ? overflow.sourceHead + delta
-        : overflow.sourceHead + nextOverflow.sourceTail;
+        : overflow.compactedToken + nextOverflow.sourceTail;
       delta = '';
       overflow = undefined;
     } else {
@@ -248,21 +247,38 @@ function stateAfterTruncation(
   const context = contextualTail(pendingRaw, lastLineBreak);
   const contextualRaw = context === undefined ? '' : pendingRaw.slice(context.start);
   const contextualText = redactSecrets(contextualRaw);
+  const reversibleRaw = privateState?.overflow?.compactedToken ?? '';
+  const reversibleText = redactSecrets(reversibleRaw);
+  const canPreserveOverflow = privateState?.overflow !== undefined
+    && text.endsWith(reversibleText);
   const canPreserveContext = context !== undefined
     && contextualRaw.length <= (privateState?.maxRecoveryChars ?? DEFAULT_MAX_RECOVERY_CHARS)
     && text.endsWith(contextualText);
-  const settledText = canPreserveContext
-    ? text.slice(0, text.length - contextualText.length)
-    : text;
+  const retainedText = canPreserveOverflow
+    ? reversibleText
+    : canPreserveContext
+      ? contextualText
+      : '';
+  const retainedRaw = canPreserveOverflow
+    ? reversibleRaw
+    : canPreserveContext
+      ? contextualRaw
+      : '';
+  const settledText = text.slice(0, text.length - retainedText.length);
 
   return stateFor(
     settledText,
-    canPreserveContext ? contextualRaw : '',
+    retainedRaw,
     privateState?.continuationTerminator
       ?? (canPreserveContext ? undefined : stableSuffix?.terminator)
-      ?? (privateState?.overflow === undefined ? undefined : /[^A-Za-z0-9_-]/)
+      ?? (privateState?.overflow === undefined || canPreserveOverflow
+        ? undefined
+        : /[^A-Za-z0-9_-]/)
       ?? (context === undefined || canPreserveContext ? undefined : NEVER_TERMINATES),
-    configFor(privateState),
+    {
+      ...configFor(privateState),
+      ...(canPreserveOverflow ? { overflow: privateState.overflow } : {}),
+    },
   );
 }
 

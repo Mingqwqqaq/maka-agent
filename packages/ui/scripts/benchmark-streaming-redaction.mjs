@@ -44,10 +44,23 @@ function measure(run) {
   return { output, milliseconds: performance.now() - started };
 }
 
+function median(runs, run) {
+  const samples = [];
+  let output;
+  for (let index = 0; index < runs; index += 1) {
+    const measured = measure(run);
+    output = measured.output;
+    samples.push(measured.milliseconds);
+  }
+  samples.sort((a, b) => a - b);
+  return { output, milliseconds: samples[Math.floor(samples.length / 2)] };
+}
+
 const results = scenarios.map(({ name, input }) => {
+  wholeText(input);
   incremental(input);
-  const baseline = measure(() => wholeText(input));
-  const candidate = measure(() => incremental(input));
+  const baseline = median(3, () => wholeText(input));
+  const candidate = median(3, () => incremental(input));
   assert.equal(candidate.output, baseline.output);
   return {
     name,
