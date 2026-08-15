@@ -135,6 +135,7 @@ import { AppShellTopbarActions, AppShellWorkspaceTopActions } from './app-shell-
 import { updateReminderFromStatus } from './app-shell-app-update';
 import { AppShellDetailPanel } from './app-shell-detail-panel';
 import { AppShellOverlays } from './app-shell-overlays';
+import type { ArchivedTasksBridge } from './settings/tasks-settings-page';
 import { CustomPetCompanion } from './custom-pet-companion';
 import { derivePetActivityState } from './custom-pet-companion-model';
 import { createAppShellDailyReviewBridge } from './app-shell-daily-review-bridge';
@@ -1831,6 +1832,19 @@ function AppShellContent({
     () => deriveWorktreeSessionIds(visibleSessions, projects),
     [visibleSessions, projects],
   );
+  // 已归档任务 reads the shell's catalog rather than listing again behind the
+  // modal, and writes through the same row actions the rail uses — one owner
+  // for restoring and deleting a task, whichever surface asked.
+  const archivedTasksBridge = useMemo<ArchivedTasksBridge>(
+    () => ({
+      sessions,
+      projects,
+      onRestore: (sessionId) => void sessionRowActionHandlers.unarchiveSession(sessionId),
+      onDelete: (sessionId) => void sessionRowActionHandlers.deleteSession(sessionId),
+      onPurge: (sessionIds) => sessionRowActionHandlers.purgeSessions(sessionIds),
+    }),
+    [sessions, projects],
+  );
   const { startModeSession } = useStableActions(createAppShellSessionStartActions, {
     uiLocale,
     activeIdRef,
@@ -3356,6 +3370,7 @@ function AppShellContent({
           closeSettings();
           openSessionInChat(sessionId);
         }}
+        archivedTasks={archivedTasksBridge}
         helpOpen={helpOpen}
         closeHelp={closeHelp}
         searchModalOpen={searchModalOpen}
