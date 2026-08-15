@@ -35,7 +35,6 @@ type ToastApi = {
 
 export interface AppShellSessionEventHandlers {
   handleEvent(sessionId: string, event: SessionEvent): void;
-  flushDisplayEvents(sessionId: string): void;
   reconcilePersistedMessages(sessionId: string, messages: readonly StoredMessage[]): void;
   settleAssistantStreaming(sessionId: string, messageId?: string): Promise<void>;
 }
@@ -143,11 +142,6 @@ export function createAppShellSessionEventHandlers(options: {
 
   function updateLiveTurn(sessionId: string, events: readonly SessionEvent[]): void {
     setLiveTurnBySession((current) => replaceLiveTurns(current, new Map([[sessionId, events]])));
-  }
-
-  function flushDisplayEvents(sessionId: string): void {
-    const pending = takePendingDisplayEvents(sessionId);
-    if (pending.length > 0) updateLiveTurn(sessionId, pending);
   }
 
   function settleLiveStep(sessionId: string, stepId: string): void {
@@ -281,12 +275,7 @@ export function createAppShellSessionEventHandlers(options: {
     }
   }
 
-  return {
-    handleEvent,
-    flushDisplayEvents,
-    reconcilePersistedMessages,
-    settleAssistantStreaming,
-  };
+  return { handleEvent, reconcilePersistedMessages, settleAssistantStreaming };
 }
 
 function sessionEventDiagnosticDetails(

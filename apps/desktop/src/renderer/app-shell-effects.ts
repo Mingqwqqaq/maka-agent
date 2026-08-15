@@ -419,7 +419,6 @@ export function useActiveSessionEvents(options: {
   activeId: string | undefined;
   activeIdRef: RefBox<string | undefined>;
   handleEvent: (sessionId: string, event: SessionEvent) => void;
-  flushDisplayEvents: (sessionId: string) => void;
   markSessionReadLocally: (sessionId: string, readMessages: readonly StoredMessage[]) => void;
   onEventSeeded?: (sessionId: string) => void;
   setMessageLoadErrorBySession: (updater: (current: Record<string, string>) => Record<string, string>) => void;
@@ -466,10 +465,6 @@ export function useActiveSessionEvents(options: {
     options.handleEvent(sessionId, event);
   });
   const markEventSeeded = useEffectEvent((sessionId: string) => {
-    // Replay deltas are frame-batched like live deltas. Publish the final replay
-    // batch before the activation snapshot is captured, so returning to a live
-    // conversation does not animate output that accumulated while it was away.
-    options.flushDisplayEvents(sessionId);
     options.onEventSeeded?.(sessionId);
   });
   const markSessionEventStreamClosed = useEffectEvent((sessionId: string) => {
