@@ -235,8 +235,6 @@ export function truncateStreamingDisplayTail(
   };
 }
 
-const NEVER_TERMINATES = /(?!)/;
-
 function stateAfterTruncation(
   text: string,
   privateState: PrivateStreamingDisplayRedactionState | undefined,
@@ -254,6 +252,12 @@ function stateAfterTruncation(
   const canPreserveContext = context !== undefined
     && contextualRaw.length <= (privateState?.maxRecoveryChars ?? DEFAULT_MAX_RECOVERY_CHARS)
     && text.endsWith(contextualText);
+  // A tail-capped owner will cap again after the next append, so it can keep a
+  // bounded, display-hidden opener and reconstruct the oracle suffix safely.
+  const canRecoverHiddenContext = context !== undefined
+    && !canPreserveContext
+    && privateState?.recovery === 'tail'
+    && contextualRaw.length <= privateState.maxRecoveryChars;
   const retainedText = canPreserveOverflow
     ? reversibleText
     : canPreserveContext
@@ -261,7 +265,7 @@ function stateAfterTruncation(
       : '';
   const retainedRaw = canPreserveOverflow
     ? reversibleRaw
-    : canPreserveContext
+    : canPreserveContext || canRecoverHiddenContext
       ? contextualRaw
       : '';
   const settledText = text.slice(0, text.length - retainedText.length);
@@ -274,7 +278,9 @@ function stateAfterTruncation(
       ?? (privateState?.overflow === undefined || canPreserveOverflow
         ? undefined
         : /[^A-Za-z0-9_-]/)
-      ?? (context === undefined || canPreserveContext ? undefined : NEVER_TERMINATES),
+      ?? (context === undefined || canPreserveContext || canRecoverHiddenContext
+        ? undefined
+        : /[\r\n]/),
     {
       ...configFor(privateState),
       ...(canPreserveOverflow ? { overflow: privateState.overflow } : {}),

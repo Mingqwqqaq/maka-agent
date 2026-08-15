@@ -348,4 +348,52 @@ describe('streaming display redaction', () => {
     });
     assert.equal(terminated.text.endsWith(' done'), true);
   });
+
+  it('recovers a contextual opener hidden by thinking tail truncation', () => {
+    const maxTotalChars = 64;
+    const source = `${'safe '.repeat(20)}Authorization:${' '.repeat(40)}`;
+    const first = applyThinkingDelta('', source, {
+      maxDeltaChars: source.length,
+      maxTotalChars,
+      locale: 'en',
+    });
+    assert.equal(first.truncated, true);
+    assert.ok(first.redactionState);
+
+    const continuation = 'Bearer secret-value done';
+    const resumed = applyThinkingDelta(first.text, continuation, {
+      maxDeltaChars: source.length,
+      maxTotalChars,
+      redactionState: first.redactionState,
+      locale: 'en',
+    });
+    assert.equal(
+      resumed.text,
+      applyThinkingComplete(source + continuation, { maxTotalChars, locale: 'en' }).text,
+    );
+    assert.equal(resumed.text.endsWith(' done'), true);
+
+    const overlongSource = `${'safe '.repeat(20)}Authorization:${' '.repeat(100)}`;
+    const overlong = applyThinkingDelta('', overlongSource, {
+      maxDeltaChars: overlongSource.length,
+      maxTotalChars,
+      locale: 'en',
+    });
+    assert.ok(overlong.redactionState);
+    assert.ok(overlong.redactionState.pendingChars <= maxTotalChars + 1);
+    const hiddenSecret = applyThinkingDelta(overlong.text, 'Bearer hidden-secret', {
+      maxDeltaChars: overlongSource.length,
+      maxTotalChars,
+      redactionState: overlong.redactionState,
+      locale: 'en',
+    });
+    assert.equal(hiddenSecret.text.includes('hidden-secret'), false);
+    const afterLine = applyThinkingDelta(hiddenSecret.text, '\nVISIBLE', {
+      maxDeltaChars: overlongSource.length,
+      maxTotalChars,
+      redactionState: hiddenSecret.redactionState,
+      locale: 'en',
+    });
+    assert.equal(afterLine.text.endsWith('\nVISIBLE'), true);
+  });
 });
