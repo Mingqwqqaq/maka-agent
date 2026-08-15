@@ -3,11 +3,14 @@ import { performance } from 'node:perf_hooks';
 import { applyAssistantDelta } from '../dist/assistant-stream.js';
 import { redactSecrets } from '../dist/redact.js';
 
-const line = 'A realistic streamed paragraph contains prose, code, and api_key=ordinary-short-value.\n';
-const input = line.repeat(800);
+const line = 'A realistic streamed paragraph contains prose, code, and api_key=ordinary-short-value.';
+const scenarios = [
+  { name: 'newline-rich', input: `${line}\n`.repeat(800) },
+  { name: 'no-newline', input: `${line} `.repeat(800) },
+];
 const deltaSize = 8;
 
-function wholeText() {
+function wholeText(input) {
   let source = '';
   let displayed = '';
   for (let offset = 0; offset < input.length; offset += deltaSize) {
@@ -17,7 +20,7 @@ function wholeText() {
   return displayed;
 }
 
-function incremental() {
+function incremental(input) {
   let displayed = '';
   let state;
   for (let offset = 0; offset < input.length; offset += deltaSize) {
@@ -41,18 +44,21 @@ function measure(run) {
   return { output, milliseconds: performance.now() - started };
 }
 
-incremental();
-const baseline = measure(wholeText);
-const candidate = measure(incremental);
-assert.equal(candidate.output, baseline.output);
+const results = scenarios.map(({ name, input }) => {
+  incremental(input);
+  const baseline = measure(() => wholeText(input));
+  const candidate = measure(() => incremental(input));
+  assert.equal(candidate.output, baseline.output);
+  return {
+    name,
+    inputChars: input.length,
+    deltaSize,
+    deltas: Math.ceil(input.length / deltaSize),
+    candidatePath: 'applyAssistantDelta',
+    wholeTextMs: Number(baseline.milliseconds.toFixed(2)),
+    incrementalMs: Number(candidate.milliseconds.toFixed(2)),
+    speedup: Number((baseline.milliseconds / candidate.milliseconds).toFixed(2)),
+  };
+});
 
-const speedup = baseline.milliseconds / candidate.milliseconds;
-console.log(JSON.stringify({
-  inputChars: input.length,
-  deltaSize,
-  deltas: Math.ceil(input.length / deltaSize),
-  candidatePath: 'applyAssistantDelta',
-  wholeTextMs: Number(baseline.milliseconds.toFixed(2)),
-  incrementalMs: Number(candidate.milliseconds.toFixed(2)),
-  speedup: Number(speedup.toFixed(2)),
-}, null, 2));
+console.log(JSON.stringify(results, null, 2));

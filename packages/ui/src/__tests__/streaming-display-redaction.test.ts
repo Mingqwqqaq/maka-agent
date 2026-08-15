@@ -7,12 +7,10 @@ import { applyLiveTurnEvent } from '../live-turn-projection.js';
 import {
   appendStreamingDisplayRedaction,
   createStreamingDisplayRedactionState,
-  type StreamingDisplayRedactionState,
 } from '../streaming-display-redaction.js';
 
 function streamBySizes(input: string, sizes: readonly number[]): void {
-  let state: StreamingDisplayRedactionState | undefined = createStreamingDisplayRedactionState();
-  let displayed = '';
+  let projection: ReturnType<typeof applyLiveTurnEvent> | undefined;
   let source = '';
   let offset = 0;
   let sizeIndex = 0;
@@ -21,9 +19,15 @@ function streamBySizes(input: string, sizes: readonly number[]): void {
     const delta = input.slice(offset, offset + size);
     offset += delta.length;
     source += delta;
-    const result = appendStreamingDisplayRedaction(displayed, delta, state);
-    displayed = result.text;
-    state = result.state;
+    projection = applyLiveTurnEvent(projection, {
+      type: 'text_delta',
+      id: `event-${offset}`,
+      turnId: 'turn-1',
+      messageId: 'message-1',
+      ts: offset,
+      text: delta,
+    });
+    const displayed = projection.steps[0]?.text?.text ?? '';
     assert.equal(
       displayed,
       redactSecrets(source),
@@ -167,11 +171,36 @@ describe('streaming display redaction', () => {
       type: 'text_delta', id: 'text-2', turnId: 'turn-1', messageId: 'message-1', ts: 2,
       text: 's'.repeat(5_000),
     });
+    const redactedPrefix = projection.steps[0]?.text?.text;
     projection = applyLiveTurnEvent(projection, {
       type: 'text_delta', id: 'text-3', turnId: 'turn-1', messageId: 'message-1', ts: 3,
       text: 'SECRET_CONTINUATION',
     });
     assert.equal(projection.steps[0]?.text?.text.includes('SECRET_CONTINUATION'), false);
+    assert.equal(projection.steps[0]?.text?.text, redactedPrefix);
+  });
+
+  it('preserves an unfinished opener when production truncates a reseed delta', () => {
+    for (const opener of [
+      'Authorization: Bearer ',
+      'x-api-key: ',
+      'https://example.test/?access_token=',
+    ]) {
+      let projection = applyLiveTurnEvent(undefined, {
+        type: 'text_delta', id: 'text-1', turnId: 'turn-1', messageId: 'message-1', ts: 1,
+        text: `${'safe '.repeat(1_000)}${opener}`,
+      });
+      assert.equal(projection.steps[0]?.text?.truncated, true);
+
+      const secret = 'secret-value-arriving-after-reseed';
+      projection = applyLiveTurnEvent(projection, {
+        type: 'text_delta', id: 'text-2', turnId: 'turn-1', messageId: 'message-1', ts: 2,
+        text: secret,
+      });
+      const displayed = projection.steps[0]?.text?.text ?? '';
+      assert.equal(displayed.includes(secret), false, opener);
+      assert.match(displayed, /<redacted>$/u, opener);
+    }
   });
 
   it('keeps contextual redaction bounded without changing the visible total cap', () => {
@@ -194,6 +223,23 @@ describe('streaming display redaction', () => {
         <= 256,
       );
     }
+  });
+
+  it('settles prior redacted values so the complete retained raw suffix stays bounded', () => {
+    const maxTotalChars = 256;
+    const firstSecret = 'a'.repeat(5_000);
+    const secondSecret = 'b'.repeat(5_000);
+    const input = `Authorization: Bearer ${firstSecret} safe Authorization: Bearer ${secondSecret}`;
+    const result = applyAssistantDelta('', input, {
+      maxDeltaChars: input.length,
+      maxTotalChars,
+      locale: 'en',
+    });
+
+    assert.equal(result.text, redactSecrets(input));
+    assert.ok(result.redactionState);
+    assert.ok(result.redactionState.pendingChars <= maxTotalChars + 1);
+    assert.equal(result.redactionState.settledChars <= result.text.length, true);
   });
 
   it('bounds reversible provider and opaque tokens, then recovers existing cap semantics', () => {

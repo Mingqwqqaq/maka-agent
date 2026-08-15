@@ -95,16 +95,19 @@ export function redactSecrets(input: string): string {
 export interface StableStreamingRedactionSuffix {
   readonly text: string;
   readonly terminator: RegExp;
-  readonly compactedInput: string;
+  /** Safe display prefix that can no longer interact with later deltas. */
+  readonly settledPrefixText: string;
+  /** Short raw suffix that can still form a higher-priority nested pattern. */
+  readonly compactedSuffix: string;
 }
 
 const STREAMING_VALUE_TAIL_CHARS = 128;
 
 /**
  * Return a contextual redaction whose secret value reaches end-of-input.
- * Such a match is prefix-stable until `terminator` arrives. A streaming caller
- * may discard its hidden middle while retaining a short suffix for interactions
- * with higher-priority patterns.
+ * Such a match is prefix-stable until `terminator` arrives. The hidden middle
+ * can be discarded, but a short raw tail remains mutable because a later delta
+ * can complete a higher-priority contextual pattern inside the current value.
  */
 export function redactStableStreamingSuffix(
   input: string,
@@ -131,15 +134,16 @@ export function redactStableStreamingSuffix(
         ? input
         : input.slice(0, valueStart) + value.slice(-STREAMING_VALUE_TAIL_CHARS);
     const text = redactSecrets(input);
-
-    // Earlier patterns can alter where a later contextual pattern terminates.
-    // Only discard the hidden middle when the complete oracle proves that the
-    // compacted source is display-equivalent at this prefix.
     if (redactSecrets(compactedInput) !== text) continue;
+
+    const settledPrefixText = redactSecrets(input.slice(0, suffixMatch.index));
+    const compactedSuffix = compactedInput.slice(suffixMatch.index);
+    if (settledPrefixText + redactSecrets(compactedSuffix) !== text) continue;
     return {
       text,
       terminator: pattern.streamingTerminator,
-      compactedInput,
+      settledPrefixText,
+      compactedSuffix,
     };
   }
   return undefined;

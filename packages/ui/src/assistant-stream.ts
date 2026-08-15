@@ -133,15 +133,6 @@ export function applyAssistantDelta(
   }
 
   const previousText = prev ?? '';
-  const redactionState = options.redactionState ?? appendStreamingDisplayRedaction(
-    '',
-    previousText,
-    createStreamingDisplayRedactionState({
-      maxRecoveryChars: maxTotal + 1,
-      recovery: 'head',
-    }),
-  ).state;
-
   // Short-circuit: if the buffer is already capped (ends with the
   // trailing marker AND is at maxTotal), drop further deltas
   // entirely. This avoids reprocessing redaction / cap on a stream
@@ -152,6 +143,15 @@ export function applyAssistantDelta(
   ) {
     return { text: previousText, redacted: false, truncated: true };
   }
+
+  const redactionState = options.redactionState ?? appendStreamingDisplayRedaction(
+    '',
+    previousText,
+    createStreamingDisplayRedactionState({
+      maxRecoveryChars: maxTotal + 1,
+      recovery: 'head',
+    }),
+  ).state;
 
   // Oversize deltas keep the established redact-before-truncate behavior. Normal
   // deltas stay raw until the line-aware append below so a later prefix can

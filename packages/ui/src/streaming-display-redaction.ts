@@ -125,10 +125,11 @@ export function appendStreamingDisplayRedaction(
   const pending = previousPendingRaw + delta;
   const stableSuffix = redactStableStreamingSuffix(pending);
   if (stableSuffix !== undefined) {
+    const nextSettledText = settledText + stableSuffix.settledPrefixText;
     return {
       text: settledText + stableSuffix.text,
       redacted: true,
-      state: stateFor(settledText, stableSuffix.compactedInput, undefined, {
+      state: stateFor(nextSettledText, stableSuffix.compactedSuffix, undefined, {
         maxRecoveryChars,
         recovery,
       }),
@@ -155,7 +156,7 @@ export function appendStreamingDisplayRedaction(
     };
   }
   const lastLineBreak = pending.lastIndexOf('\n');
-  const pendingContextStart = contextualTailStart(pending, lastLineBreak);
+  const pendingContextStart = contextualTail(pending, lastLineBreak)?.start;
   const settlementLineBreak = pendingContextStart === undefined
     ? lastLineBreak
     : pending.lastIndexOf('\n', Math.max(0, pendingContextStart - 1));
@@ -212,20 +213,10 @@ export function truncateStreamingDisplayAppend(
     + marker
     + mutableText.slice(Math.max(0, mutableText.length - keep));
   const appendedPrivateState = PRIVATE_STATE.get(appended.state);
-  const stableSuffix = appendedPrivateState === undefined
-    ? undefined
-    : redactStableStreamingSuffix(appendedPrivateState.pendingRaw);
   return {
     text,
     redacted: appended.redacted,
-    state: stateFor(
-      text,
-      '',
-      appendedPrivateState?.continuationTerminator
-        ?? stableSuffix?.terminator
-        ?? (appendedPrivateState?.overflow === undefined ? undefined : /[^A-Za-z0-9_-]/),
-      configFor(appendedPrivateState),
-    ),
+    state: stateAfterTruncation(text, appendedPrivateState),
   };
 }
 
@@ -238,21 +229,41 @@ export function truncateStreamingDisplayTail(
   const keep = Math.max(0, maxTotalChars - marker.length);
   const text = marker + appended.text.slice(Math.max(0, appended.text.length - keep));
   const appendedPrivateState = PRIVATE_STATE.get(appended.state);
-  const stableSuffix = appendedPrivateState === undefined
-    ? undefined
-    : redactStableStreamingSuffix(appendedPrivateState.pendingRaw);
   return {
     text,
     redacted: appended.redacted,
-    state: stateFor(
-      text,
-      '',
-      appendedPrivateState?.continuationTerminator
-        ?? stableSuffix?.terminator
-        ?? (appendedPrivateState?.overflow === undefined ? undefined : /[^A-Za-z0-9_-]/),
-      configFor(appendedPrivateState),
-    ),
+    state: stateAfterTruncation(text, appendedPrivateState),
   };
+}
+
+const NEVER_TERMINATES = /(?!)/;
+
+function stateAfterTruncation(
+  text: string,
+  privateState: PrivateStreamingDisplayRedactionState | undefined,
+): StreamingDisplayRedactionState {
+  const pendingRaw = privateState?.pendingRaw ?? '';
+  const stableSuffix = redactStableStreamingSuffix(pendingRaw);
+  const lastLineBreak = pendingRaw.lastIndexOf('\n');
+  const context = contextualTail(pendingRaw, lastLineBreak);
+  const contextualRaw = context === undefined ? '' : pendingRaw.slice(context.start);
+  const contextualText = redactSecrets(contextualRaw);
+  const canPreserveContext = context !== undefined
+    && contextualRaw.length <= (privateState?.maxRecoveryChars ?? DEFAULT_MAX_RECOVERY_CHARS)
+    && text.endsWith(contextualText);
+  const settledText = canPreserveContext
+    ? text.slice(0, text.length - contextualText.length)
+    : text;
+
+  return stateFor(
+    settledText,
+    canPreserveContext ? contextualRaw : '',
+    privateState?.continuationTerminator
+      ?? (canPreserveContext ? undefined : stableSuffix?.terminator)
+      ?? (privateState?.overflow === undefined ? undefined : /[^A-Za-z0-9_-]/)
+      ?? (context === undefined || canPreserveContext ? undefined : NEVER_TERMINATES),
+    configFor(privateState),
+  );
 }
 
 function stateFor(
@@ -294,18 +305,26 @@ function configFor(
   };
 }
 
-function contextualTailStart(input: string, lastLineBreak: number): number | undefined {
+function contextualTail(
+  input: string,
+  lastLineBreak: number,
+): { readonly start: number } | undefined {
   const authorization = /(^|[^A-Za-z0-9_])(authorization)\s*(?:(?:[:=])\s*([A-Za-z]*)(\s*))?$/i.exec(input);
   const apiKey = /(^|[\s"'<>(])((?:x-)?api[-_]?key)\s*(?:[:=]\s*)?$/i.exec(input);
+  const query = /[?&](?:access_token|api[_-]?key|apikey|auth|token|secret|signature)=$/i.exec(input);
   const authorizationScheme = authorization?.[3]?.toLowerCase() ?? '';
   const authorizationTrailingSpace = (authorization?.[4]?.length ?? 0) > 0;
   const authorizationPending = authorization !== null
     && ['bearer', 'basic', 'token'].some((scheme) => scheme.startsWith(authorizationScheme))
     && (!authorizationTrailingSpace
       || ['bearer', 'basic', 'token'].includes(authorizationScheme));
-  const starts = [authorizationPending ? authorization : null, apiKey]
-    .filter((match): match is RegExpExecArray => match !== null)
-    .map((match) => match.index);
+  const contexts = [
+    ...(authorizationPending && authorization !== null
+      ? [{ start: authorization.index }]
+      : []),
+    ...(apiKey === null ? [] : [{ start: apiKey.index }]),
+    ...(query === null ? [] : [{ start: query.index }]),
+  ];
 
   if (lastLineBreak >= 0) {
     const completeContexts = [
@@ -315,10 +334,15 @@ function contextualTailStart(input: string, lastLineBreak: number): number | und
     for (const pattern of completeContexts) {
       for (const match of input.matchAll(pattern)) {
         if (match.index < lastLineBreak && match.index + match[0].length > lastLineBreak) {
-          starts.push(match.index);
+          contexts.push({ start: match.index });
         }
       }
     }
   }
-  return starts.length === 0 ? undefined : Math.min(...starts);
+  return contexts.reduce<ReturnType<typeof contextualTail>>(
+    (earliest, context) => earliest === undefined || context.start < earliest.start
+      ? context
+      : earliest,
+    undefined,
+  );
 }
