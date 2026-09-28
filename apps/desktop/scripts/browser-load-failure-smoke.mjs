@@ -31,6 +31,9 @@ import { BrowserViewController } from '../dist/main/browser/controller.js';
 
 const userData = mkdtempSync(join(tmpdir(), 'maka-browser-load-'));
 app.setPath('userData', userData);
+// Keep Electron alive after destroying the test window until cleanup has
+// finished and app.exit() can report the assertion result explicitly.
+app.on('window-all-closed', () => {});
 const timeout = setTimeout(() => { console.error('Browser load smoke timed out'); app.exit(1); }, 30_000);
 app.whenReady().then(async () => {
   let fail = true;
@@ -110,9 +113,8 @@ app.whenReady().then(async () => {
     win.destroy();
     for (const socket of sockets) socket.destroy();
     await new Promise((resolve) => server.close(resolve));
-    clearTimeout(timeout);
-    app.quit();
     await rm(userData, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
-    process.exitCode = exitCode;
+    clearTimeout(timeout);
+    app.exit(exitCode);
   }
 }).catch((error) => { console.error(error); app.exit(1); });

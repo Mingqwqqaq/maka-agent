@@ -18,6 +18,8 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -37,7 +39,38 @@ import {
   asarLookupPath,
   assertPackagedDependencyClosure,
   assertPackagedResources,
+  stopChild,
 } from './verify-packaged-app.mjs';
+
+test('stopChild waits for a process that ignores SIGTERM to exit before returning', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      `
+    process.on('SIGTERM', () => {});
+    process.send('ready');
+    setInterval(() => {}, 1000);
+  `,
+    ],
+    { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+  );
+  t.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, 'exit');
+    child.kill('SIGKILL');
+    await exited;
+  });
+  await once(child, 'message');
+  await stopChild(child);
+  assert.equal(child.signalCode, 'SIGKILL');
+  assert.equal(child.exitCode, null);
+  // A child already terminated by a signal is also stopped, even though its
+  // numeric exitCode is null; stopping it again must not wait for another exit.
+  await stopChild(child);
+});
 
 test('Windows file rules keep test code and renderer side-files out of the app', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'maka-app-package-'));

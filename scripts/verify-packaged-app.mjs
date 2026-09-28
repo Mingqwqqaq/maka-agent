@@ -625,14 +625,25 @@ export async function exercisePackagedRendererMaximizeRestore(rendererTarget, ch
 }
 
 export async function stopChild(child) {
-  if (child.exitCode !== null) return;
-  child.kill('SIGTERM');
-  const exited = await Promise.race([
-    new Promise((resolvePromise) => child.once('exit', () => resolvePromise(true))),
-    delay(5_000).then(() => false),
-  ]);
-  if (!exited && child.exitCode === null) {
-    child.kill('SIGKILL');
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolvePromise) => child.once('exit', resolvePromise));
+  let timeout;
+  try {
+    child.kill('SIGTERM');
+    await Promise.race([
+      exited,
+      new Promise((resolvePromise) => {
+        timeout = setTimeout(resolvePromise, 5_000);
+      }),
+    ]);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      // Sending a signal does not mean the process has stopped writing to its
+      // profile. Reap it before callers remove the temporary verification tree.
+      await exited;
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
