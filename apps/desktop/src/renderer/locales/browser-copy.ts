@@ -25,6 +25,14 @@ export type BrowserCopy = {
   openFailed: string;
   navigationFailed: string;
   navigationFailedDetail: string;
+  loadFailed: string;
+  retry: string;
+  retryAria: string;
+  loadFailureDns: string;
+  loadFailureOffline: string;
+  loadFailureTimeout: string;
+  loadFailureCertificate: string;
+  loadFailureNetwork: string;
   panelAria: string;
   panelAriaWithTitle: (title: string) => string;
   insecure: string;
@@ -54,6 +62,14 @@ const BROWSER_COPY = {
     openFailed: '无法打开地址',
     navigationFailed: '浏览器导航失败',
     navigationFailedDetail: '页面暂时无法打开，请稍后重试。',
+    loadFailed: '页面加载失败',
+    retry: '重试',
+    retryAria: '重试加载页面',
+    loadFailureDns: '找不到这个网站，请检查网址或网络连接后重试。',
+    loadFailureOffline: '网络连接已断开，请连接网络后重试。',
+    loadFailureTimeout: '连接网站超时，请稍后重试。',
+    loadFailureCertificate: '网站的安全证书无法验证，请检查网址或联系网站管理员。',
+    loadFailureNetwork: '暂时无法连接到这个页面，请检查网络连接或稍后重试。',
     panelAria: '嵌入式浏览器',
     panelAriaWithTitle: (title) => `嵌入式浏览器：${title}`,
     insecure: '这个站点用 HTTP 传输，连接未加密。',
@@ -81,6 +97,14 @@ const BROWSER_COPY = {
     openFailed: '無法開啟地址',
     navigationFailed: '瀏覽器導航失敗',
     navigationFailedDetail: '頁面暫時無法開啟，請稍後重試。',
+    loadFailed: '頁面載入失敗',
+    retry: '重試',
+    retryAria: '重試載入頁面',
+    loadFailureDns: '找不到這個網站，請檢查網址或網路連線後重試。',
+    loadFailureOffline: '網路連線已中斷，請連接網路後重試。',
+    loadFailureTimeout: '連接網站逾時，請稍後重試。',
+    loadFailureCertificate: '無法驗證網站的安全憑證，請檢查網址或聯絡網站管理員。',
+    loadFailureNetwork: '暫時無法連接到這個頁面，請檢查網路連線或稍後重試。',
     panelAria: '嵌入式瀏覽器',
     panelAriaWithTitle: (title) => `嵌入式瀏覽器：${title}`,
     insecure: '這個站點用 HTTP 傳輸，連線未加密。',
@@ -108,6 +132,14 @@ const BROWSER_COPY = {
     openFailed: 'Could not open address',
     navigationFailed: 'Browser navigation failed',
     navigationFailedDetail: 'The page could not be opened. Try again later.',
+    loadFailed: 'Page failed to load',
+    retry: 'Retry',
+    retryAria: 'Retry loading page',
+    loadFailureDns: 'This website could not be found. Check the address or your connection and retry.',
+    loadFailureOffline: 'You are offline. Connect to the internet and retry.',
+    loadFailureTimeout: 'The connection timed out. Try again later.',
+    loadFailureCertificate: 'The website’s certificate could not be verified. Check the address or contact the site owner.',
+    loadFailureNetwork: 'The page could not be reached. Check your connection or try again later.',
     panelAria: 'Embedded browser',
     panelAriaWithTitle: (title) => `Embedded browser: ${title}`,
     insecure: 'This site is served over HTTP, so the connection is not encrypted.',
