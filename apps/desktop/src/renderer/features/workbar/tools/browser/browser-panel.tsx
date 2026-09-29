@@ -62,10 +62,12 @@ const EMPTY_STATE: BrowserState = {
 };
 
 function browserLoadFailureCopy(code: number, copy: BrowserCopy): string {
-  if (code === -105) return copy.loadFailureDns;
+  if (code === -105 || code === -137) return copy.loadFailureDns;
   if (code === -106) return copy.loadFailureOffline;
   if (code === -7 || code === -118) return copy.loadFailureTimeout;
   if (code >= -299 && code <= -200) return copy.loadFailureCertificate;
+  if (code === -107 || code === -113) return copy.loadFailureSecureConnection;
+  if (code === -20 || code === -27) return copy.loadFailureBlocked;
   return copy.loadFailureNetwork;
 }
 

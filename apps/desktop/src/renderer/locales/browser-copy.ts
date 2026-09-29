@@ -33,6 +33,8 @@ export type BrowserCopy = {
   loadFailureOffline: string;
   loadFailureTimeout: string;
   loadFailureCertificate: string;
+  loadFailureSecureConnection: string;
+  loadFailureBlocked: string;
   loadFailureNetwork: string;
   panelAria: string;
   panelAriaWithTitle: (title: string) => string;
@@ -71,6 +73,8 @@ const BROWSER_COPY = {
     loadFailureOffline: '网络连接已断开，请连接网络后重试。',
     loadFailureTimeout: '连接网站超时，请稍后重试。',
     loadFailureCertificate: '网站的安全证书无法验证，请检查网址或联系网站管理员。',
+    loadFailureSecureConnection: '无法与此网站建立安全连接，请联系网站管理员。',
+    loadFailureBlocked: '页面请求被浏览器或网站的安全规则拦截，请联系网站管理员。',
     loadFailureNetwork: '暂时无法连接到这个页面，请检查网络连接或稍后重试。',
     panelAria: '嵌入式浏览器',
     panelAriaWithTitle: (title) => `嵌入式浏览器：${title}`,
@@ -107,6 +111,8 @@ const BROWSER_COPY = {
     loadFailureOffline: '網路連線已中斷，請連接網路後重試。',
     loadFailureTimeout: '連接網站逾時，請稍後重試。',
     loadFailureCertificate: '無法驗證網站的安全憑證，請檢查網址或聯絡網站管理員。',
+    loadFailureSecureConnection: '無法與此網站建立安全連線，請聯絡網站管理員。',
+    loadFailureBlocked: '頁面請求遭瀏覽器或網站的安全規則封鎖，請聯絡網站管理員。',
     loadFailureNetwork: '暫時無法連接到這個頁面，請檢查網路連線或稍後重試。',
     panelAria: '嵌入式瀏覽器',
     panelAriaWithTitle: (title) => `嵌入式瀏覽器：${title}`,
@@ -143,6 +149,8 @@ const BROWSER_COPY = {
     loadFailureOffline: 'You are offline. Connect to the internet and retry.',
     loadFailureTimeout: 'The connection timed out. Try again later.',
     loadFailureCertificate: 'The website’s certificate could not be verified. Check the address or contact the site owner.',
+    loadFailureSecureConnection: 'A secure connection to this website could not be established. Contact the site owner.',
+    loadFailureBlocked: 'The page request was blocked by browser or website security rules. Contact the site owner.',
     loadFailureNetwork: 'The page could not be reached. Check your connection or try again later.',
     panelAria: 'Embedded browser',
     panelAriaWithTitle: (title) => `Embedded browser: ${title}`,

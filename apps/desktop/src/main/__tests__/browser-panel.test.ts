@@ -88,8 +88,10 @@ for (const locale of ['en', 'zh-CN', 'zh-TW'] as const) {
     const container = setup();
     const defaults = createFakeWorkbarServices();
     const reloads: string[] = [];
+    let publish!: Parameters<WorkbarServices['browser']['subscribeState']>[0];
     const services = createFakeWorkbarServices({ browser: {
       ...defaults.browser, getState: async () => failed,
+      subscribeState: (handler) => { publish = handler; return () => {}; },
       reload: async (id) => { reloads.push(id); },
     } });
     await act(async () => render(services, 'a', false, locale));
@@ -102,6 +104,20 @@ for (const locale of ['en', 'zh-CN', 'zh-TW'] as const) {
     assert.ok(retry);
     await act(async () => retry.click());
     assert.deepEqual(reloads, ['a']);
+    for (const [code, message] of [
+      [-137, copy.loadFailureDns],
+      [-107, copy.loadFailureSecureConnection],
+      [-113, copy.loadFailureSecureConnection],
+      [-20, copy.loadFailureBlocked],
+      [-27, copy.loadFailureBlocked],
+    ] as const) {
+      await act(async () => publish({ sessionId: 'a', state: {
+        ...failed, loadError: { url: failed.loadError!.url, code },
+      } }));
+      const alert = container.querySelector('[role="alert"]');
+      assert.ok(alert?.textContent?.includes(message), `localized reason for ${code}`);
+      assert.ok(!alert?.textContent?.includes(copy.loadFailureNetwork));
+    }
   });
 }
 
