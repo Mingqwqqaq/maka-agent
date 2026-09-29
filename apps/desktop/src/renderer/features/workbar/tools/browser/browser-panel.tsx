@@ -345,7 +345,7 @@ export function BrowserPanel(props: { sessionId: string; hidden: boolean; focuse
               isCompact
               icon={<AlertTriangle size={ICON_SIZE.empty} aria-hidden="true" />}
               title={copy.loadFailed}
-              description={browserLoadFailureCopy(state.loadError.code, copy)}
+              description={`${browserLoadFailureCopy(state.loadError.code, copy)} ${copy.retryDetail}`}
               actions={<Button label={copy.retry} aria-label={copy.retryAria} isDisabled={state.loading} onClick={retry} />}
             />
           </div>

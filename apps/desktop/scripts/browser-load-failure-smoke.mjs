@@ -38,8 +38,28 @@ const timeout = setTimeout(() => { console.error('Browser load smoke timed out')
 app.whenReady().then(async () => {
   let fail = true;
   let pending;
+  let partial;
+  let failureResponse = 'fail';
+  const submissions = [];
   const sockets = new Set();
   const server = createServer((req, res) => {
+    if (req.url === '/partial') {
+      partial = res;
+      res.writeHead(200, { 'content-type': 'text/html', 'content-length': '100000' });
+      res.write('<!doctype html><title>Partial</title><button id="usable">Still usable</button>');
+      return;
+    }
+    if (req.url === '/submit') {
+      submissions.push({ method: req.method, referrer: req.headers.referer });
+      if (req.method === 'POST') { res.destroy(); return; }
+    }
+    if (req.url === '/fail' && failureResponse === 'slow') { pending = res; return; }
+    if (req.url === '/fail' && failureResponse === 'empty') { res.writeHead(204); res.end(); return; }
+    if (req.url === '/fail' && failureResponse === 'download') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename=test.bin' });
+      res.end('fixture');
+      return;
+    }
     if (req.url === '/slow') { pending = res; return; }
     if (req.url === '/redirect') { res.writeHead(302, { location: '/fail' }); res.end(); return; }
     if (req.url === '/frame' || (req.url === '/fail' && fail)) { res.destroy(); return; }
@@ -105,6 +125,69 @@ app.whenReady().then(async () => {
     assert.equal(controller.state().url, `${base}/ok`);
     assert.equal(states.some((state) => state.loadError), false);
     console.log('PASS stop and superseding navigation never publish errors');
+
+    // A real committed response, then a truncated body: did-fail-load alone
+    // cannot tell this usable document from a provisional navigation failure.
+    states.length = 0;
+    const partialFailure = new Promise((resolve) => view.webContents.once('did-fail-load', (_event, code) => resolve(code)));
+    const partialLoad = controller.navigate(`${base}/partial`);
+    await waitFor(() => controller.state().title === 'Partial');
+    controller.setViewport(rect);
+    partial.end();
+    assert.equal(await partialFailure, -354);
+    await partialLoad;
+    await waitFor(() => !controller.state().loading);
+    assert.equal(controller.state().loadError, null);
+    assert.equal(states.some((state) => state.loadError), false);
+    assert.equal(view.getVisible(), true);
+    assert.equal(controller.hasLiveViewport(), true);
+    assert.equal(await view.webContents.executeJavaScript('document.querySelector("#usable").textContent'), 'Still usable');
+    console.log('PASS a committed partial page stays visible and usable after body failure');
+
+    fail = true;
+    await controller.navigate(`${base}/fail`);
+    await waitFor(() => !controller.state().loading);
+    const originalError = controller.state().loadError;
+    assert.equal(originalError?.url, `${base}/fail`);
+    states.length = 0;
+    pending = undefined;
+    failureResponse = 'slow';
+    controller.reload();
+    await waitFor(() => !!pending);
+    assert.deepEqual(controller.state().loadError, originalError);
+    controller.stop();
+    await waitFor(() => !controller.state().loading);
+    assert.deepEqual(controller.state().loadError, originalError);
+    assert.equal(states.every((state) => !!state.loadError), true);
+    for (const response of ['empty', 'download']) {
+      failureResponse = response;
+      await controller.navigate(`${base}/fail`);
+      await waitFor(() => !controller.state().loading);
+      assert.deepEqual(controller.state().loadError, originalError);
+      controller.setViewport(rect);
+      assert.equal(view.getVisible(), false);
+    }
+    failureResponse = 'fail';
+    fail = false;
+    await controller.navigate(`${base}/fail`);
+    await waitFor(() => !controller.state().loading);
+    assert.equal(controller.state().loadError, null);
+    console.log('PASS cancelled retries, 204s, and downloads preserve the error until a document commits');
+
+    await view.webContents.loadURL(`${base}/submit`, {
+      postData: [{ type: 'rawData', bytes: Buffer.from('answer=fixture') }],
+      extraHeaders: 'Content-Type: application/x-www-form-urlencoded',
+      httpReferrer: `${base}/form`,
+    }).catch(() => {});
+    await waitFor(() => !controller.state().loading);
+    assert.equal(controller.state().loadError?.url, `${base}/submit`);
+    controller.reload();
+    await waitFor(() => controller.state().url === `${base}/submit` && !controller.state().loading && !controller.state().loadError);
+    assert.deepEqual(submissions, [
+      { method: 'POST', referrer: `${base}/form` },
+      { method: 'GET', referrer: undefined },
+    ]);
+    console.log('PASS retry uses GET without replaying POST data or the original referrer');
   } catch (error) {
     console.error(error);
     exitCode = 1;

@@ -96,6 +96,7 @@ for (const locale of ['en', 'zh-CN', 'zh-TW'] as const) {
     const copy = getBrowserCopy(locale);
     assert.ok(container.querySelector('[role="alert"]')?.textContent?.includes(copy.loadFailed));
     assert.ok(container.textContent?.includes(copy.loadFailureDns));
+    assert.ok(container.querySelector('[role="alert"]')?.textContent?.includes(copy.retryDetail));
     assert.equal(container.querySelector('input')?.value, failed.loadError!.url);
     const retry = container.querySelector<HTMLButtonElement>(`button[aria-label="${copy.retryAria}"]`);
     assert.ok(retry);

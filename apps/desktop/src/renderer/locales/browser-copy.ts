@@ -28,6 +28,7 @@ export type BrowserCopy = {
   loadFailed: string;
   retry: string;
   retryAria: string;
+  retryDetail: string;
   loadFailureDns: string;
   loadFailureOffline: string;
   loadFailureTimeout: string;
@@ -65,6 +66,7 @@ const BROWSER_COPY = {
     loadFailed: '页面加载失败',
     retry: '重试',
     retryAria: '重试加载页面',
+    retryDetail: '重试会重新打开此地址，不会重新提交表单数据或发送原始来源信息。',
     loadFailureDns: '找不到这个网站，请检查网址或网络连接后重试。',
     loadFailureOffline: '网络连接已断开，请连接网络后重试。',
     loadFailureTimeout: '连接网站超时，请稍后重试。',
@@ -100,6 +102,7 @@ const BROWSER_COPY = {
     loadFailed: '頁面載入失敗',
     retry: '重試',
     retryAria: '重試載入頁面',
+    retryDetail: '重試會重新開啟此地址，不會重新提交表單資料或傳送原始來源資訊。',
     loadFailureDns: '找不到這個網站，請檢查網址或網路連線後重試。',
     loadFailureOffline: '網路連線已中斷，請連接網路後重試。',
     loadFailureTimeout: '連接網站逾時，請稍後重試。',
@@ -135,6 +138,7 @@ const BROWSER_COPY = {
     loadFailed: 'Page failed to load',
     retry: 'Retry',
     retryAria: 'Retry loading page',
+    retryDetail: 'Retry reopens the address without resubmitting form data or sending the original referrer.',
     loadFailureDns: 'This website could not be found. Check the address or your connection and retry.',
     loadFailureOffline: 'You are offline. Connect to the internet and retry.',
     loadFailureTimeout: 'The connection timed out. Try again later.',

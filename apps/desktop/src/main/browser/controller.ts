@@ -115,21 +115,27 @@ export class BrowserViewController {
 
   private wireEvents(): void {
     const wc = this.wc;
-    wc.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
-      if (!isMainFrame || isInPlace) return;
-      this.navigationUrl = url;
-      this.loadError = null;
+    wc.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      this.navigationUrl = details.url;
       this.emitState();
     });
-    wc.on('did-redirect-navigation', (_event, url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) this.navigationUrl = url;
+    wc.on('did-redirect-navigation', (details) => {
+      if (details.isMainFrame) this.navigationUrl = details.url;
     });
     wc.on('did-start-loading', () => this.emitState());
     wc.on('did-stop-loading', () => this.emitState());
-    wc.on('did-navigate', () => this.recordNavigation());
+    wc.on('did-navigate', () => {
+      // Stop, downloads and 204 responses never commit a new document. Keep
+      // the previous failed address actionable until navigation really commits.
+      this.loadError = null;
+      this.recordNavigation();
+    });
     wc.on('did-navigate-in-page', () => this.recordNavigation());
     wc.on('page-title-updated', () => this.emitState());
-    wc.on('did-fail-load', (_event, code, _description, url, isMainFrame) => {
+    wc.on('did-fail-provisional-load', (_event, code, _description, url, isMainFrame) => {
+      // A body transfer can fail after a usable document commits. Only a
+      // provisional failure should replace the page with the retry UI.
       // Stop and superseding navigations report ERR_ABORTED (-3). A failed
       // iframe or a delayed failure from another URL must not replace the page.
       if (!isMainFrame || code === -3 || url !== this.navigationUrl || !parseNavigable(url)) return;
@@ -179,12 +185,12 @@ export class BrowserViewController {
 
   private async loadInternal(url: string): Promise<void> {
     // loadURL rejects on aborted/failed loads (e.g. a superseding navigation);
-    // did-fail-load publishes failures for UI, page and automation navigations.
+    // Provisional failures publish retry UI; a failed body can remain usable.
     // Do not also reject IPC and produce a duplicate notification.
     try {
       await this.wc.loadURL(url);
     } catch {
-      /* surfaced via did-fail-load */
+      /* surfaced via did-fail-provisional-load when no document committed */
     }
   }
 
