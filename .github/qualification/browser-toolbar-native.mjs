@@ -108,7 +108,8 @@ try {
      assert.equal(await app.evaluate(()=>globalThis.__toolbarValidation.calls),1);
      // Capture the fully entered toast, rather than an intermediate animation frame.
      await page.evaluate(async()=>{
-       const animations=document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity);
+       // The toast's lifetime progress animation must keep running; only await layout transitions.
+       const animations=document.getAnimations().filter(a=>a instanceof CSSTransition);
        await Promise.all(animations.map(a=>a.finished.catch(()=>{})));
      });
      const toast=page.getByRole('alert').filter({hasText:'Browser action failed'});
