@@ -32,6 +32,17 @@ try {
    app=await electron.launch({args:['.','--no-sandbox'],cwd:root+'/apps/desktop',
      env:buildFixtureEnv(userData,home,{scenario:'turn-narrative-browser',locale:'en',theme,showWindow:true})});
    const page=await app.firstWindow();
+   // Observe completion of the production close handler, including async view disposal.
+   await app.evaluate(({ipcMain})=>{
+    const original=ipcMain._invokeHandlers.get('browser:close-page');
+    globalThis.__closeCompletions=0;
+    ipcMain.removeHandler('browser:close-page');
+    ipcMain.handle('browser:close-page',async (...args)=>{
+      const result=await original(...args);
+      globalThis.__closeCompletions++;
+      return result;
+    });
+   });
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.locator('.maka-browser-panel').waitFor({timeout:30000});
    // The screenshot fixture disables transitions, but this journey exercises normal interactive dismissal.
@@ -41,8 +52,16 @@ try {
    const state=()=>page.evaluate(id=>window.maka.browser.getState(id),sid);
    const address=page.getByRole('textbox',{name:'Browser address',exact:true});
    async function navigate(path,loading=false) {
-    await address.fill(base+path);await address.press('Enter');
-    await expect.poll(async()=>{const s=await state();return Boolean(s&&s.url===base+path&&s.hasPage&&s.loading===loading);},{timeout:15000}).toBe(true);
+    await address.fill(base+path);
+    await expect(address).toHaveValue(base+path);
+    await address.press('Enter');
+    try {
+     await expect.poll(async()=>{const s=await state();return Boolean(s&&s.url===base+path&&s.hasPage&&s.loading===loading);},{timeout:15000}).toBe(true);
+    } catch(error) {
+     console.error('Navigation diagnostic',JSON.stringify({theme,path,loading,state:await state(),address:await address.inputValue(),errors,requests}));
+     await page.screenshot({path:join(output,'navigation-failure-'+theme+'.png')});
+     throw error;
+    }
    }
    const button=name=>page.getByRole('button',{name,exact:true});
    await navigate('/a');await navigate('/b');
@@ -59,6 +78,7 @@ try {
    await expect.poll(async()=> (await state())?.loading).toBe(false);
    await navigate('/a');
    await button('Close browser page').click();
+   await expect.poll(()=>app.evaluate(()=>globalThis.__closeCompletions)).toBe(1);
    await expect.poll(async()=> Boolean((await state())?.hasPage)).toBe(false);
    assert.equal(await page.getByText('Browser action failed',{exact:true}).count(),0);
    results.push({theme,case:'five normal toolbar actions',passed:true});

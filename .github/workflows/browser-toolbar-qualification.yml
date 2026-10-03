@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   linux:
     runs-on: ubuntu-24.04
@@ -21,7 +24,13 @@ jobs:
       - name: Prepare Linux tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb x11-utils fonts-noto-cjk
+          sudo apt-get install -y xvfb x11-utils fonts-noto-cjk ripgrep bubblewrap
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if [[ -e /proc/sys/kernel/unprivileged_userns_clone ]]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
           npm install --global --no-audit --no-fund npm@11.19.0
           mkdir -p qualification-results/native
       - name: Install dependencies
