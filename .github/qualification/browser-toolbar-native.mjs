@@ -32,9 +32,14 @@ try {
    app=await electron.launch({args:['.','--no-sandbox'],cwd:root+'/apps/desktop',
      env:buildFixtureEnv(userData,home,{scenario:'turn-narrative-browser',locale:'en',theme,showWindow:true})});
    const page=await app.firstWindow();
+   app.process().stdout?.on('data',data=>process.stdout.write(data));
+   app.process().stderr?.on('data',data=>process.stderr.write(data));
+   const errors=[];page.on('pageerror',e=>errors.push(e.message));
+   await page.locator('.maka-browser-panel').waitFor({timeout:30000});
    // Observe completion of the production close handler, including async view disposal.
    await app.evaluate(({ipcMain})=>{
     const original=ipcMain._invokeHandlers.get('browser:close-page');
+    if(!original) throw new Error('Production browser close handler is not registered');
     globalThis.__closeCompletions=0;
     ipcMain.removeHandler('browser:close-page');
     ipcMain.handle('browser:close-page',async (...args)=>{
@@ -43,8 +48,6 @@ try {
       return result;
     });
    });
-   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-   await page.locator('.maka-browser-panel').waitFor({timeout:30000});
    // The screenshot fixture disables transitions, but this journey exercises normal interactive dismissal.
    await page.evaluate(()=>document.documentElement.removeAttribute('data-maka-e2e-fixture'));
    const sid=await page.evaluate(async()=> (await window.maka.e2eFixture.getState()).activeSessionId);
@@ -103,6 +106,13 @@ try {
      await expect(page.getByText('The action could not be completed. Try again.',{exact:true})).toBeVisible();
      assert.equal(await page.getByText('private toolbar transport detail').count(),0);
      assert.equal(await app.evaluate(()=>globalThis.__toolbarValidation.calls),1);
+     // Capture the fully entered toast, rather than an intermediate animation frame.
+     await page.evaluate(async()=>{
+       const animations=document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity);
+       await Promise.all(animations.map(a=>a.finished.catch(()=>{})));
+     });
+     const toast=page.getByRole('alert').filter({hasText:'Browser action failed'});
+     await expect(toast).toBeInViewport({ratio:1});
      const w=await app.browserWindow(page);
      const png=await w.evaluate(async w=>(await w.capturePage()).toPNG().toString('base64'));
      await writeFile(join(output,'electron-'+theme+'-'+method+'.png'),Buffer.from(png,'base64'));

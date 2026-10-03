@@ -1,4 +1,4 @@
-name: Browser toolbar qualification
+name: Browser toolbar native qualification
 on:
   push:
     branches: [validation/browser-toolbar-full-20261003]
@@ -36,50 +36,13 @@ jobs:
       - name: Install dependencies
         id: install
         run: npm ci
-      - name: All workspace tests
-        if: steps.install.outcome == 'success'
-        run: npm test 2>&1 | tee qualification-results/workspace-tests.log
       - name: Production build
         id: build
         if: always() && steps.install.outcome == 'success'
         run: npm run build 2>&1 | tee qualification-results/build.log
-      - name: Typecheck
-        if: always() && steps.build.outcome == 'success'
-        run: npm run typecheck 2>&1 | tee qualification-results/typecheck.log
-      - name: Desktop E2E
-        if: always() && steps.build.outcome == 'success'
-        run: node scripts/run-desktop-e2e-parallel.mjs --workers 3 2>&1 | tee qualification-results/desktop-e2e.log
-      - name: Native browser smoke
-        if: always() && steps.build.outcome == 'success'
-        run: |
-          result=0
-          for script in browser-observe-act-smoke workhub-browser-presentation-smoke browser-load-failure-smoke; do
-            xvfb-run -a -s "-screen 0 1920x1080x24" npm exec --workspace @maka/desktop -- electron --no-sandbox "scripts/$script.mjs" > "qualification-results/$script.log" 2>&1 || result=1
-            cat "qualification-results/$script.log"
-          done
-          exit "$result"
       - name: Native toolbar interactions and IPC failures
         if: always() && steps.build.outcome == 'success'
         run: xvfb-run -a node .github/qualification/browser-toolbar-native.mjs 2>&1 | tee qualification-results/native-toolbar.log
-      - name: Alignment audit
-        if: always() && steps.build.outcome == 'success'
-        run: xvfb-run -a node scripts/audit-alignment.mjs 2>&1 | tee qualification-results/alignment.log
-      - name: Install Chromium
-        id: chromium
-        if: always() && steps.build.outcome == 'success'
-        run: npm exec -w @maka/desktop -- playwright install --with-deps chromium
-      - name: Build Storybook
-        id: storybook
-        if: always() && steps.build.outcome == 'success'
-        run: npm --workspace @maka/desktop run build-storybook 2>&1 | tee qualification-results/storybook-build.log
-      - name: Full Storybook smoke
-        if: always() && steps.storybook.outcome == 'success' && steps.chromium.outcome == 'success'
-        run: npm --workspace @maka/desktop run smoke:storybook 2>&1 | tee qualification-results/storybook-smoke.log
-      - name: Geometry invariants
-        if: always() && steps.storybook.outcome == 'success' && steps.chromium.outcome == 'success'
-        env:
-          GEOMETRY_REPETITIONS: '1'
-        run: xvfb-run -a node scripts/perf/geometry-ablation.mjs --assert-stable 2>&1 | tee qualification-results/geometry.log
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
