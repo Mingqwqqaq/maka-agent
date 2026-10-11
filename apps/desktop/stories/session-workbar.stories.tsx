@@ -887,6 +887,7 @@ function bridge(options: {
   popupMenu?: WorkbarServices['popupMenu'];
   /** Make `browser.navigate` reject, so a valid address surfaces the navigation-failed toast. */
   browserNavigateFails?: boolean;
+  /** Make `browser.reload` reject, so the toolbar shows the action-failed toast. */
   browserReloadFails?: boolean;
   /** The git-review read result the 变更 panel receives (empty / source error / truncated / edge diffs). */
   review?: GitReviewReadResult;
