@@ -66,8 +66,10 @@ export function writeOpencliLaunchers(
       const file = join(dir, `${name}.cmd`);
       // cmd reads batch files using its console code page, even when paths are
       // quoted. Keep UTF-8 paths literal through both batch expansion phases.
+      // Unlike environment variables, the console code page outlives SETLOCAL.
+      // Restore it before returning, without losing the child's exit status.
       const quotePath = (path: string) => `"${path.replaceAll('%', '%%')}"`;
-      writeFileSync(file, `@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n${quotePath(executable)} ${quotePath(entry)} ${args}\r\n`);
+      writeFileSync(file, `@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:" %%c in ('chcp') do set "MAKA_OPENCLI_CODE_PAGE=%%c"\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n${quotePath(executable)} ${quotePath(entry)} ${args}\r\nset "MAKA_OPENCLI_EXIT_CODE=%ERRORLEVEL%"\r\nchcp %MAKA_OPENCLI_CODE_PAGE% >nul\r\nexit /b %MAKA_OPENCLI_EXIT_CODE%\r\n`);
       return file;
     }
     const file = join(dir, name);

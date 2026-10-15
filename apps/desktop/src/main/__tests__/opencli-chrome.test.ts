@@ -45,7 +45,7 @@ test('Windows launchers set Node mode before starting the entry', () => {
   assert.equal(launchers.command, join(dir, 'opencli-mcp.cmd'));
   assert.equal(
     readFileSync(launchers.host, 'utf8'),
-    '@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\n',
+    '@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:" %%c in (\'chcp\') do set "MAKA_OPENCLI_CODE_PAGE=%%c"\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\nset "MAKA_OPENCLI_EXIT_CODE=%ERRORLEVEL%"\r\nchcp %MAKA_OPENCLI_CODE_PAGE% >nul\r\nexit /b %MAKA_OPENCLI_EXIT_CODE%\r\n',
   );
 });
 
@@ -59,7 +59,10 @@ test('Windows launchers preserve Unicode and batch metacharacters without adding
   writeOpencliLaunchers(directory, 'win32', process.execPath, entry);
   for (const page of [936, 65001]) {
     for (const [file, mode] of [['opencli-mcp.cmd', 'stdio'], ['opencli-mcp-host.cmd', 'host']]) {
-      const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/s', '/c', `"chcp ${page} >nul & ${file}"`], {
+      // CALL returns to the same console, where the caller must retain its code
+      // page as well as the child's exit status. Keep diagnostics off stdout.
+      writeFileSync(join(directory, 'caller.cmd'), `@echo off\r\nchcp ${page} >nul\r\ncall ${file}\r\nset "childExit=%errorlevel%"\r\nchcp >code-page.txt\r\nexit /b %childExit%\r\n`);
+      const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/s', '/c', 'caller.cmd'], {
         cwd: directory,
         env: { ...process.env, MAKA_LAUNCHER_TEST: 'expanded' },
         encoding: 'utf8',
@@ -71,6 +74,7 @@ test('Windows launchers preserve Unicode and batch metacharacters without adding
       assert.equal(result.status, 23, result.stderr);
       assert.equal(result.stderr, '');
       assert.deepEqual(JSON.parse(result.stdout), { args: [mode], node: '1' });
+      assert.equal(Number(readFileSync(join(directory, 'code-page.txt'), 'utf8').match(/:\s*(\d+)/u)?.[1]), page);
     }
   }
 });
