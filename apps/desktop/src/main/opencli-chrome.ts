@@ -64,7 +64,10 @@ export function writeOpencliLaunchers(
   const write = (name: string, args: string): string => {
     if (platform === 'win32') {
       const file = join(dir, `${name}.cmd`);
-      writeFileSync(file, `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${executable}" "${entry}" ${args}\r\n`);
+      // cmd reads batch files using its console code page, even when paths are
+      // quoted. Keep UTF-8 paths literal through both batch expansion phases.
+      const quotePath = (path: string) => `"${path.replaceAll('%', '%%')}"`;
+      writeFileSync(file, `@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n${quotePath(executable)} ${quotePath(entry)} ${args}\r\n`);
       return file;
     }
     const file = join(dir, name);

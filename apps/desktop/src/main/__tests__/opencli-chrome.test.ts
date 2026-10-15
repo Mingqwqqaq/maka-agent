@@ -18,8 +18,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -45,8 +45,34 @@ test('Windows launchers set Node mode before starting the entry', () => {
   assert.equal(launchers.command, join(dir, 'opencli-mcp.cmd'));
   assert.equal(
     readFileSync(launchers.host, 'utf8'),
-    '@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\n',
+    '@echo off\r\nsetlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\n',
   );
+});
+
+test('Windows launchers preserve Unicode and batch metacharacters without adding protocol output', { skip: process.platform !== 'win32' }, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'maka-opencli-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, '中文 %MAKA_LAUNCHER_TEST% !MAKA_LAUNCHER_TEST! & files');
+  mkdirSync(directory);
+  const entry = join(directory, 'entry.mjs');
+  writeFileSync(entry, 'console.log(JSON.stringify({ args: process.argv.slice(2), node: process.env.ELECTRON_RUN_AS_NODE })); process.exitCode = 23;');
+  writeOpencliLaunchers(directory, 'win32', process.execPath, entry);
+  for (const page of [936, 65001]) {
+    for (const [file, mode] of [['opencli-mcp.cmd', 'stdio'], ['opencli-mcp-host.cmd', 'host']]) {
+      const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/s', '/c', `"chcp ${page} >nul & ${file}"`], {
+        cwd: directory,
+        env: { ...process.env, MAKA_LAUNCHER_TEST: 'expanded' },
+        encoding: 'utf8',
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+        timeout: 10_000,
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 23, result.stderr);
+      assert.equal(result.stderr, '');
+      assert.deepEqual(JSON.parse(result.stdout), { args: [mode], node: '1' });
+    }
+  }
 });
 
 test('the host manifest goes to Chrome and existing browsers, never over another live install', () => {
