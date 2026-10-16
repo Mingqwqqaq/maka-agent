@@ -45,7 +45,7 @@ test('Windows launchers set Node mode before starting the entry', () => {
   assert.equal(launchers.command, join(dir, 'opencli-mcp.cmd'));
   assert.equal(
     readFileSync(launchers.host, 'utf8'),
-    '@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:" %%c in (\'chcp\') do set "MAKA_OPENCLI_CODE_PAGE=%%c"\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\nset "MAKA_OPENCLI_EXIT_CODE=%ERRORLEVEL%"\r\nchcp %MAKA_OPENCLI_CODE_PAGE% >nul\r\nexit /b %MAKA_OPENCLI_EXIT_CODE%\r\n',
+    '@echo off\r\nsetlocal DisableDelayedExpansion\r\nfor /f "tokens=2 delims=:." %%c in (\'chcp\') do set "MAKA_OPENCLI_CODE_PAGE=%%c"\r\nchcp 65001 >nul\r\nset ELECTRON_RUN_AS_NODE=1\r\n"C:\\Maka\\Maka.exe" "C:\\Maka\\main.js" host\r\nset "MAKA_OPENCLI_EXIT_CODE=%ERRORLEVEL%"\r\nchcp %MAKA_OPENCLI_CODE_PAGE% >nul\r\nexit /b %MAKA_OPENCLI_EXIT_CODE%\r\n',
   );
 });
 
@@ -76,6 +76,33 @@ test('Windows launchers preserve Unicode and batch metacharacters without adding
       assert.deepEqual(JSON.parse(result.stdout), { args: [mode], node: '1' });
       assert.equal(Number(readFileSync(join(directory, 'code-page.txt'), 'utf8').match(/:\s*(\d+)/u)?.[1]), page);
     }
+  }
+});
+
+test('Windows launchers restore code pages reported with localized trailing punctuation', { skip: process.platform !== 'win32' }, (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'maka-opencli-locale-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const entry = join(directory, 'entry.mjs');
+  writeFileSync(entry, 'process.stdout.write("protocol"); process.exitCode = 23;');
+  for (const page of [850, 936, 65001]) {
+    const launchers = writeOpencliLaunchers(directory, 'win32', process.execPath, entry);
+    // Simulate only the localized query response; cmd.exe still executes the
+    // generated parser, changes the real code page and restores it on return.
+    const script = readFileSync(launchers.command, 'utf8');
+    assert.ok(script.includes("in ('chcp')"));
+    writeFileSync(launchers.command, script.replace("in ('chcp')", `in ('echo Aktive Codepage: ${page}.')`));
+    writeFileSync(join(directory, 'caller.cmd'), `@echo off\r\nchcp ${page} >nul\r\ncall opencli-mcp.cmd\r\nset "childExit=%errorlevel%"\r\nchcp >code-page.txt\r\nexit /b %childExit%\r\n`);
+    const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:on', '/c', 'caller.cmd'], {
+      cwd: directory,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 23, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, 'protocol');
+    assert.equal(Number(readFileSync(join(directory, 'code-page.txt'), 'utf8').match(/:\s*(\d+)/u)?.[1]), page);
   }
 });
 
